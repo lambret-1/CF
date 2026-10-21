@@ -25,6 +25,9 @@ jobs:
         run: |
           sudo xcode-select -switch /Applications/Xcode_16.app/Contents/Developer 2>/dev/null || sudo xcode-select -switch /Applications/Xcode.app/Contents/Developer
           xcodebuild -version
+          # 安装 iOS 平台（Xcode 16 需单独下载平台）
+          xcodebuild -downloadPlatform iOS || true
+          xcodebuild -showsdks | grep -i iphone
 
       - name: 安装 XcodeGen
         run: brew install xcodegen
