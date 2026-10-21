@@ -1,5 +1,4 @@
 // SuperResApp/Features/PhotoSuperRes/PhotoSuperResView.swift
-// 照片超分主页面：选图 → 选模型 → 推理 → 对比 → 保存
 
 import SwiftUI
 import PhotosUI
@@ -40,7 +39,6 @@ struct PhotoSuperResView: View {
                 ToolbarItem(placement: .navigationBarLeading) {
                     if viewModel.state != .empty {
                         Button("取消") { viewModel.reset() }
-                            .accessibilityLabel("取消并返回空态")
                     }
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -49,14 +47,12 @@ struct PhotoSuperResView: View {
                             if viewModel.isSaving {
                                 ProgressView()
                             } else {
-                                Text("保存").font(AppFont.body(weight: .semibold))
+                                Text("保存").fontWeight(.semibold)
                             }
                         }
-                        .accessibilityLabel("保存到相册")
                     }
                 }
             }
-            // 修复点 1：确保 photosPicker 绑定正确，并在 onChange 中处理加载
             .photosPicker(
                 isPresented: $viewModel.showPhotoPicker,
                 selection: $viewModel.photoPickerItem,
@@ -65,8 +61,7 @@ struct PhotoSuperResView: View {
             .onChange(of: viewModel.photoPickerItem) { _, newItem in
                 guard let newItem else { return }
                 Task {
-                    // 修复点 2：兜底加载，防止 ViewModel 内部加载失败
-                    await loadPickerItem(newItem)
+                    await viewModel.handlePickerSelection(newItem)
                 }
             }
             .sheet(isPresented: $viewModel.showModelPicker) {
@@ -74,22 +69,6 @@ struct PhotoSuperResView: View {
             }
             .task {
                 availableModels = await viewModel.availableModels()
-            }
-        }
-    }
-    
-    // MARK: - 兜底加载图片逻辑
-    private func loadPickerItem(_ item: PhotosPickerItem) async {
-        do {
-            if let data = try await item.loadTransferable(type: Data.self),
-               let uiImage = UIImage(data: data) {
-                // 如果 ViewModel 里没有对外暴露设置图片的方法，需要它在内部处理
-                await viewModel.handlePickerSelection(item)
-            }
-        } catch {
-            print("❌ 图片加载失败: \(error.localizedDescription)")
-            await MainActor.run {
-                // 可选：在这里加一个 Toast 或 Alert 提示用户图片读取失败
             }
         }
     }
@@ -103,9 +82,8 @@ struct PhotoSuperResView: View {
                 
                 switch viewModel.state {
                 case .empty:
-                    // 空态：整个区域可点击，虚线框带水平边距
                     Button(action: { viewModel.showPhotoPicker = true }) {
-                        DashedEmptyStateView(
+                        EmptyStateView(
                             icon: "photo.on.rectangle",
                             title: "从相册选择图片",
                             action: {}
@@ -114,8 +92,6 @@ struct PhotoSuperResView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("从相册选择图片")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                     
                 case .imageSelected, .failed:
                     if let image = viewModel.selectedImage {
@@ -148,23 +124,21 @@ struct PhotoSuperResView: View {
                         if let progress = viewModel.inferenceProgress {
                             ProgressRing(progress: progress.fraction)
                             Text(progress.progressText)
-                                .font(AppFont.body())
                                 .foregroundColor(AppTheme.primaryText)
                             if let remaining = progress.remainingText {
                                 Text(remaining)
-                                    .font(AppFont.subhead())
+                                    .font(.subheadline)
                                     .foregroundColor(AppTheme.secondaryText)
                             }
                         } else {
                             ProgressView()
                             Text("加载模型…")
-                                .font(AppFont.body())
                                 .foregroundColor(AppTheme.primaryText)
                         }
                     }
                     .padding(DesignTokens.spacingLG)
                     .background(AppTheme.background)
-                    .clipShape(AppShape.card)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
                     
                 case .completed:
                     if let original = viewModel.selectedImage,
@@ -191,7 +165,7 @@ struct PhotoSuperResView: View {
         HStack {
             SegmentedControl(
                 selection: $viewModel.compareMode,
-                items: CompareMode.allCases.map { ($0, $0.rawValue, $0.icon) }
+                items: CompareMode.allCases.map { ($0, $0.rawValue, "") }
             )
             .frame(maxWidth: 280)
         }
@@ -203,36 +177,32 @@ struct PhotoSuperResView: View {
         VStack(spacing: 4) {
             Button(action: { viewModel.showModelPicker = true }) {
                 HStack {
-                    VStack(alignment.show: .leading, spacing: 2) {
-Model                        Text("模型")
-                            .fontPicker(AppFont.caption())
-                            .foregroundColor =(AppTheme.tertiaryText)
-                        Text( falseavailableModels.first(where: { $0.id == }
- viewModel.selectedModelID })?.name ??                "加载中…")
-                            .font(AppFont }
-.body(weight: .medium))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("模型")
+                            .font(.caption)
+                            .foregroundColor(AppTheme.tertiaryText)
+                        Text(availableModels.first(where: { $0.id == viewModel.selectedModelID })?.name ?? "加载中…")
+                            .font(.body)
+                            .fontWeight(.medium)
                     }
-                    Sp           acer()
-                    Image(systemName: "chevron }
-.down")
-                        .foregroundColor(AppTheme.secondary       Text)
-                        .font(.system(size: 12, weight }
-: .medium))
+                    Spacer()
+                    Image(systemName: "chevron.down")
+                        .foregroundColor(AppTheme.secondaryText)
+                        .font(.system(size: 12, weight: .medium))
                 }
-                .contentShape(R       ectangle())
+                .contentShape(Rectangle())
             }
-            .buttonStyle(. .plain)
-            .accessibilityLabel("选择模型")
-present            
+            .buttonStyle(.plain)
+            
             if !viewModel.inputSizeText.isEmpty {
-                HationStack {
-                    Text("尺寸：\(viewModel.inputSizeTextDet)")
+                HStack {
+                    Text("尺寸：\(viewModel.inputSizeText)")
                     if !viewModel.outputSizeText.isEmpty {
-                        Text("ents→ \(viewModel.outputSizeText)")
+                        Text("→ \(viewModel.outputSizeText)")
                     }
                     Spacer()
                 }
-                .font(AppFont([.subhead())
+                .font(.subheadline)
                 .foregroundColor(AppTheme.tertiaryText)
             }
         }
@@ -280,7 +250,11 @@ present
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("完成") { viewModel.medium, .large])
+                    Button("完成") { viewModel.showModelPicker = false }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
     }
     
     private func modelRow(_ model: ModelRuntimeInfo) -> some View {
@@ -288,18 +262,16 @@ present
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(model.name)
-                        .font(AppFont.body(weight: .medium))
+                        .font(.body)
+                        .fontWeight(.medium)
                     Text(model.formattedSize)
-                        .font(AppFont.caption())
+                        .font(.caption)
                         .foregroundColor(AppTheme.tertiaryText)
                 }
                 Spacer()
                 if model.id == viewModel.selectedModelID {
                     Image(systemName: "checkmark")
                         .foregroundColor(AppTheme.accent)
-                }
-                if model.isNonCommercial {
-                    Badge(text: "非商用", style: .nonCommercial)
                 }
             }
         }
