@@ -63,16 +63,13 @@ struct LivePreviewView: View {
             if let image = viewModel.previewImage {
                 Image(uiImage: image)
                     .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .ignoresSafeArea()
+                    .aspectRatio(contentMode: .fit)
             } else {
-                Color.black
-                    .ignoresSafeArea()
+                AppTheme.previewBackground
                 ProgressView()
-                    .tint(.white)
             }
 
-            // 顶部覆盖层：FPS + 切换摄像头（避开灵动岛/刘海）
+            // 顶部覆盖层：FPS（避开灵动岛/刘海）
             VStack {
                 HStack(alignment: .top) {
                     // FPS 指示器（FPS > 0 时显示）
@@ -115,13 +112,13 @@ struct LivePreviewView: View {
                     HStack {
                         Text("分辨率：720p → 1080p")
                             .font(AppFont.caption())
-                            .foregroundColor(.white.opacity(0.7))
+                            .foregroundColor(AppTheme.secondaryText)
                         Spacer()
                     }
                 }
                 .padding(.horizontal, DesignTokens.pageMargin)
                 .padding(.bottom, DesignTokens.spacingMD)
-                .foregroundColor(.white)
+                .foregroundColor(AppTheme.primaryText)
             }
         }
     }
@@ -137,20 +134,20 @@ struct LivePreviewView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
-        .background(Color.black.opacity(0.6))
+        .background(.ultraThinMaterial)
         .foregroundColor(fpsColor)
         .clipShape(Capsule())
         .accessibilityLabel(String(format: "当前帧率 %.0f", viewModel.fps))
     }
 
-    /// FPS 颜色：>=20 白色，>=15 黄色，<15 红色
+    /// FPS 颜色：>=20 深色，>=15 橙色，<15 红色
     private var fpsColor: Color {
         if viewModel.fps >= 20 {
-            return .white
+            return AppTheme.primaryText
         } else if viewModel.fps >= 15 {
-            return .yellow
+            return AppTheme.warning
         } else {
-            return .red
+            return AppTheme.error
         }
     }
 
@@ -187,22 +184,20 @@ struct LivePreviewView: View {
                     .foregroundColor(AppTheme.warning)
                 Text("相机启动失败")
                     .font(AppFont.body(weight: .medium))
-                    .foregroundColor(.white)
+                    .foregroundColor(AppTheme.primaryText)
                 Text(error)
                     .font(AppFont.caption())
-                    .foregroundColor(.white.opacity(0.7))
+                    .foregroundColor(AppTheme.secondaryText)
                     .multilineTextAlignment(.center)
                 Button("重试") {
                     Task { await viewModel.start() }
                 }
                 .buttonStyle(.bordered)
-                .tint(.white)
             } else {
                 ProgressView()
-                    .tint(.white)
                 Text("启动相机…")
                     .font(AppFont.body())
-                    .foregroundColor(.white)
+                    .foregroundColor(AppTheme.primaryText)
             }
         }
         .padding(.horizontal, DesignTokens.pageMargin)

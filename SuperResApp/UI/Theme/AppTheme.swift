@@ -19,8 +19,8 @@ enum AppTheme {
     static let groupedBackground = Color(UIColor.systemGroupedBackground)
     static let secondaryGroupedBackground = Color(UIColor.secondarySystemGroupedBackground)
 
-    /// 预览区强制深色背景
-    static let previewBackground = Color.black
+    /// 预览区背景（统一浅色）
+    static let previewBackground = Color(UIColor.secondarySystemBackground)
 
     // MARK: - 文字
     static let primaryText = Color.primary

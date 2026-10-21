@@ -148,22 +148,21 @@ struct PhotoSuperResView: View {
                             ProgressRing(progress: progress.fraction)
                             Text(progress.progressText)
                                 .font(AppFont.body())
-                                .foregroundColor(.white)
+                                .foregroundColor(AppTheme.primaryText)
                             if let remaining = progress.remainingText {
                                 Text(remaining)
                                     .font(AppFont.subhead())
-                                    .foregroundColor(.white.opacity(0.8))
+                                    .foregroundColor(AppTheme.secondaryText)
                             }
                         } else {
                             ProgressView()
-                                .tint(.white)
                             Text("加载模型…")
                                 .font(AppFont.body())
-                                .foregroundColor(.white)
+                                .foregroundColor(AppTheme.primaryText)
                         }
                     }
                     .padding(DesignTokens.spacingLG)
-                    .background(Color.black.opacity(0.4))
+                    .background(AppTheme.background)
                     .clipShape(AppShape.card)
 
                 case .completed:
