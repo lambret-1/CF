@@ -46,7 +46,9 @@ jobs:
 
       - name: 编译构建（未签名）
         run: |
+          set -o pipefail
           xcodebuild build \
+        
             -project "${{ env.APP_NAME }}.xcodeproj" \
             -scheme "${{ env.APP_NAME }}" \
             -configuration Release \
