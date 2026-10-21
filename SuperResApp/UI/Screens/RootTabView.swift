@@ -42,6 +42,9 @@ struct RootTabView: View {
                 .tag(Tab.models)
         }
         .tint(AppTheme.accent)
+        // 统一 TabBar 背景：深色模式下与预览区黑色协调，浅色模式下使用系统背景
+        .toolbarBackground(Color(UIColor.secondarySystemBackground), for: .tabBar)
+        .toolbarBackground(.visible, for: .tabBar)
     }
 }
 

@@ -24,6 +24,9 @@ struct LivePreviewView: View {
                     } else {
                         loadingView
                     }
+
+                @unknown default:
+                    permissionView
                 }
             }
             .navigationTitle("实时超分")
@@ -69,15 +72,18 @@ struct LivePreviewView: View {
                     .tint(.white)
             }
 
-            // FPS 胶囊
+            // 顶部覆盖层：FPS + 切换摄像头（避开灵动岛/刘海）
             VStack {
-                HStack {
-                    fpsBadge
+                HStack(alignment: .top) {
+                    // FPS 指示器（FPS > 0 时显示）
+                    if viewModel.fps > 0 {
+                        fpsBadge
+                    }
                     Spacer()
                 }
                 Spacer()
             }
-            .padding(.top, DesignTokens.spacingMD)
+            .padding(.top, 8)
             .padding(.horizontal, DesignTokens.pageMargin)
 
             // 低性能警告
@@ -132,9 +138,20 @@ struct LivePreviewView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(Color.black.opacity(0.6))
-        .foregroundColor(AppTheme.fpsColor(for: viewModel.fps))
+        .foregroundColor(fpsColor)
         .clipShape(Capsule())
         .accessibilityLabel(String(format: "当前帧率 %.0f", viewModel.fps))
+    }
+
+    /// FPS 颜色：>=20 白色，>=15 黄色，<15 红色
+    private var fpsColor: Color {
+        if viewModel.fps >= 20 {
+            return .white
+        } else if viewModel.fps >= 15 {
+            return .yellow
+        } else {
+            return .red
+        }
     }
 
     // MARK: - 权限引导

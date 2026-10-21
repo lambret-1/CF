@@ -148,6 +148,19 @@ final class PhotoSuperResViewModel: ObservableObject {
         }
     }
 
+    /// 重置到空态（取消按钮）
+    func reset() {
+        Task {
+            await superResolver.cancel()
+        }
+        selectedImage = nil
+        resultImage = nil
+        inferenceProgress = nil
+        state = .empty
+        inputSizeText = ""
+        outputSizeText = ""
+    }
+
     /// 重新推理
     func resetToImageSelected() {
         resultImage = nil

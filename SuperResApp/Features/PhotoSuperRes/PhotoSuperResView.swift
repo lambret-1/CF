@@ -31,15 +31,25 @@ struct PhotoSuperResView: View {
                     modelInfoSection
                 }
 
-                // 底部操作区
-                bottomActions
-                    .padding(.horizontal, DesignTokens.pageMargin)
-                    .padding(.bottom, DesignTokens.spacingMD)
+                // 底部操作区（空态下不显示，虚线框本身可点击）
+                if viewModel.state != .empty {
+                    bottomActions
+                        .padding(.horizontal, DesignTokens.pageMargin)
+                        .padding(.bottom, DesignTokens.spacingMD)
+                }
             }
             .background(AppTheme.background)
             .navigationTitle("照片超分")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    if viewModel.state != .empty {
+                        Button("取消") {
+                            viewModel.reset()
+                        }
+                        .accessibilityLabel("取消并返回空态")
+                    }
+                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     if viewModel.canSave {
                         Button(action: {
@@ -48,7 +58,8 @@ struct PhotoSuperResView: View {
                             if viewModel.isSaving {
                                 ProgressView()
                             } else {
-                                Image(systemName: "square.and.arrow.down")
+                                Text("保存")
+                                    .font(AppFont.body(weight: .semibold))
                             }
                         }
                         .accessibilityLabel("保存到相册")
@@ -83,12 +94,19 @@ struct PhotoSuperResView: View {
 
                 switch viewModel.state {
                 case .empty:
-                    DashedEmptyStateView(
-                        icon: "photo.on.rectangle",
-                        title: "从相册选择图片",
-                        action: { viewModel.showPhotoPicker = true }
-                    )
-                    .padding(DesignTokens.pageMargin)
+                    // 空态：整个区域可点击，虚线框带水平边距
+                    Button(action: { viewModel.showPhotoPicker = true }) {
+                        DashedEmptyStateView(
+                            icon: "photo.on.rectangle",
+                            title: "从相册选择图片",
+                            action: {}
+                        )
+                        .padding(.horizontal, DesignTokens.pageMargin)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("从相册选择图片")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                 case .imageSelected, .failed:
                     if let image = viewModel.selectedImage {
@@ -226,11 +244,7 @@ struct PhotoSuperResView: View {
     private var bottomActions: some View {
         switch viewModel.state {
         case .empty:
-            PrimaryButton(
-                title: "选择图片",
-                icon: "photo.on.rectangle",
-                action: { viewModel.showPhotoPicker = true }
-            )
+            EmptyView()
 
         case .imageSelected, .failed:
             PrimaryButton(
