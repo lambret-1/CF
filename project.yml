@@ -59,7 +59,7 @@ targets:
       - path: SuperResApp/Resources/Assets.xcassets
       - path: SuperResApp/Resources/model_manifest.json
     postBuildScripts:
-      - name: 复制内置 Core ML 模型
+      - name: 复制内置 Core ML 模型与清单
         script: |
           BUILTIN_DIR="$SRCROOT/SuperResApp/Models/Builtin"
           APP_DIR="$BUILT_PRODUCTS_DIR/$PRODUCT_NAME.app"
@@ -73,7 +73,15 @@ targets:
               echo "  警告: 未找到 ${model}.mlmodelc"
             fi
           done
-          ls -la "$APP_DIR"/*.mlmodelc 2>/dev/null || echo "（无 .mlmodelc）"
+          # 复制 model_manifest.json
+          MANIFEST_SRC="$SRCROOT/SuperResApp/Resources/model_manifest.json"
+          if [ -f "$MANIFEST_SRC" ]; then
+            cp "$MANIFEST_SRC" "$APP_DIR/"
+            echo "  已复制 model_manifest.json"
+          else
+            echo "  警告: 未找到 model_manifest.json"
+          fi
+          ls -la "$APP_DIR"/*.mlmodelc "$APP_DIR"/model_manifest.json 2>/dev/null || echo "（检查失败）"
         shell: /bin/sh
     settings:
       base:
