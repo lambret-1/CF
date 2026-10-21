@@ -32,17 +32,16 @@ actor SuperResolver {
             computeUnits: descriptor.primaryComputeUnits
         )
 
-        // 动态获取模型真实需要的输入尺寸与排列方式
         guard let inputDesc = model.modelDescription.inputDescriptionsByName.first?.value,
               let constraint = inputDesc.multiArrayConstraint else {
-            throw InferenceError.modelInputNotFound
+            // 修复点：改为抛出现有的错误枚举
+            throw InferenceError.tileProcessingFailed("模型无输入或输入约束不匹配")
         }
         
         let shape = constraint.shape.map { $0.intValue }
         var height = 0
         var width = 0
         
-        // 兼容 NCHW [1, 3, H, W] 和 NHWC [1, H, W, 3]
         if shape.count == 4 {
             if shape[1] == 3 { // NCHW
                 height = shape[2]
@@ -63,7 +62,6 @@ actor SuperResolver {
         let outputWidth = image.width * descriptor.scaleFactor
         let outputHeight = image.height * descriptor.scaleFactor
 
-        // 创建输出大图（画布原点设为左上角，Y轴向下）
         guard let outputContext = CGContext(
             data: nil, width: outputWidth, height: outputHeight,
             bitsPerComponent: 8, bytesPerRow: 0,
@@ -239,7 +237,6 @@ actor SuperResolver {
         context.scaleBy(x: 1.0, y: -1.0)
         context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
 
-        // 绝不使用底层指针强转，直接用索引赋值，防止类型或大小不匹配导致越界闪退
         for y in 0..<height {
             for x in 0..<width {
                 let pixelIndex = y * bytesPerRow + x * bytesPerPixel
@@ -270,7 +267,6 @@ actor SuperResolver {
         let bytesPerRow = bytesPerPixel * width
         var pixelData = [UInt8](repeating: 0, count: height * bytesPerRow)
 
-        // 安全读取
         for y in 0..<height {
             for x in 0..<width {
                 let pixelIndex = y * bytesPerRow + x * bytesPerPixel
@@ -305,7 +301,6 @@ actor SuperResolver {
         return context.makeImage()!
     }
 
-    // MARK: - 辅助
     private func createPixelBuffer(from image: CGImage, width: Int, height: Int, pixelFormat: OSType) throws -> CVPixelBuffer {
         var pixelBuffer: CVPixelBuffer?
         let attributes: [CFString: Any] = [kCVPixelBufferCGImageCompatibilityKey: true, kCVPixelBufferCGBitmapContextCompatibilityKey: true]
