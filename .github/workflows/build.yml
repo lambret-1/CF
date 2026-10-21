@@ -58,7 +58,7 @@ jobs:
             -project "${{ env.APP_NAME }}.xcodeproj" \
             -scheme "${{ env.APP_NAME }}" \
             -configuration Release \
-            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
             -archivePath "build/${{ env.APP_NAME }}.xcarchive" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
