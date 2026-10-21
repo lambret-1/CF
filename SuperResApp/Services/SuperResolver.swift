@@ -43,17 +43,34 @@ actor SuperResolver {
             computeUnits: descriptor.primaryComputeUnits
         )
 
+        // 动态获取模型的输入尺寸限制（比如 PiperSR 可能是 256 或 512）
+        var modelInputSize = 512
+        if let inputDesc = model.modelDescription.inputDescriptionsByName.first?.value,
+           let constraint = inputDesc.multiArrayConstraint,
+           constraint.shape.count == 4 {
+            modelInputSize = constraint.shape[2].intValue
+        } else if let imageConstraint = model.modelDescription.inputDescriptionsByName.first?.value.imageConstraint {
+            modelInputSize = imageConstraint.pixelsHigh
+        }
+
         let tiles = calculateTiles(
             width: image.width, height: image.height,
-            tileSize: tileSize, overlap: descriptor.overlapPixels
+            tileSize: modelInputSize, overlap: descriptor.overlapPixels
         )
         let totalTiles = tiles.count
         let outputWidth = image.width * descriptor.scaleFactor
         let outputHeight = image.height * descriptor.scaleFactor
 
-        guard let outputContext = createOutputContext(
-            width: outputWidth, height: outputHeight
+        // 创建输出画布（并处理 Y 轴翻转，防止图像上下颠倒）
+        guard let outputContext = CGContext(
+            data: nil, width: outputWidth, height: outputHeight,
+            bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ) else { throw InferenceError.outputCreationFailed }
+        
+        outputContext.translateBy(x: 0, y: CGFloat(outputHeight))
+        outputContext.scaleBy(x: 1.0, y: -1.0)
 
         for (index, tile) in tiles.enumerated() {
             if isCancelled { throw InferenceError.cancelled }
@@ -84,15 +101,6 @@ actor SuperResolver {
                     )
                 }
             } catch {
-                if case InferenceError.insufficientMemory = error,
-                   tileSize > descriptor.fallbackTileSize {
-                    NSLog("分块 \(tileSize) 内存不足，降级到 \(descriptor.fallbackTileSize) 重试")
-                    return try await upscale(
-                        image: image, modelID: modelID,
-                        tileSize: descriptor.fallbackTileSize,
-                        progressHandler: progressHandler
-                    )
-                }
                 throw InferenceError.tileProcessingFailed(error.localizedDescription)
             }
         }
@@ -126,15 +134,21 @@ actor SuperResolver {
         let (encoder, decoder, denoiser) = try await modelStore.loadSinSR()
         let tiles = calculateTiles(
             width: image.width, height: image.height,
-            tileSize: tileSize, overlap: descriptor.overlapPixels
+            tileSize: 256, overlap: descriptor.overlapPixels
         )
         let totalTiles = tiles.count
         let outputWidth = image.width * descriptor.scaleFactor
         let outputHeight = image.height * descriptor.scaleFactor
 
-        guard let outputContext = createOutputContext(
-            width: outputWidth, height: outputHeight
+        guard let outputContext = CGContext(
+            data: nil, width: outputWidth, height: outputHeight,
+            bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ) else { throw InferenceError.outputCreationFailed }
+        
+        outputContext.translateBy(x: 0, y: CGFloat(outputHeight))
+        outputContext.scaleBy(x: 1.0, y: -1.0)
 
         for (index, tile) in tiles.enumerated() {
             if isCancelled { throw InferenceError.cancelled }
@@ -181,9 +195,7 @@ actor SuperResolver {
         )
     }
 
-    // MARK: - 补充的 runModel 方法 (用于 SinSR 串联)
     private func runModel(_ model: MLModel, inputImage: CGImage, outputName: String?) throws -> CGImage {
-        // 动态获取模型输入描述
         guard let inputDict = model.modelDescription.inputDescriptionsByName.first else {
             throw InferenceError.tileProcessingFailed("模型无输入")
         }
@@ -213,14 +225,14 @@ actor SuperResolver {
         }
 
         if outFeature.type == .multiArray, let outArray = outFeature.multiArrayValue {
-            return try multiArrayToImage(outArray, scaleFactor: 1)
+            return try multiArrayToImage(outArray)
         } else if outFeature.type == .image, let outBuffer = outFeature.imageBufferValue {
             return try createCGImage(from: outBuffer)
         }
         throw InferenceError.tileProcessingFailed("输出格式不支持")
     }
 
-    // MARK: - 分块计算
+    // MARK: - 分块计算（修复：保证每个切片大小一致且不越界）
     struct TileRect {
         let x: Int
         let y: Int
@@ -228,29 +240,33 @@ actor SuperResolver {
         let height: Int
     }
 
-    private func calculateTiles(
-        width: Int, height: Int,
-        tileSize: Int, overlap: Int
-    ) -> [TileRect] {
+    private func calculateTiles(width: Int, height: Int, tileSize: Int, overlap: Int) -> [TileRect] {
         var tiles: [TileRect] = []
-        let step = tileSize - overlap
+        let step = max(1, tileSize - overlap)
+        
         var y = 0
         while y < height {
             var x = 0
             while x < width {
-                let tileWidth = min(tileSize, width - x + (x > 0 ? overlap : 0))
-                let tileHeight = min(tileSize, height - y + (y > 0 ? overlap : 0))
-                tiles.append(TileRect(x: x, y: y, width: tileWidth, height: tileHeight))
+                // 确保最后一块不越界：如果剩余宽度不够，把起点往前挪
+                let actualX = (x + tileSize > width) ? max(0, width - tileSize) : x
+                let actualY = (y + tileSize > height) ? max(0, height - tileSize) : y
+                
+                let actualW = min(tileSize, width)
+                let actualH = min(tileSize, height)
+                
+                tiles.append(TileRect(x: actualX, y: actualY, width: actualW, height: actualH))
+                
+                if x + tileSize >= width { break }
                 x += step
-                if x >= width { break }
             }
+            if y + tileSize >= height { break }
             y += step
-            if y >= height { break }
         }
         return tiles
     }
 
-    // MARK: - 单块推理（核心逻辑）
+    // MARK: - 单块推理
     private func processTile(
         image: CGImage, tile: TileRect,
         model: MLModel, descriptor: ModelDescriptor
@@ -264,24 +280,24 @@ actor SuperResolver {
                 throw InferenceError.tileProcessingFailed("模型无输入")
             }
             let inputName = inputDict.key
-            let inputFeatureDesc = inputDict.value // 修复点：提取 .value
+            let inputFeatureDesc = inputDict.value
 
             let featureProvider: MLDictionaryFeatureProvider
 
             if inputFeatureDesc.type == .multiArray {
                 let constraint = inputFeatureDesc.multiArrayConstraint!
                 let shape = constraint.shape
-                let height = shape[2].intValue
-                let width = shape[3].intValue
+                let modelHeight = shape[2].intValue
+                let modelWidth = shape[3].intValue
 
-                let resizedImage = try resizeImage(inputTile, width: width, height: height)
+                // 确保尺寸完全匹配模型输入
+                let resizedImage = try resizeImage(inputTile, width: modelWidth, height: modelHeight)
                 let multiArray = try imageToMultiArray(
-                    resizedImage, width: width, height: height,
+                    resizedImage, width: modelWidth, height: modelHeight,
                     dataType: constraint.dataType
                 )
-                let featureValue = MLFeatureValue(multiArray: multiArray)
                 featureProvider = try MLDictionaryFeatureProvider(
-                    dictionary: [inputName: featureValue]
+                    dictionary: [inputName: MLFeatureValue(multiArray: multiArray)]
                 )
             } else if inputFeatureDesc.type == .image {
                 let constraint = inputFeatureDesc.imageConstraint!
@@ -291,18 +307,14 @@ actor SuperResolver {
                     height: constraint.pixelsHigh,
                     pixelFormat: constraint.pixelFormatType
                 )
-                let imageValue = MLFeatureValue(pixelBuffer: pixelBuffer)
                 featureProvider = try MLDictionaryFeatureProvider(
-                    dictionary: [inputName: imageValue]
+                    dictionary: [inputName: MLFeatureValue(pixelBuffer: pixelBuffer)]
                 )
             } else {
-                throw InferenceError.tileProcessingFailed(
-                    "不支持的输入类型: \(inputFeatureDesc.type.rawValue)"
-                )
+                throw InferenceError.tileProcessingFailed("不支持的输入类型")
             }
 
             let output = try model.prediction(from: featureProvider)
-
             guard let outputName = output.featureNames.first,
                   let outputFeature = output.featureValue(for: outputName) else {
                 throw InferenceError.tileProcessingFailed("模型输出无效")
@@ -310,7 +322,7 @@ actor SuperResolver {
 
             if outputFeature.type == .multiArray,
                let outputArray = outputFeature.multiArrayValue {
-                return try multiArrayToImage(outputArray, scaleFactor: descriptor.scaleFactor)
+                return try multiArrayToImage(outputArray)
             } else if outputFeature.type == .image,
                       let outputBuffer = outputFeature.imageBufferValue {
                 return try createCGImage(from: outputBuffer)
@@ -340,9 +352,8 @@ actor SuperResolver {
             bitsPerComponent: 8, bytesPerRow: bytesPerRow,
             space: colorSpace,
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else {
-            throw InferenceError.tileProcessingFailed("创建 CGContext 失败")
-        }
+        ) else { throw InferenceError.tileProcessingFailed("创建 CGContext 失败") }
+        
         context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
 
         let ptr = array.dataPointer.assumingMemoryBound(to: Float.self)
@@ -364,9 +375,7 @@ actor SuperResolver {
         return array
     }
 
-    private func multiArrayToImage(
-        _ array: MLMultiArray, scaleFactor: Int
-    ) throws -> CGImage {
+    private func multiArrayToImage(_ array: MLMultiArray) throws -> CGImage {
         let shape = array.shape
         let height = shape[2].intValue
         let width = shape[3].intValue
@@ -391,15 +400,12 @@ actor SuperResolver {
             }
         }
 
-        let colorSpace = CGColorSpaceCreateDeviceRGB()
         guard let context = CGContext(
             data: &pixelData, width: width, height: height,
             bitsPerComponent: 8, bytesPerRow: bytesPerRow,
-            space: colorSpace,
+            space: CGColorSpaceCreateDeviceRGB(),
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else {
-            throw InferenceError.tileProcessingFailed("创建输出 CGContext 失败")
-        }
+        ) else { throw InferenceError.tileProcessingFailed("创建输出 CGContext 失败") }
 
         guard let outputImage = context.makeImage() else {
             throw InferenceError.tileProcessingFailed("创建输出 CGImage 失败")
@@ -414,9 +420,7 @@ actor SuperResolver {
             bitsPerComponent: 8, bytesPerRow: 0,
             space: CGColorSpaceCreateDeviceRGB(),
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else {
-            throw InferenceError.tileProcessingFailed("创建缩放 Context 失败")
-        }
+        ) else { throw InferenceError.tileProcessingFailed("创建缩放 Context 失败") }
         context.interpolationQuality = .high
         context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
         guard let resized = context.makeImage() else {
@@ -430,18 +434,13 @@ actor SuperResolver {
         return image.cropping(to: cropRect)
     }
 
-    private func createPixelBuffer(
-        from image: CGImage, width: Int, height: Int, pixelFormat: OSType
-    ) throws -> CVPixelBuffer {
+    private func createPixelBuffer(from image: CGImage, width: Int, height: Int, pixelFormat: OSType) throws -> CVPixelBuffer {
         var pixelBuffer: CVPixelBuffer?
         let attributes: [CFString: Any] = [
             kCVPixelBufferCGImageCompatibilityKey: true,
             kCVPixelBufferCGBitmapContextCompatibilityKey: true
         ]
-        let status = CVPixelBufferCreate(
-            kCFAllocatorDefault, width, height,
-            pixelFormat, attributes as CFDictionary, &pixelBuffer
-        )
+        let status = CVPixelBufferCreate(kCFAllocatorDefault, width, height, pixelFormat, attributes as CFDictionary, &pixelBuffer)
         guard status == kCVReturnSuccess, let buffer = pixelBuffer else {
             throw InferenceError.tileProcessingFailed("创建 PixelBuffer 失败")
         }
@@ -453,8 +452,7 @@ actor SuperResolver {
             bitsPerComponent: 8,
             bytesPerRow: CVPixelBufferGetBytesPerRow(buffer),
             space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue
-                | CGBitmapInfo.byteOrder32Little.rawValue
+            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
         )
         context?.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
         return buffer
@@ -467,70 +465,57 @@ actor SuperResolver {
         let height = CVPixelBufferGetHeight(pixelBuffer)
         let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
         let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer)
-        let colorSpace = CGColorSpaceCreateDeviceRGB()
-        let bitmapInfo = CGImageAlphaInfo.premultipliedFirst.rawValue
-            | CGBitmapInfo.byteOrder32Little.rawValue
         guard let context = CGContext(
             data: baseAddress, width: width, height: height,
             bitsPerComponent: 8, bytesPerRow: bytesPerRow,
-            space: colorSpace, bitmapInfo: bitmapInfo
-        ) else {
-            throw InferenceError.tileProcessingFailed("创建 CGContext 失败")
-        }
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+        ) else { throw InferenceError.tileProcessingFailed("创建 CGContext 失败") }
         guard let image = context.makeImage() else {
             throw InferenceError.tileProcessingFailed("创建 CGImage 失败")
         }
         return image
     }
 
-    private func createOutputContext(width: Int, height: Int) -> CGContext? {
-        let colorSpace = CGColorSpaceCreateDeviceRGB()
-        let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
-            | CGBitmapInfo.byteOrder32Big.rawValue
-        return CGContext(
-            data: nil, width: width, height: height,
-            bitsPerComponent: 8, bytesPerRow: 0,
-            space: colorSpace, bitmapInfo: bitmapInfo
-        )
-    }
-
-    // MARK: - 羽化融合
+    // MARK: - 羽化融合（修复：不进行强制拉伸，坐标严格映射）
     private func blendTile(
         context: CGContext, tile: CGImage,
         tileRect: TileRect, scaleFactor: Int, overlap: Int
     ) {
-        let outputX = tileRect.x * scaleFactor
-        let outputY = tileRect.y * scaleFactor
-        let outputWidth = tileRect.width * scaleFactor
-        let outputHeight = tileRect.height * scaleFactor
-        let destRect = CGRect(
-            x: outputX, y: outputY,
-            width: outputWidth, height: outputHeight
-        )
+        let destX = CGFloat(tileRect.x * scaleFactor)
+        let destY = CGFloat(tileRect.y * scaleFactor)
+        let destW = CGFloat(tile.width)
+        let destH = CGFloat(tile.height)
+        let destRect = CGRect(x: destX, y: destY, width: destW, height: destH)
 
+        // 边缘块或无重叠直接绘制
         if tileRect.x == 0 && tileRect.y == 0 {
             context.draw(tile, in: destRect)
             return
         }
 
-        let maskWidth = outputWidth
-        let maskHeight = outputHeight
+        let maskWidth = tile.width
+        let maskHeight = tile.height
         var maskData = [UInt8](repeating: 255, count: maskWidth * maskHeight)
-        let featherWidth = min(overlap, outputWidth / 4)
-        let featherHeight = min(overlap, outputHeight / 4)
+        
+        // 动态计算羽化宽度（取 overlap 的缩放值，最大不超过切片宽/高的 1/4）
+        let featherW = min(overlap * scaleFactor, maskWidth / 4)
+        let featherH = min(overlap * scaleFactor, maskHeight / 4)
 
-        if tileRect.x > 0 && featherWidth > 0 {
-            for x in 0..<featherWidth {
-                let alpha = UInt8(255.0 * Float(x) / Float(featherWidth))
+        // 左侧羽化
+        if tileRect.x > 0 && featherW > 0 {
+            for x in 0..<featherW {
+                let alpha = UInt8(255.0 * Float(x) / Float(featherW))
                 for y in 0..<maskHeight {
                     maskData[y * maskWidth + x] = alpha
                 }
             }
         }
 
-        if tileRect.y > 0 && featherHeight > 0 {
-            for y in 0..<featherHeight {
-                let alpha = UInt8(255.0 * Float(y) / Float(featherHeight))
+        // 顶部羽化
+        if tileRect.y > 0 && featherH > 0 {
+            for y in 0..<featherH {
+                let alpha = UInt8(255.0 * Float(y) / Float(featherH))
                 for x in 0..<maskWidth {
                     maskData[y * maskWidth + x] = min(maskData[y * maskWidth + x], alpha)
                 }
@@ -538,9 +523,7 @@ actor SuperResolver {
         }
 
         let maskColorSpace = CGColorSpaceCreateDeviceGray()
-        guard let maskProvider = CGDataProvider(
-            data: NSData(bytes: maskData, length: maskData.count)
-        ),
+        guard let maskProvider = CGDataProvider(data: NSData(bytes: maskData, length: maskData.count)),
               let maskImage = CGImage(
                 width: maskWidth, height: maskHeight,
                 bitsPerComponent: 8, bitsPerPixel: 8,
@@ -562,9 +545,7 @@ actor SuperResolver {
     }
 
     // MARK: - 辅助
-    private func estimateRemaining(
-        elapsed: TimeInterval, completed: Int, total: Int
-    ) -> TimeInterval? {
+    private func estimateRemaining(elapsed: TimeInterval, completed: Int, total: Int) -> TimeInterval? {
         guard completed > 0 else { return nil }
         let perTile = elapsed / Double(completed)
         return perTile * Double(total - completed)
