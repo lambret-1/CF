@@ -56,7 +56,8 @@ targets:
           - "Resources/**"
           - "Info.plist"
     resources:
-      - path: SuperResApp/Resources
+      - path: SuperResApp/Resources/Assets.xcassets
+      - path: SuperResApp/Resources/model_manifest.json
     postBuildScripts:
       - name: 复制内置 Core ML 模型
         script: |

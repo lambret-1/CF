@@ -24,9 +24,6 @@ struct LivePreviewView: View {
                     } else {
                         loadingView
                     }
-
-                @unknown default:
-                    permissionView
                 }
             }
             .navigationTitle("实时超分")
@@ -167,11 +164,30 @@ struct LivePreviewView: View {
 
     private var loadingView: some View {
         VStack(spacing: DesignTokens.spacingMD) {
-            ProgressView()
+            if let error = viewModel.errorMessage {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.system(size: 32))
+                    .foregroundColor(AppTheme.warning)
+                Text("相机启动失败")
+                    .font(AppFont.body(weight: .medium))
+                    .foregroundColor(.white)
+                Text(error)
+                    .font(AppFont.caption())
+                    .foregroundColor(.white.opacity(0.7))
+                    .multilineTextAlignment(.center)
+                Button("重试") {
+                    Task { await viewModel.start() }
+                }
+                .buttonStyle(.bordered)
                 .tint(.white)
-            Text("启动相机…")
-                .font(AppFont.body())
-                .foregroundColor(.white)
+            } else {
+                ProgressView()
+                    .tint(.white)
+                Text("启动相机…")
+                    .font(AppFont.body())
+                    .foregroundColor(.white)
+            }
         }
+        .padding(.horizontal, DesignTokens.pageMargin)
     }
 }

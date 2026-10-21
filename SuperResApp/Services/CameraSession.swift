@@ -6,7 +6,7 @@ import AVFoundation
 import UIKit
 
 /// 相机会话，负责采集视频帧并输出 CVPixelBuffer
-actor CameraSession: NSObject {
+final class CameraSession: NSObject {
     /// 单例
     static let shared = CameraSession()
 
@@ -38,18 +38,14 @@ actor CameraSession: NSObject {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { [weak self] in
-                await self?.handleInterruption()
-            }
+            self?.handleInterruption()
         }
         NotificationCenter.default.addObserver(
             forName: .AVCaptureSessionInterruptionEnded,
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { [weak self] in
-                await self?.handleInterruptionEnded()
-            }
+            self?.handleInterruptionEnded()
         }
     }
 
@@ -223,14 +219,12 @@ actor CameraSession: NSObject {
 // MARK: - AVCaptureVideoDataOutputSampleBufferDelegate
 
 extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
-    nonisolated func captureOutput(_ output: AVCaptureVideoDataOutput,
-                                    didOutput sampleBuffer: CMSampleBuffer,
-                                    from connection: AVCaptureConnection) {
+    func captureOutput(_ output: AVCaptureVideoDataOutput,
+                       didOutput sampleBuffer: CMSampleBuffer,
+                       from connection: AVCaptureConnection) {
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         let timestamp = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
-        Task {
-            await frameHandler?(pixelBuffer, timestamp)
-        }
+        frameHandler?(pixelBuffer, timestamp)
     }
 }
 

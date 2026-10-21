@@ -34,7 +34,7 @@ final class LivePreviewViewModel: ObservableObject {
 
     /// 页面出现时启动
     func onAppear() async {
-        permissionStatus = await cameraSession.authorizationStatus
+        permissionStatus = cameraSession.authorizationStatus
         if permissionStatus == .authorized {
             await start()
         }
@@ -42,18 +42,14 @@ final class LivePreviewViewModel: ObservableObject {
 
     /// 页面消失时停止
     func onDisappear() {
-        Task {
-            await cameraSession.stop()
-            isRunning = false
-        }
+        cameraSession.stop()
+        isRunning = false
     }
 
     /// 进入后台
     func onEnterBackground() {
-        Task {
-            await cameraSession.stop()
-            isRunning = false
-        }
+        cameraSession.stop()
+        isRunning = false
     }
 
     /// 回前台
@@ -85,10 +81,8 @@ final class LivePreviewViewModel: ObservableObject {
     }
 
     func stop() {
-        Task {
-            await cameraSession.stop()
-            isRunning = false
-        }
+        cameraSession.stop()
+        isRunning = false
     }
 
     /// 请求相机权限
@@ -105,9 +99,7 @@ final class LivePreviewViewModel: ObservableObject {
         Task {
             try? await cameraSession.switchCamera()
         }
-    }
-
-    // MARK: - 帧处理
+    }    // MARK: - 帧处理
 
     private func processFrame(_ pixelBuffer: CVPixelBuffer) async {
         let now = Date().timeIntervalSince1970
