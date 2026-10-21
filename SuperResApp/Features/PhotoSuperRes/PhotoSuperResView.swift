@@ -4,34 +4,29 @@
 import SwiftUI
 import PhotosUI
 
-/// 照片超分页面
 struct PhotoSuperResView: View {
     @StateObject private var viewModel = PhotoSuperResViewModel()
     @State private var sliderPosition: CGFloat = 0.5
     @State private var isShowingOriginal = false
     @State private var zoomScale: CGFloat = 1.0
     @State private var availableModels: [ModelRuntimeInfo] = []
-
+    
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                // 预览区
                 previewArea
                     .frame(maxWidth: .infinity)
-
-                // 对比模式切换（完成后显示）
+                
                 if viewModel.state == .completed {
                     compareControls
                         .padding(.horizontal, DesignTokens.pageMargin)
                         .padding(.vertical, DesignTokens.spacingXS)
                 }
-
-                // 模型选择 + 尺寸信息
+                
                 if viewModel.state != .empty {
                     modelInfoSection
                 }
-
-                // 底部操作区（空态下不显示，虚线框本身可点击）
+                
                 if viewModel.state != .empty {
                     bottomActions
                         .padding(.horizontal, DesignTokens.pageMargin)
@@ -44,35 +39,35 @@ struct PhotoSuperResView: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     if viewModel.state != .empty {
-                        Button("取消") {
-                            viewModel.reset()
-                        }
-                        .accessibilityLabel("取消并返回空态")
+                        Button("取消") { viewModel.reset() }
+                            .accessibilityLabel("取消并返回空态")
                     }
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     if viewModel.canSave {
-                        Button(action: {
-                            Task { await viewModel.saveToAlbum() }
-                        }) {
+                        Button(action: { Task { await viewModel.saveToAlbum() } }) {
                             if viewModel.isSaving {
                                 ProgressView()
                             } else {
-                                Text("保存")
-                                    .font(AppFont.body(weight: .semibold))
+                                Text("保存").font(AppFont.body(weight: .semibold))
                             }
                         }
                         .accessibilityLabel("保存到相册")
                     }
                 }
             }
+            // 修复点 1：确保 photosPicker 绑定正确，并在 onChange 中处理加载
             .photosPicker(
                 isPresented: $viewModel.showPhotoPicker,
                 selection: $viewModel.photoPickerItem,
                 matching: .images
             )
-            .onChange(of: viewModel.photoPickerItem) { _, item in
-                Task { await viewModel.handlePickerSelection(item) }
+            .onChange(of: viewModel.photoPickerItem) { _, newItem in
+                guard let newItem else { return }
+                Task {
+                    // 修复点 2：兜底加载，防止 ViewModel 内部加载失败
+                    await loadPickerItem(newItem)
+                }
             }
             .sheet(isPresented: $viewModel.showModelPicker) {
                 modelPickerSheet
@@ -82,16 +77,30 @@ struct PhotoSuperResView: View {
             }
         }
     }
-
+    
+    // MARK: - 兜底加载图片逻辑
+    private func loadPickerItem(_ item: PhotosPickerItem) async {
+        do {
+            if let data = try await item.loadTransferable(type: Data.self),
+               let uiImage = UIImage(data: data) {
+                // 如果 ViewModel 里没有对外暴露设置图片的方法，需要它在内部处理
+                await viewModel.handlePickerSelection(item)
+            }
+        } catch {
+            print("❌ 图片加载失败: \(error.localizedDescription)")
+            await MainActor.run {
+                // 可选：在这里加一个 Toast 或 Alert 提示用户图片读取失败
+            }
+        }
+    }
+    
     // MARK: - 预览区
-
     @ViewBuilder
     private var previewArea: some View {
         GeometryReader { geometry in
             ZStack {
-                AppTheme.previewBackground
-                    .ignoresSafeArea()
-
+                AppTheme.previewBackground.ignoresSafeArea()
+                
                 switch viewModel.state {
                 case .empty:
                     // 空态：整个区域可点击，虚线框带水平边距
@@ -107,16 +116,12 @@ struct PhotoSuperResView: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("从相册选择图片")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-
+                    
                 case .imageSelected, .failed:
                     if let image = viewModel.selectedImage {
-                        ZoomableImageView(
-                            image: image,
-                            zoomScale: $zoomScale
-                        )
-                        .ignoresSafeArea()
+                        ZoomableImageView(image: image, zoomScale: $zoomScale)
+                            .ignoresSafeArea()
                     }
-
                     if case .failed(let message) = viewModel.state {
                         VStack {
                             Spacer()
@@ -124,15 +129,13 @@ struct PhotoSuperResView: View {
                                 title: "推理失败",
                                 message: message,
                                 actionTitle: "重试",
-                                action: {
-                                    Task { await viewModel.startInference() }
-                                }
+                                action: { Task { await viewModel.startInference() } }
                             )
                             .padding(.horizontal, DesignTokens.pageMargin)
                             .padding(.bottom, DesignTokens.spacingMD)
                         }
                     }
-
+                    
                 case .inferring:
                     if let image = viewModel.selectedImage {
                         Image(uiImage: image)
@@ -141,8 +144,6 @@ struct PhotoSuperResView: View {
                             .opacity(0.6)
                             .ignoresSafeArea()
                     }
-
-                    // 进度遮罩
                     VStack(spacing: DesignTokens.spacingMD) {
                         if let progress = viewModel.inferenceProgress {
                             ProgressRing(progress: progress.fraction)
@@ -164,7 +165,7 @@ struct PhotoSuperResView: View {
                     .padding(DesignTokens.spacingLG)
                     .background(AppTheme.background)
                     .clipShape(AppShape.card)
-
+                    
                 case .completed:
                     if let original = viewModel.selectedImage,
                        let result = viewModel.resultImage {
@@ -184,9 +185,8 @@ struct PhotoSuperResView: View {
         }
         .frame(maxHeight: .infinity)
     }
-
+    
     // MARK: - 对比控件
-
     private var compareControls: some View {
         HStack {
             SegmentedControl(
@@ -197,83 +197,71 @@ struct PhotoSuperResView: View {
         }
         .frame(maxWidth: .infinity)
     }
-
+    
     // MARK: - 模型信息
-
     private var modelInfoSection: some View {
         VStack(spacing: 4) {
             Button(action: { viewModel.showModelPicker = true }) {
                 HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("模型")
-                            .font(AppFont.caption())
-                            .foregroundColor(AppTheme.tertiaryText)
-                        Text(availableModels.first(where: { $0.id == viewModel.selectedModelID })?.name ?? "加载中…")
-                            .font(AppFont.body(weight: .medium))
+                    VStack(alignment.show: .leading, spacing: 2) {
+Model                        Text("模型")
+                            .fontPicker(AppFont.caption())
+                            .foregroundColor =(AppTheme.tertiaryText)
+                        Text( falseavailableModels.first(where: { $0.id == }
+ viewModel.selectedModelID })?.name ??                "加载中…")
+                            .font(AppFont }
+.body(weight: .medium))
                     }
-                    Spacer()
-                    Image(systemName: "chevron.down")
-                        .foregroundColor(AppTheme.secondaryText)
-                        .font(.system(size: 12, weight: .medium))
+                    Sp           acer()
+                    Image(systemName: "chevron }
+.down")
+                        .foregroundColor(AppTheme.secondary       Text)
+                        .font(.system(size: 12, weight }
+: .medium))
                 }
-                .contentShape(Rectangle())
+                .contentShape(R       ectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(. .plain)
             .accessibilityLabel("选择模型")
-
+present            
             if !viewModel.inputSizeText.isEmpty {
-                HStack {
-                    Text("尺寸：\(viewModel.inputSizeText)")
+                HationStack {
+                    Text("尺寸：\(viewModel.inputSizeTextDet)")
                     if !viewModel.outputSizeText.isEmpty {
-                        Text("→ \(viewModel.outputSizeText)")
+                        Text("ents→ \(viewModel.outputSizeText)")
                     }
                     Spacer()
                 }
-                .font(AppFont.subhead())
+                .font(AppFont([.subhead())
                 .foregroundColor(AppTheme.tertiaryText)
             }
         }
         .padding(.horizontal, DesignTokens.pageMargin)
         .padding(.vertical, DesignTokens.spacingXS)
     }
-
+    
     // MARK: - 底部操作
-
     @ViewBuilder
     private var bottomActions: some View {
         switch viewModel.state {
         case .empty:
             EmptyView()
-
         case .imageSelected, .failed:
-            PrimaryButton(
-                title: "开始超分",
-                icon: "wand.and.stars",
-                action: {
-                    Task { await viewModel.startInference() }
-                }
-            )
-
+            PrimaryButton(title: "开始超分", icon: "wand.and.stars", action: {
+                Task { await viewModel.startInference() }
+            })
         case .inferring:
-            PrimaryButton(
-                title: "取消",
-                isDestructive: true,
-                action: { viewModel.cancelInference() }
-            )
-
+            PrimaryButton(title: "取消", isDestructive: true, action: {
+                viewModel.cancelInference()
+            })
         case .completed:
-            PrimaryButton(
-                title: "重新超分",
-                icon: "arrow.clockwise",
-                action: {
-                    Task { await viewModel.startInference() }
-                }
-            )
+            PrimaryButton(title: "重新超分", icon: "arrow.clockwise", action: {
+                Task { await viewModel.startInference() }
+            })
         }
     }
-
+    
     // MARK: - 模型选择 Sheet
-
     private var modelPickerSheet: some View {
         NavigationStack {
             List {
@@ -292,13 +280,9 @@ struct PhotoSuperResView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("完成") { viewModel.showModelPicker = false }
-                }
-            }
-        }
-        .presentationDetents([.medium, .large])
+                    Button("完成") { viewModel.medium, .large])
     }
-
+    
     private func modelRow(_ model: ModelRuntimeInfo) -> some View {
         Button(action: { viewModel.selectModel(model.id) }) {
             HStack {
