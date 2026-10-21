@@ -181,6 +181,45 @@ actor SuperResolver {
         )
     }
 
+    // MARK: - 补充的 runModel 方法 (用于 SinSR 串联)
+    private func runModel(_ model: MLModel, inputImage: CGImage, outputName: String?) throws -> CGImage {
+        // 动态获取模型输入描述
+        guard let inputDict = model.modelDescription.inputDescriptionsByName.first else {
+            throw InferenceError.tileProcessingFailed("模型无输入")
+        }
+        let inputName = inputDict.key
+        let inputFeatureDesc = inputDict.value
+
+        let featureProvider: MLDictionaryFeatureProvider
+        if inputFeatureDesc.type == .multiArray, let constraint = inputFeatureDesc.multiArrayConstraint {
+            let shape = constraint.shape
+            let height = shape[2].intValue
+            let width = shape[3].intValue
+            let resizedImage = try resizeImage(inputImage, width: width, height: height)
+            let array = try imageToMultiArray(resizedImage, width: width, height: height, dataType: constraint.dataType)
+            featureProvider = try MLDictionaryFeatureProvider(dictionary: [inputName: MLFeatureValue(multiArray: array)])
+        } else if inputFeatureDesc.type == .image, let constraint = inputFeatureDesc.imageConstraint {
+            let pixelBuffer = try createPixelBuffer(from: inputImage, width: constraint.pixelsWide, height: constraint.pixelsHigh, pixelFormat: constraint.pixelFormatType)
+            featureProvider = try MLDictionaryFeatureProvider(dictionary: [inputName: MLFeatureValue(pixelBuffer: pixelBuffer)])
+        } else {
+            throw InferenceError.tileProcessingFailed("不支持的输入类型")
+        }
+
+        let output = try model.prediction(from: featureProvider)
+        let outName = outputName ?? output.featureNames.first!
+        
+        guard let outFeature = output.featureValue(for: outName) else {
+            throw InferenceError.tileProcessingFailed("模型输出无效")
+        }
+
+        if outFeature.type == .multiArray, let outArray = outFeature.multiArrayValue {
+            return try multiArrayToImage(outArray, scaleFactor: 1)
+        } else if outFeature.type == .image, let outBuffer = outFeature.imageBufferValue {
+            return try createCGImage(from: outBuffer)
+        }
+        throw InferenceError.tileProcessingFailed("输出格式不支持")
+    }
+
     // MARK: - 分块计算
     struct TileRect {
         let x: Int
@@ -211,7 +250,7 @@ actor SuperResolver {
         return tiles
     }
 
-    // MARK: - 单块推理（核心修复：支持 MLMultiArray 输入/输出）
+    // MARK: - 单块推理（核心逻辑）
     private func processTile(
         image: CGImage, tile: TileRect,
         model: MLModel, descriptor: ModelDescriptor
@@ -221,27 +260,21 @@ actor SuperResolver {
                 throw InferenceError.tileProcessingFailed("裁剪失败")
             }
 
-            // 动态获取模型输入描述
-            guard let inputDescription = model.modelDescription
-                .inputDescriptionsByName.first else {
+            guard let inputDict = model.modelDescription.inputDescriptionsByName.first else {
                 throw InferenceError.tileProcessingFailed("模型无输入")
             }
-            let inputName = inputDescription.key
+            let inputName = inputDict.key
+            let inputFeatureDesc = inputDict.value // 修复点：提取 .value
 
-            // === 核心修复：根据模型实际输入类型选择转换方式 ===
             let featureProvider: MLDictionaryFeatureProvider
 
-            if inputDescription.type == .multiArray {
-                // Real-ESRGAN 等模型：需要 MLMultiArray (Float32, [1,3,H,W], [0,1])
-                let constraint = inputDescription.multiArrayConstraint!
-                let shape = constraint.shape // [1, 3, H, W]
+            if inputFeatureDesc.type == .multiArray {
+                let constraint = inputFeatureDesc.multiArrayConstraint!
+                let shape = constraint.shape
                 let height = shape[2].intValue
                 let width = shape[3].intValue
 
-                // 将 CGImage 缩放到模型要求的尺寸
                 let resizedImage = try resizeImage(inputTile, width: width, height: height)
-
-                // CGImage -> MLMultiArray (CHW 格式，归一化到 [0,1])
                 let multiArray = try imageToMultiArray(
                     resizedImage, width: width, height: height,
                     dataType: constraint.dataType
@@ -250,9 +283,8 @@ actor SuperResolver {
                 featureProvider = try MLDictionaryFeatureProvider(
                     dictionary: [inputName: featureValue]
                 )
-            } else if inputDescription.type == .image {
-                // 传统图像输入模型
-                let constraint = inputDescription.imageConstraint!
+            } else if inputFeatureDesc.type == .image {
+                let constraint = inputFeatureDesc.imageConstraint!
                 let pixelBuffer = try createPixelBuffer(
                     from: inputTile,
                     width: constraint.pixelsWide,
@@ -265,14 +297,12 @@ actor SuperResolver {
                 )
             } else {
                 throw InferenceError.tileProcessingFailed(
-                    "不支持的输入类型: \(inputDescription.type.rawValue)"
+                    "不支持的输入类型: \(inputFeatureDesc.type.rawValue)"
                 )
             }
 
-            // 推理
             let output = try model.prediction(from: featureProvider)
 
-            // === 核心修复：根据模型实际输出类型选择转换方式 ===
             guard let outputName = output.featureNames.first,
                   let outputFeature = output.featureValue(for: outputName) else {
                 throw InferenceError.tileProcessingFailed("模型输出无效")
@@ -280,7 +310,6 @@ actor SuperResolver {
 
             if outputFeature.type == .multiArray,
                let outputArray = outputFeature.multiArrayValue {
-                // MLMultiArray -> CGImage
                 return try multiArrayToImage(outputArray, scaleFactor: descriptor.scaleFactor)
             } else if outputFeature.type == .image,
                       let outputBuffer = outputFeature.imageBufferValue {
@@ -291,8 +320,7 @@ actor SuperResolver {
         }
     }
 
-    // MARK: - MLMultiArray 转换（核心修复）
-    /// CGImage -> MLMultiArray (1, 3, H, W)，Float32，值归一化到 [0, 1]
+    // MARK: - MLMultiArray 转换
     private func imageToMultiArray(
         _ image: CGImage, width: Int, height: Int,
         dataType: MLMultiArrayDataType
@@ -302,7 +330,6 @@ actor SuperResolver {
             dataType: dataType
         )
 
-        // 提取像素数据（RGBA）
         let bytesPerPixel = 4
         let bytesPerRow = bytesPerPixel * width
         var pixelData = [UInt8](repeating: 0, count: height * bytesPerRow)
@@ -318,7 +345,6 @@ actor SuperResolver {
         }
         context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
 
-        // 填充 MLMultiArray（CHW 格式）
         let ptr = array.dataPointer.assumingMemoryBound(to: Float.self)
         let channelStride = height * width
 
@@ -338,11 +364,10 @@ actor SuperResolver {
         return array
     }
 
-    /// MLMultiArray -> CGImage（反归一化 [0,1] -> [0,255]，CHW 格式）
     private func multiArrayToImage(
         _ array: MLMultiArray, scaleFactor: Int
     ) throws -> CGImage {
-        let shape = array.shape // [1, 3, H, W]
+        let shape = array.shape
         let height = shape[2].intValue
         let width = shape[3].intValue
         let channelStride = height * width
@@ -494,7 +519,6 @@ actor SuperResolver {
         let featherWidth = min(overlap, outputWidth / 4)
         let featherHeight = min(overlap, outputHeight / 4)
 
-        // 左侧羽化
         if tileRect.x > 0 && featherWidth > 0 {
             for x in 0..<featherWidth {
                 let alpha = UInt8(255.0 * Float(x) / Float(featherWidth))
@@ -504,12 +528,6 @@ actor SuperResolver {
             }
         }
 
-        // 右侧羽化
-        if tileRect.x + tileRect.width < tileRect.width + tileRect.x + tileRect.width && featherWidth > 0 {
-            // 简化：不处理右侧（由下一块的左侧羽化负责）
-        }
-
-        // 顶部羽化
         if tileRect.y > 0 && featherHeight > 0 {
             for y in 0..<featherHeight {
                 let alpha = UInt8(255.0 * Float(y) / Float(featherHeight))
@@ -519,7 +537,6 @@ actor SuperResolver {
             }
         }
 
-        // 创建遮罩图像
         let maskColorSpace = CGColorSpaceCreateDeviceGray()
         guard let maskProvider = CGDataProvider(
             data: NSData(bytes: maskData, length: maskData.count)
@@ -538,7 +555,6 @@ actor SuperResolver {
             return
         }
 
-        // 用遮罩绘制
         context.saveGState()
         context.clip(to: destRect, mask: maskImage)
         context.draw(tile, in: destRect)
