@@ -58,7 +58,7 @@ actor ModelCompiler {
         // 3. 编译模型
         let compiledURL: URL
         do {
-            compiledURL = try MLModel.compileModel(at: packageURL)
+            compiledURL = try await MLModel.compileModel(at: packageURL)
         } catch {
             await manifestLoader.markFailed(id: modelID, reason: "编译失败：\(error.localizedDescription)")
             throw CompileError.compileFailed(error.localizedDescription)
@@ -119,9 +119,9 @@ actor ModelCompiler {
         }
 
         // 编译三个子模型
-        let encoderCompiled = try MLModel.compileModel(at: encoderPackage)
-        let decoderCompiled = try MLModel.compileModel(at: decoderPackage)
-        let denoiserCompiled = try MLModel.compileModel(at: denoiserPackage)
+        let encoderCompiled = try await MLModel.compileModel(at: encoderPackage)
+        let decoderCompiled = try await MLModel.compileModel(at: decoderPackage)
+        let denoiserCompiled = try await MLModel.compileModel(at: denoiserPackage)
 
         // 移动到目标目录
         let modelsDir = await manifestLoader.compiledModelURL(for: "sinsr").deletingLastPathComponent()

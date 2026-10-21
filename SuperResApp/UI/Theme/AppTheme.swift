@@ -25,7 +25,7 @@ enum AppTheme {
     // MARK: - 文字
     static let primaryText = Color.primary
     static let secondaryText = Color.secondary
-    static let tertiaryText = Color.tertiary
+    static let tertiaryText = Color(UIColor.tertiaryLabel)
 
     // MARK: - 分割线
     static let separator = Color(UIColor.separator)

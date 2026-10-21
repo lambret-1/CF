@@ -112,8 +112,13 @@ actor ModelDownloader: NSObject {
         // 检查网络
         let canDownload = await networkMonitor.canDownload(wifiOnly: item.wifiOnly)
         if !canDownload {
-            if item.wifiOnly && await networkMonitor.isCellular {
-                await manifestLoader.markFailed(id: modelID, reason: "此模型仅支持 Wi-Fi 下载")
+            if item.wifiOnly {
+                let isCellular = await networkMonitor.isCellular
+                if isCellular {
+                    await manifestLoader.markFailed(id: modelID, reason: "此模型仅支持 Wi-Fi 下载")
+                } else {
+                    await manifestLoader.markFailed(id: modelID, reason: "网络连接不可用")
+                }
             } else {
                 await manifestLoader.markFailed(id: modelID, reason: "网络连接不可用")
             }
