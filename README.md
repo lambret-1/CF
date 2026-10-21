@@ -1,3 +1,52 @@
+# 超分工坊（SuperResApp）
+
+iOS 超分 App，纯原生 Swift + SwiftUI，Core ML 推理，支持照片超分、实时预览、模型管理。
+
+## 快速构建
+
+```bash
+# 安装 XcodeGen
+brew install xcodegen
+
+# 生成 Xcode 工程
+xcodegen generate
+
+# 打开工程
+open SuperResApp.xcodeproj
+```
+
+## CI/CD
+
+推送代码后 GitHub Actions 自动构建未签名 IPA，产物在 Actions 页面下载。
+
+## 工程结构
+
+```
+SuperResApp/
+├── App/                    # 应用入口与依赖注入
+├── Models/                 # 模型清单与描述符
+│   ├── Builtin/            # 内置编译后模型（.mlmodelc，需自行放入）
+│   └── Manifest/           # 清单数据结构与加载器
+├── Services/               # 核心服务（下载/编译/存储/推理/相册/相机）
+├── Features/               # 业务功能页面
+│   ├── PhotoSuperRes/      # 照片超分
+│   ├── LivePreview/        # 实时预览
+│   └── ModelManager/       # 模型管理
+├── UI/                     # 通用 UI（主题/组件/屏幕）
+└── Resources/              # 资源（manifest.json / Assets.xcassets）
+```
+
+## 内置模型
+
+首次运行前需将编译后的模型放入 `SuperResApp/Models/Builtin/`：
+
+- `PiperSR_2x.mlmodelc/` — 实时 + 回退
+- `RealESRGAN_x4v3.mlmodelc/` — 轻量照片超分
+
+详见 `SuperResApp/Models/Builtin/README.md`。
+
+---
+
 iOS 超分 App 开发文档（自签名自用版 · 含现成模型链接与 UI 设计细化）
 
 适用范围：自用 iOS 超分 App，内置轻量模型 + 按需下载大模型。

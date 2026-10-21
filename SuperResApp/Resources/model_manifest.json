@@ -1,0 +1,80 @@
+[
+  {
+    "id": "piper-sr-2x",
+    "name": "PiperSR 2x (ANE)",
+    "size": 950000,
+    "url": "https://your-host/models/PiperSR_2x.mlpackage.zip",
+    "sha256": "",
+    "builtin": true,
+    "wifiOnly": false,
+    "computeUnits": "cpuAndNeuralEngine",
+    "license": "CC-BY-4.0",
+    "source": "https://huggingface.co/ModelPiper/PiperSR-2x",
+    "note": "内置实时模型，ANE 原生加速，用于实时预览和加载失败回退。建议自打包成 zip 后替换 url。"
+  },
+  {
+    "id": "realesrgan-x4v3",
+    "name": "Real-ESRGAN x4v3 (轻量)",
+    "size": 2400000,
+    "url": "https://huggingface.co/LocalMuseAI/coreml-realesrgan-x4plus/resolve/main/RealESRGAN-x4v3.mlpackage.zip",
+    "sha256": "",
+    "builtin": true,
+    "wifiOnly": false,
+    "computeUnits": "all",
+    "license": "BSD-3-Clause",
+    "source": "https://huggingface.co/LocalMuseAI/coreml-realesrgan-x4plus",
+    "note": "内置轻量照片超分模型，约 2.29MB，计算单元必须 .all，禁止改为 .cpuOnly 或 .cpuAndGPU。"
+  },
+  {
+    "id": "realesrgan-x4",
+    "name": "Real-ESRGAN x4",
+    "size": 61865984,
+    "url": "https://huggingface.co/mlboydaisuke/coreml-zoo/resolve/main/realesrgan/RealESRGAN_x4.mlpackage.zip",
+    "sha256": "",
+    "builtin": false,
+    "wifiOnly": false,
+    "computeUnits": "all",
+    "license": "BSD-3-Clause",
+    "source": "https://huggingface.co/mlboydaisuke/Real-ESRGAN-x4-CoreML",
+    "note": "通用照片超分，约 59MB，峰值内存约 500MB，必须分块推理。计算单元 .all，禁止改 .cpuOnly/.cpuAndGPU（FP16 attention 溢出）。"
+  },
+  {
+    "id": "realesrgan-x4plus",
+    "name": "Real-ESRGAN x4plus",
+    "size": 31000000,
+    "url": "https://huggingface.co/LocalMuseAI/coreml-realesrgan-x4plus/resolve/main/RealESRGAN-x4plus.mlpackage.zip",
+    "sha256": "",
+    "builtin": false,
+    "wifiOnly": false,
+    "computeUnits": "all",
+    "license": "BSD-3-Clause",
+    "source": "https://huggingface.co/LocalMuseAI/coreml-realesrgan-x4plus",
+    "note": "高画质变体，约 31MB。计算单元必须 .all。"
+  },
+  {
+    "id": "realesrgan-ultrasharp",
+    "name": "Real-ESRGAN UltraSharp",
+    "size": 30900000,
+    "url": "https://huggingface.co/LocalMuseAI/coreml-realesrgan-x4plus/resolve/main/RealESRGAN-UltraSharp.mlpackage.zip",
+    "sha256": "",
+    "builtin": false,
+    "wifiOnly": false,
+    "computeUnits": "all",
+    "license": "BSD-3-Clause",
+    "source": "https://huggingface.co/LocalMuseAI/coreml-realesrgan-x4plus",
+    "note": "锐化增强变体，约 30.9MB。计算单元必须 .all。"
+  },
+  {
+    "id": "sinsr",
+    "name": "SinSR (扩散，非商用)",
+    "size": 542000000,
+    "url": "https://your-host/models/SinSR-bundle.zip",
+    "sha256": "",
+    "builtin": false,
+    "wifiOnly": true,
+    "computeUnits": "mixed",
+    "license": "CC BY-NC-SA 4.0",
+    "source": "https://huggingface.co/mlboydaisuke/SinSR-CoreML",
+    "note": "扩散模型三件套：Encoder/Decoder 用 .all，Denoiser 必须 .cpuOnly。约 517MB，仅 Wi-Fi 下载。非商用许可证 CC BY-NC-SA 4.0，CPU 推理较慢。建议将三个子模型自打包为一个 zip 后替换 url。"
+  }
+]
