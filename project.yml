@@ -6,6 +6,7 @@ options:
   xcodeVersion: "15.4"
   createIntermediateGroups: true
   generateEmptyDirectories: true
+  objectVersion: 56
 
 settings:
   base:
