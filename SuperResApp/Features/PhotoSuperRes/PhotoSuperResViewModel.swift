@@ -157,8 +157,6 @@ final class PhotoSuperResViewModel: ObservableObject {
         resultImage = nil
         inferenceProgress = nil
         state = .empty
-        inputSizeText = ""
-        outputSizeText = ""
     }
 
     /// 重新推理
