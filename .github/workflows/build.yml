@@ -56,14 +56,14 @@ jobs:
             -scheme "${{ env.APP_NAME }}" \
             -resolvePackageDependencies
 
-      - name: 编译归档（未签名）
+      - name: 编译构建（未签名）
         run: |
-          xcodebuild archive \
+          xcodebuild build \
             -project "${{ env.APP_NAME }}.xcodeproj" \
             -scheme "${{ env.APP_NAME }}" \
             -configuration Release \
-            -destination "generic/platform=iOS" \
-            -archivePath "build/${{ env.APP_NAME }}.xcarchive" \
+            -sdk iphoneos \
+            -derivedDataPath build/DerivedData \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
@@ -77,8 +77,9 @@ jobs:
 
       - name: 导出未签名 IPA
         run: |
+          APP_PATH="build/DerivedData/Build/Products/Release-iphoneos/${{ env.APP_NAME }}.app"
           mkdir -p build/Payload
-          cp -R "build/${{ env.APP_NAME }}.xcarchive/Products/Applications/${{ env.APP_NAME }}.app" build/Payload/
+          cp -R "$APP_PATH" build/Payload/
           cd build && zip -qr "${{ env.APP_NAME }}-unsigned.ipa" Payload
           ls -lh "${{ env.APP_NAME }}-unsigned.ipa"
           echo "=== App 内模型检查 ==="
