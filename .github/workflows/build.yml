@@ -87,13 +87,6 @@ jobs:
           path: build/${{ env.APP_NAME }}-unsigned.ipa
           retention-days: 30
 
-      - name: 上传内置模型产物
-        uses: actions/upload-artifact@v4
-        with:
-          name: builtin-models
-          path: SuperResApp/Models/Builtin/*.mlmodelc
-          retention-days: 30
-
       - name: 构建失败时输出日志
         if: failure()
         run: |
