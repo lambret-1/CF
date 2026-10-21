@@ -2,79 +2,79 @@
   {
     "id": "piper-sr-2x",
     "name": "PiperSR 2x (ANE)",
-    "size": 950000,
-    "url": "https://your-host/models/PiperSR_2x.mlpackage.zip",
-    "sha256": "",
+    "size": 928000,
+    "url": "https://huggingface.co/ModelPiper/PiperSR-2x/tree/main",
+    "sha256": "fed22b55e9d4770f247ca69e5d3ed51beb629e436b71ad3d5c9f4588f199bb42",
     "builtin": true,
     "wifiOnly": false,
     "computeUnits": "cpuAndNeuralEngine",
     "license": "CC-BY-4.0",
     "source": "https://huggingface.co/ModelPiper/PiperSR-2x",
-    "note": "内置实时模型，ANE 原生加速，用于实时预览和加载失败回退。建议自打包成 zip 后替换 url。"
+    "note": "内置实时模型，ANE 原生加速，用于实时预览和加载失败回退。sha256 为按 mlpackage 目录结构自打包 zip 的校验值。"
   },
   {
     "id": "realesrgan-x4v3",
     "name": "Real-ESRGAN x4v3 (轻量)",
-    "size": 2400000,
+    "size": 2493952,
     "url": "https://huggingface.co/LocalMuseAI/coreml-realesrgan-x4plus/resolve/main/RealESRGAN-x4v3.mlpackage.zip",
-    "sha256": "",
+    "sha256": "5a59e554794371b95fe61274b8a2040f1b3e274479abf15595dcdad0535afad4",
     "builtin": true,
     "wifiOnly": false,
     "computeUnits": "all",
     "license": "BSD-3-Clause",
     "source": "https://huggingface.co/LocalMuseAI/coreml-realesrgan-x4plus",
-    "note": "内置轻量照片超分模型，约 2.29MB，计算单元必须 .all，禁止改为 .cpuOnly 或 .cpuAndGPU。"
+    "note": "内置轻量照片超分模型，约 2.3MB，计算单元必须 .all，禁止改为 .cpuOnly 或 .cpuAndGPU。"
   },
   {
     "id": "realesrgan-x4",
     "name": "Real-ESRGAN x4",
-    "size": 61865984,
+    "size": 62914560,
     "url": "https://huggingface.co/mlboydaisuke/coreml-zoo/resolve/main/realesrgan/RealESRGAN_x4.mlpackage.zip",
-    "sha256": "",
+    "sha256": "5fd9d7ea7e6187ffb53a1125d5b20f3e76503e89f994aebf189d965977afdda5",
     "builtin": false,
     "wifiOnly": false,
     "computeUnits": "all",
     "license": "BSD-3-Clause",
     "source": "https://huggingface.co/mlboydaisuke/Real-ESRGAN-x4-CoreML",
-    "note": "通用照片超分，约 59MB，峰值内存约 500MB，必须分块推理。计算单元 .all，禁止改 .cpuOnly/.cpuAndGPU（FP16 attention 溢出）。"
+    "note": "通用照片超分，约 60MB，峰值内存约 500MB，必须分块推理。计算单元 .all，禁止改 .cpuOnly/.cpuAndGPU（FP16 attention 溢出）。"
   },
   {
     "id": "realesrgan-x4plus",
     "name": "Real-ESRGAN x4plus",
-    "size": 31000000,
+    "size": 31457280,
     "url": "https://huggingface.co/LocalMuseAI/coreml-realesrgan-x4plus/resolve/main/RealESRGAN-x4plus.mlpackage.zip",
-    "sha256": "",
+    "sha256": "61d44a58bb8549a0c0485c95d2b384c598b48a648231206b3e7c2ac221e64599",
     "builtin": false,
     "wifiOnly": false,
     "computeUnits": "all",
     "license": "BSD-3-Clause",
     "source": "https://huggingface.co/LocalMuseAI/coreml-realesrgan-x4plus",
-    "note": "高画质变体，约 31MB。计算单元必须 .all。"
+    "note": "高画质变体，约 30MB。计算单元必须 .all。"
   },
   {
     "id": "realesrgan-ultrasharp",
     "name": "Real-ESRGAN UltraSharp",
-    "size": 30900000,
+    "size": 31457280,
     "url": "https://huggingface.co/LocalMuseAI/coreml-realesrgan-x4plus/resolve/main/RealESRGAN-UltraSharp.mlpackage.zip",
-    "sha256": "",
+    "sha256": "4b31792e63ebd1feedac423b7ed560c6c56486f9549337438f513b2ea0bf3f93",
     "builtin": false,
     "wifiOnly": false,
     "computeUnits": "all",
     "license": "BSD-3-Clause",
     "source": "https://huggingface.co/LocalMuseAI/coreml-realesrgan-x4plus",
-    "note": "锐化增强变体，约 30.9MB。计算单元必须 .all。"
+    "note": "锐化增强变体，约 30MB。计算单元必须 .all。"
   },
   {
     "id": "sinsr",
     "name": "SinSR (扩散，非商用)",
     "size": 542000000,
-    "url": "https://your-host/models/SinSR-bundle.zip",
+    "url": "https://huggingface.co/mlboydaisuke/SinSR-CoreML/tree/main",
     "sha256": "",
     "builtin": false,
     "wifiOnly": true,
     "computeUnits": "mixed",
     "license": "CC BY-NC-SA 4.0",
     "source": "https://huggingface.co/mlboydaisuke/SinSR-CoreML",
-    "note": "扩散模型三件套：Encoder/Decoder 用 .all，Denoiser 必须 .cpuOnly。约 517MB，仅 Wi-Fi 下载。非商用许可证 CC BY-NC-SA 4.0，CPU 推理较慢。建议将三个子模型自打包为一个 zip 后替换 url。"
+    "note": "扩散模型三件套：Encoder/Decoder 用 .all，Denoiser 必须 .cpuOnly。约 517MB，仅 Wi-Fi 下载。非商用许可证 CC BY-NC-SA 4.0，CPU 推理较慢。HF 上为三个独立 zip（Encoder 39MB / Denoiser 412MB / Decoder 66MB），建议自打包为一个 zip 后替换 url，sha256 打包后计算填入。"
   }
 ]

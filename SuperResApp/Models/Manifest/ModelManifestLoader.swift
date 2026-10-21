@@ -146,8 +146,12 @@ actor ModelManifestLoader {
 
     /// 获取内置模型在 Bundle 中的路径
     func builtinModelURL(for id: String) -> URL? {
-        // 内置模型放在 Bundle 的 Builtin 目录下
-        let name = id.replacingOccurrences(of: "-", with: "_")
+        // 内置模型文件名映射（区分大小写）
+        let nameMap: [String: String] = [
+            "piper-sr-2x": "PiperSR_2x",
+            "realesrgan-x4v3": "RealESRGAN_x4v3"
+        ]
+        let name = nameMap[id] ?? id.replacingOccurrences(of: "-", with: "_")
         return Bundle.main.url(forResource: name, withExtension: "mlmodelc")
     }
 
