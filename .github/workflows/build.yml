@@ -14,19 +14,17 @@ env:
 jobs:
   build:
     name: 构建 iOS 未签名包
-    runs-on: macos-15
+    runs-on: macos-14
     timeout-minutes: 30
-
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
 
       - name: 配置 Xcode
         run: |
-          sudo xcode-select -switch /Applications/Xcode_16.app/Contents/Developer 2>/dev/null || sudo xcode-select -switch /Applications/Xcode.app/Contents/Developer
+          sudo xcode-select -switch /Applications/Xcode.app/Contents/Developer
           xcodebuild -version
           sudo xcodebuild -runFirstLaunch || true
-          xcodebuild -downloadPlatform iOS || true
           xcodebuild -showsdks | grep -i iphone
 
       - name: 安装 XcodeGen
