@@ -41,10 +41,12 @@ unzip -q "$TMP_DIR/RealESRGAN_x4v3.mlpackage.zip" -d "$TMP_DIR"
 echo "  完成"
 
 echo "[3/4] 编译 PiperSR 2x..."
+rm -rf "$BUILTIN_DIR/PiperSR_2x.mlmodelc"
 xcrun coremlcompiler compile "$TMP_DIR/PiperSR_2x.mlpackage" "$BUILTIN_DIR"
 echo "  完成 -> $BUILTIN_DIR/PiperSR_2x.mlmodelc"
 
 echo "[4/4] 编译 Real-ESRGAN x4v3..."
+rm -rf "$BUILTIN_DIR/RealESRGAN_x4v3.mlmodelc" "$BUILTIN_DIR/RealESRGAN-x4v3.mlmodelc"
 xcrun coremlcompiler compile "$TMP_DIR/RealESRGAN-x4v3.mlpackage" "$BUILTIN_DIR"
 # 重命名为统一格式
 if [ -d "$BUILTIN_DIR/RealESRGAN-x4v3.mlmodelc" ]; then
