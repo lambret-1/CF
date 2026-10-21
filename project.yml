@@ -57,7 +57,10 @@ targets:
           - "Info.plist"
     resources:
       - path: SuperResApp/Resources
-      - path: SuperResApp/Models/Builtin
+      - path: SuperResApp/Models/Builtin/PiperSR_2x.mlmodelc
+        optional: true
+      - path: SuperResApp/Models/Builtin/RealESRGAN_x4v3.mlmodelc
+        optional: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: "com.superres.app"

@@ -32,8 +32,7 @@ fastlane/Preview.html
 fastlane/screenshots/**/*.png
 fastlane/test_output
 
-# Models (大模型不入库)
-SuperResApp/Models/Builtin/*.mlmodelc/
+# Models (大模型不入库，内置小模型除外)
 SuperResApp/Models/Builtin/*.mlpackage/
 
 # OS

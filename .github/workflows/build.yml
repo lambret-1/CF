@@ -77,12 +77,21 @@ jobs:
           cp -R "build/${{ env.APP_NAME }}.xcarchive/Products/Applications/${{ env.APP_NAME }}.app" build/Payload/
           cd build && zip -qr "${{ env.APP_NAME }}-unsigned.ipa" Payload
           ls -lh "${{ env.APP_NAME }}-unsigned.ipa"
+          echo "=== App 内模型检查 ==="
+          find "Payload/${{ env.APP_NAME }}.app" -name "*.mlmodelc" -type d || echo "（未找到 .mlmodelc）"
 
       - name: 上传 IPA 产物
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.APP_NAME }}-unsigned-v${{ env.VERSION }}.ipa
           path: build/${{ env.APP_NAME }}-unsigned.ipa
+          retention-days: 30
+
+      - name: 上传内置模型产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: builtin-models
+          path: SuperResApp/Models/Builtin/*.mlmodelc
           retention-days: 30
 
       - name: 构建失败时输出日志
