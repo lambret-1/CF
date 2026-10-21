@@ -197,10 +197,6 @@ final class LivePreviewViewModel: ObservableObject {
 
 extension CameraSession {
     func setFrameHandler(_ handler: @escaping (CVPixelBuffer, CMTime) -> Void) {
-        Task {
-            await MainActor.run {
-                self.frameHandler = handler
-            }
-        }
+        self.frameHandler = handler
     }
 }

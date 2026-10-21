@@ -90,22 +90,11 @@ actor NetworkMonitor {
     /// 等待网络连接可用（超时后返回当前状态）
     func waitForConnection(timeout: TimeInterval = 10) async -> Bool {
         if isConnected { return true }
-        return await withTaskGroup(of: Bool.self) { group in
-            group.addTask {
-                for await path in self.pathUpdates {
-                    if path.status == .satisfied {
-                        return true
-                    }
-                }
-                return false
-            }
-            group.addTask {
-                try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
-                return false
-            }
-            let result = await group.next() ?? false
-            group.cancelAll()
-            return result
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            if isConnected { return true }
         }
+        return false
     }
 }

@@ -184,26 +184,14 @@ final class ModelManagerViewModel: ObservableObject {
 
 extension ModelDownloader {
     func setProgressHandler(_ handler: @escaping (String, Int64, Int64, Double) -> Void) {
-        Task {
-            await MainActor.run {
-                self.progressHandler = handler
-            }
-        }
+        self.progressHandler = handler
     }
 
     func setCompletionHandler(_ handler: @escaping (String, URL) -> Void) {
-        Task {
-            await MainActor.run {
-                self.completionHandler = handler
-            }
-        }
+        self.completionHandler = handler
     }
 
     func setFailureHandler(_ handler: @escaping (String, Error) -> Void) {
-        Task {
-            await MainActor.run {
-                self.failureHandler = handler
-            }
-        }
+        self.failureHandler = handler
     }
 }

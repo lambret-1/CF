@@ -58,7 +58,13 @@ final class PhotoSuperResViewModel: ObservableObject {
     }
 
     var canInfer: Bool {
-        selectedImage != nil && (state == .imageSelected || state == .completed || state == .failed)
+        guard selectedImage != nil else { return false }
+        switch state {
+        case .imageSelected, .completed, .failed:
+            return true
+        default:
+            return false
+        }
     }
 
     var canSave: Bool {
