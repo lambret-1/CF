@@ -48,7 +48,6 @@ jobs:
         run: |
           set -o pipefail
           xcodebuild build \
-        
             -project "${{ env.APP_NAME }}.xcodeproj" \
             -scheme "${{ env.APP_NAME }}" \
             -configuration Release \
