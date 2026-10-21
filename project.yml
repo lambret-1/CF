@@ -57,10 +57,23 @@ targets:
           - "Info.plist"
     resources:
       - path: SuperResApp/Resources
-      - path: SuperResApp/Models/Builtin/PiperSR_2x.mlmodelc
-        optional: true
-      - path: SuperResApp/Models/Builtin/RealESRGAN_x4v3.mlmodelc
-        optional: true
+    postBuildScripts:
+      - name: 复制内置 Core ML 模型
+        script: |
+          BUILTIN_DIR="$SRCROOT/SuperResApp/Models/Builtin"
+          APP_DIR="$BUILT_PRODUCTS_DIR/$PRODUCT_NAME.app"
+          echo "=== 复制内置模型到 $APP_DIR ==="
+          for model in PiperSR_2x RealESRGAN_x4v3; do
+            if [ -d "$BUILTIN_DIR/${model}.mlmodelc" ]; then
+              rm -rf "$APP_DIR/${model}.mlmodelc"
+              cp -R "$BUILTIN_DIR/${model}.mlmodelc" "$APP_DIR/"
+              echo "  已复制 ${model}.mlmodelc"
+            else
+              echo "  警告: 未找到 ${model}.mlmodelc"
+            fi
+          done
+          ls -la "$APP_DIR"/*.mlmodelc 2>/dev/null || echo "（无 .mlmodelc）"
+        shell: /bin/sh
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: "com.superres.app"
