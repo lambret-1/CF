@@ -29,6 +29,13 @@ jobs:
       - name: 安装 XcodeGen
         run: brew install xcodegen
 
+      - name: 下载并编译内置模型
+        run: |
+          chmod +x ./scripts/compile_builtin_models.sh
+          ./scripts/compile_builtin_models.sh
+          echo "=== 内置模型列表 ==="
+          ls -lh SuperResApp/Models/Builtin/*.mlmodelc 2>/dev/null || echo "（未找到 .mlmodelc）"
+
       - name: 生成 Xcode 工程
         run: |
           xcodegen generate

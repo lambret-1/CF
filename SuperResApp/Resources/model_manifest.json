@@ -67,14 +67,14 @@
   {
     "id": "sinsr",
     "name": "SinSR (扩散，非商用)",
-    "size": 542000000,
-    "url": "https://huggingface.co/mlboydaisuke/SinSR-CoreML/tree/main",
-    "sha256": "",
+    "size": 542141090,
+    "url": "https://github.com/lambret-1/CF/releases/download/model-assets-v1/SinSR-bundle.zip",
+    "sha256": "a8440741f50ed2c71ef0539daad6cee2bc251435b1ba2663d4c8bf3a081a73fc",
     "builtin": false,
     "wifiOnly": true,
     "computeUnits": "mixed",
     "license": "CC BY-NC-SA 4.0",
     "source": "https://huggingface.co/mlboydaisuke/SinSR-CoreML",
-    "note": "扩散模型三件套：Encoder/Decoder 用 .all，Denoiser 必须 .cpuOnly。约 517MB，仅 Wi-Fi 下载。非商用许可证 CC BY-NC-SA 4.0，CPU 推理较慢。HF 上为三个独立 zip（Encoder 39MB / Denoiser 412MB / Decoder 66MB），建议自打包为一个 zip 后替换 url，sha256 打包后计算填入。"
+    "note": "扩散模型三件套：Encoder/Decoder 用 .all，Denoiser 必须 .cpuOnly。约 517MB，仅 Wi-Fi 下载。非商用许可证 CC BY-NC-SA 4.0，CPU 推理较慢。已打包为单一 zip 托管于 GitHub Releases。"
   }
 ]
