@@ -388,7 +388,7 @@ actor SuperResolver {
         CVPixelBufferLockBaseAddress(pixelBuffer, [])
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, []) }
         guard let context = CGContext(data: CVPixelBufferGetBaseAddress(pixelBuffer), width: CVPixelBufferGetWidth(pixelBuffer), height: CVPixelBufferGetHeight(pixelBuffer), bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(pixelBuffer), space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue) else {
-            throw InferenceError.tileProcessingFailed("创建 CGContext 失败")
+            throw InferenceError.tileProcessingFailed("创建CGContext 失败")
         }
         context.translateBy(x: 0, y: CGFloat(CVPixelBufferGetHeight(pixelBuffer)))
         context.scaleBy(x: 1.0, y: -1.0)
