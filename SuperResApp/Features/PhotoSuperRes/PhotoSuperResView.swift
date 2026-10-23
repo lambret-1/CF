@@ -118,28 +118,63 @@ struct PhotoSuperResView: View {
                         Image(uiImage: image)
                             .resizable()
                             .aspectRatio(contentMode: .fit)
-                            .opacity(0.6)
+                            .opacity(0.5) // 稍微变暗
+                            .blur(radius: 1) // 轻微模糊，突出底部进度
                             .frame(width: geometry.size.width, height: geometry.size.height)
                     }
-                    VStack(spacing: DesignTokens.spacingMD) {
-                        if let progress = viewModel.inferenceProgress {
-                            ProgressRing(progress: progress.fraction)
-                            Text(progress.progressText)
-                                .foregroundColor(AppTheme.primaryText)
-                            if let remaining = progress.remainingText {
-                                Text(remaining)
-                                    .font(.subheadline)
-                                    .foregroundColor(AppTheme.secondaryText)
+                    
+                    VStack {
+                        Spacer()
+                        
+                        // ⭐️ 底部绿色进度条区域
+                        VStack(spacing: 8) {
+                            HStack {
+                                if let progress = viewModel.inferenceProgress {
+                                    if progress.totalTiles > 1 {
+                                        Text("处理中 \(progress.currentTile)/\(progress.totalTiles) 块")
+                                            .font(.system(size: 13, weight: .medium))
+                                    } else {
+                                        Text("正在极速处理...")
+                                            .font(.system(size: 13, weight: .medium))
+                                    }
+                                } else {
+                                    Text("加载模型...")
+                                        .font(.system(size: 13, weight: .medium))
+                                }
+                                
+                                Spacer()
+                                
+                                if let progress = viewModel.inferenceProgress {
+                                    Text("\(Int(progress.fraction * 100))%")
+                                        .font(.system(size: 13, weight: .bold))
+                                        .foregroundColor(.green)
+                                }
                             }
-                        } else {
-                            ProgressView()
-                            Text("加载模型…")
-                                .foregroundColor(AppTheme.primaryText)
+                            .foregroundColor(.white)
+                            
+                            // 进度条
+                            GeometryReader { barGeo in
+                                ZStack(alignment: .leading) {
+                                    Capsule()
+                                        .fill(Color.white.opacity(0.3))
+                                        .frame(height: 6)
+                                    
+                                    Capsule()
+                                        .fill(Color.green)
+                                        // 进度为 0 时给一点点宽度，防止消失
+                                        .frame(width: max(barGeo.size.width * (viewModel.inferenceProgress?.fraction ?? 0.02), 6), height: 6)
+                                        .animation(.easeInOut(duration: 0.3), value: viewModel.inferenceProgress?.fraction ?? 0)
+                                }
+                            }
+                            .frame(height: 6)
                         }
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 16)
+                        .background(Color.black.opacity(0.65))
+                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        .padding(.horizontal, 24)
+                        .padding(.bottom, 20) // 距离照片底部的距离
                     }
-                    .padding(DesignTokens.spacingLG)
-                    .background(AppTheme.background)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
                     
                 case .completed:
                     if let original = viewModel.selectedImage,
@@ -245,7 +280,6 @@ struct PhotoSuperResView: View {
                 }
                 
                 Section("已下载模型") {
-                    // ⭐️ 修复：只显示非内置且状态为 downloaded 的模型
                     let downloadedModels = availableModels.filter { !$0.isBuiltin && $0.status == .downloaded }
                     
                     if downloadedModels.isEmpty {
