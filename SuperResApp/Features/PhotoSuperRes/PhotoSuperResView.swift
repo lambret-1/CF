@@ -96,7 +96,6 @@ struct PhotoSuperResView: View {
                 case .imageSelected, .failed:
                     if let image = viewModel.selectedImage {
                         ZoomableImageView(image: image, zoomScale: $zoomScale)
-                            .ignoresSafeArea()
                     }
                     if case .failed(let message) = viewModel.state {
                         VStack {
