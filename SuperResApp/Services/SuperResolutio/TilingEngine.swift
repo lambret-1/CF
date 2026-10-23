@@ -29,23 +29,19 @@ struct TilingEngine: SuperResolutionEngine {
         let outputWidth = image.width * scaleFactor
         let outputHeight = image.height * scaleFactor
 
-        // ⭐️ 纯净版画布：去掉所有内存限制和缩放，老老实实按 4 倍出图
+        // ⭐️ 核心修复 1：不翻转 Context，保持原生坐标系（左下角原点）
         guard let outputContext = CGContext(
             data: nil, width: outputWidth, height: outputHeight,
             bitsPerComponent: 8, bytesPerRow: 0,
             space: CGColorSpaceCreateDeviceRGB(),
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ) else { throw InferenceError.outputCreationFailed }
-        
-        outputContext.translateBy(x: 0, y: CGFloat(outputHeight))
-        outputContext.scaleBy(x: 1.0, y: -1.0)
 
         let ciImage = CIImage(cgImage: image)
         
         for (index, tile) in tiles.enumerated() {
             try autoreleasepool {
-                // ⭐️ 修复：使用 CoreImage 的坐标系裁剪，但要把 Y 轴翻过来
-                // CIImage 原点在左下角，我们的 tile.y 是左上角，所以要换算一下
+                // 使用 CIImage 裁剪
                 let ciY = CGFloat(image.height) - CGFloat(tile.y) - CGFloat(tile.height)
                 let ciCropRect = CGRect(x: tile.x, y: Int(ciY), width: tile.width, height: tile.height)
                 
@@ -54,9 +50,17 @@ struct TilingEngine: SuperResolutionEngine {
                 
                 guard let croppedCG = self.ciContext.createCGImage(movedCIImage, from: CGRect(x: 0, y: 0, width: tile.width, height: tile.height)) else { return }
                 
-                let outputTile = try self.processTile(image: croppedCG, model: model, inputInfo: inputInfo)
+                var outputTile = try self.processTile(image: croppedCG, model: model, inputInfo: inputInfo)
                 
-                // 计算绘制尺寸
+                // ⭐️ 核心修复 2：如果是 PiperSR 等会产生倒置的模型，在拼接前把图翻转过来
+                if modelID == "piper-sr-2x" {
+                    let flippedCI = CIImage(cgImage: outputTile).transformed(by: CGAffineTransform(scaleX: 1, y: -1).translatedBy(x: 0, y: -CGFloat(outputTile.height)))
+                    if let flipped = self.ciContext.createCGImage(flippedCI, from: flippedCI.extent) {
+                        outputTile = flipped
+                    }
+                }
+                
+                // 计算绘制尺寸 (使用左上角坐标系)
                 let drawWidth = CGFloat(tile.width) * CGFloat(scaleFactor)
                 let drawHeight = CGFloat(tile.height) * CGFloat(scaleFactor)
                 let destX = CGFloat(tile.x) * CGFloat(scaleFactor)
@@ -66,12 +70,12 @@ struct TilingEngine: SuperResolutionEngine {
                 let safeHeight = min(Int(drawHeight), outputTile.height)
                 
                 if let validTile = outputTile.cropping(to: CGRect(x: 0, y: 0, width: safeWidth, height: safeHeight)) {
-                    outputContext.saveGState()
-                    // ⭐️ 极简精准拼接
-                    outputContext.translateBy(x: destX, y: destY + drawHeight)
-                    outputContext.scaleBy(x: 1.0, y: -1.0)
-                    outputContext.draw(validTile, in: CGRect(x: 0, y: 0, width: drawWidth, height: drawHeight))
-                    outputContext.restoreGState()
+                    
+                    // ⭐️ 核心修复 3：不用任何 saveGState / translate / scale 翻转。
+                    // 直接用数学公式把 Y 轴（从上往下）换算成 CoreGraphics 的 Y 轴（从下往上）
+                    let cgY = CGFloat(outputHeight) - destY - drawHeight
+                    
+                    outputContext.draw(validTile, in: CGRect(x: destX, y: cgY, width: drawWidth, height: drawHeight))
                 }
             }
             
