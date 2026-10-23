@@ -66,7 +66,18 @@ struct LivePreviewView: View {
                     .aspectRatio(contentMode: .fit)
             } else {
                 AppTheme.previewBackground
-                ProgressView()
+                VStack(spacing: 12) {
+                    ProgressView()
+                    
+                    // ⭐️ 核心修复：如果有报错，把报错打印在屏幕上
+                    if let error = viewModel.inferenceError {
+                        Text("推理失败，原因如下：\n\(error)")
+                            .font(.system(size: 12))
+                            .foregroundColor(.red)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 20)
+                    }
+                }
             }
 
             // 顶部覆盖层：FPS（避开灵动岛/刘海）
