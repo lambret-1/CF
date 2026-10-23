@@ -22,41 +22,70 @@ struct TilingEngine: SuperResolutionEngine {
         progressHandler?(InferenceProgress(currentTile: 0, totalTiles: 1, fraction: 0.01, elapsedSeconds: 0, estimatedRemainingSeconds: nil))
 
         let tileSize = inputInfo.width
-        let overlap = tileSize / 8 // ⭐️ 增加重叠区域，给羽化留出空间 (之前是 16)
+        // ⭐️ 重叠区域改回极小，减少计算量
+        let overlap = tileSize / 16 
         let tiles = calculateTiles(width: image.width, height: image.height, tileSize: tileSize, overlap: overlap)
         let totalTiles = tiles.count
         
-        let outputWidth = image.width * scaleFactor
-        let outputHeight = image.height * scaleFactor
-
-        // 使用 CIImage 作为底层拼接画布，方便后续做羽化融合
-        let canvasRect = CGRect(x: 0, y: 0, width: outputWidth, height: outputHeight)
-        var finalCIImage = CIImage(color: CIColor.clear).cropped(to: canvasRect)
+        // ⭐️ 内存保护：限制最大输出分辨率，防止 192MP 撑爆内存闪退
+        let maxPixels = 8000 * 8000 // 限制最大 64MP
+        let originalWidth = image.width * scaleFactor
+        let originalHeight = image.height * scaleFactor
         
+        let actualScaleFactor: Double
+        if originalWidth * originalHeight > maxPixels {
+            actualScaleFactor = sqrt(Double(maxPixels) / Double(image.width * image.height))
+            await AppLogger.shared.log("⚠️ 图像过大，触发内存保护，自动限制尺寸")
+        } else {
+            actualScaleFactor = Double(scaleFactor)
+        }
+        
+        let outputWidth = Int(Double(image.width) * actualScaleFactor)
+        let outputHeight = Int(Double(image.height) * actualScaleFactor)
+
+        // ⭐️ 回归极其省内存的 CGContext 拼接
+        guard let outputContext = CGContext(
+            data: nil, width: outputWidth, height: outputHeight,
+            bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { throw InferenceError.outputCreationFailed }
+        
+        outputContext.translateBy(x: 0, y: CGFloat(outputHeight))
+        outputContext.scaleBy(x: 1.0, y: -1.0)
+
         let ciImage = CIImage(cgImage: image)
         
         for (index, tile) in tiles.enumerated() {
-            let cropRect = CGRect(x: tile.x, y: tile.y, width: tileSize, height: tileSize)
-            let croppedCIImage = ciImage.cropped(to: cropRect)
-            let movedCIImage = croppedCIImage.transformed(by: CGAffineTransform(translationX: -cropRect.origin.x, y: -cropRect.origin.y))
+            if isCancelled { break }
             
-            guard let croppedCG = self.ciContext.createCGImage(movedCIImage, from: CGRect(x: 0, y: 0, width: tileSize, height: tileSize)) else { continue }
-            
-            // 推理单块
-            let outputTile = try self.processTile(image: croppedCG, model: model, inputInfo: inputInfo)
-            
-            // ⭐️ 羽化拼接
-            let blendedTile = createFeatheredTile(
-                tileImage: outputTile,
-                tileInfo: tile,
-                scaleFactor: scaleFactor,
-                overlap: overlap,
-                canvasWidth: outputWidth,
-                canvasHeight: outputHeight
-            )
-            
-            // 将羽化后的块叠加到画布上
-            finalCIImage = blendedTile.composited(over: finalCIImage)
+            // ⭐️ 核心防闪退：autoreleasepool 确保每块的内存用完立刻释放
+            try autoreleasepool {
+                let cropRect = CGRect(x: tile.x, y: tile.y, width: tileSize, height: tileSize)
+                let croppedCIImage = ciImage.cropped(to: cropRect)
+                let movedCIImage = croppedCIImage.transformed(by: CGAffineTransform(translationX: -cropRect.origin.x, y: -cropRect.origin.y))
+                
+                guard let croppedCG = self.ciContext.createCGImage(movedCIImage, from: CGRect(x: 0, y: 0, width: tileSize, height: tileSize)) else { return }
+                
+                let outputTile = try self.processTile(image: croppedCG, model: model, inputInfo: inputInfo)
+                
+                // 计算缩放后的绘制尺寸
+                let drawWidth = CGFloat(tile.width) * CGFloat(actualScaleFactor)
+                let drawHeight = CGFloat(tile.height) * CGFloat(actualScaleFactor)
+                let destX = CGFloat(tile.x) * CGFloat(actualScaleFactor)
+                let destY = CGFloat(tile.y) * CGFloat(actualScaleFactor)
+                
+                // 绘制到画布（极其省内存）
+                let safeWidth = min(Int(drawWidth), outputTile.width)
+                let safeHeight = min(Int(drawHeight), outputTile.height)
+                if let validTile = outputTile.cropping(to: CGRect(x: 0, y: 0, width: safeWidth, height: safeHeight)) {
+                    outputContext.saveGState()
+                    outputContext.translateBy(x: destX, y: destY + drawHeight)
+                    outputContext.scaleBy(x: 1.0, y: -1.0)
+                    outputContext.draw(validTile, in: CGRect(x: 0, y: 0, width: drawWidth, height: drawHeight))
+                    outputContext.restoreGState()
+                }
+            }
             
             let elapsed = Date().timeIntervalSince(startTime)
             progressHandler?(InferenceProgress(
@@ -65,9 +94,7 @@ struct TilingEngine: SuperResolutionEngine {
             ))
         }
 
-        guard let finalOutput = ciContext.createCGImage(finalCIImage, from: canvasRect) else {
-            throw InferenceError.outputCreationFailed
-        }
+        guard let finalOutput = outputContext.makeImage() else { throw InferenceError.outputCreationFailed }
         return finalOutput
     }
 
@@ -116,34 +143,5 @@ struct TilingEngine: SuperResolutionEngine {
             return try ImageTensorConverter.multiArrayToImage(outputArray, isNCHW: outIsNCHW)
         }
         throw InferenceError.tileProcessingFailed("输出格式不支持")
-    }
-
-    // ⭐️ 核心：生成带有羽化边缘的 CIImage
-    private func createFeatheredTile(tileImage: CGImage, tileInfo: TileInfo, scaleFactor: Int, overlap: Int, canvasWidth: Int, canvasHeight: Int) -> CIImage {
-        let drawWidth = CGFloat(tileInfo.width * scaleFactor)
-        let drawHeight = CGFloat(tileInfo.height * scaleFactor)
-        let destX = CGFloat(tileInfo.x * scaleFactor)
-        let destY = CGFloat(tileInfo.y * scaleFactor) // 注意 CoreImage 坐标原点在左下角
-        
-        // 1. 基础图
-        var baseTile = CIImage(cgImage: tileImage)
-        
-        // 2. 创建渐变遮罩（羽化）
-        let feather: CGFloat = CGFloat(overlap * scaleFactor)
-        let mask = CIFilter(name: "CILinearGradient")!
-        mask.setValue(CIVector(x: 0, y: feather), forKey: "inputPoint0")
-        mask.setValue(CIVector(x: 0, y: 0), forKey: "inputPoint1")
-        mask.setValue(CIColor(red: 1, green: 1, blue: 1), forKey: "inputColor0")
-        mask.setValue(CIColor(red: 0, green: 0, blue: 0), forKey: "inputColor1")
-        
-        // 这里为了简化代码，我们仅做简单的透明度渐变融合，避免接缝断层
-        // 实际上做完美的四边羽化需要复杂的遮罩运算，这里采用半透明混合（Blend with Alpha）
-        baseTile = baseTile.transformed(by: CGAffineTransform(translationX: destX, y: CGFloat(canvasHeight) - destY - drawHeight))
-        
-        // 边缘衰减
-        let fadeFilter = CIFilter(name: "CIMaskedVariableBlur") // 使用特定滤镜或直接通过透明度处理
-        // 为了代码稳定性，这里退回最简单的重叠（Overlap），由于模型推理是无缝的，只要重叠区够大，视觉效果就会好很多。
-        
-        return baseTile
     }
 }
