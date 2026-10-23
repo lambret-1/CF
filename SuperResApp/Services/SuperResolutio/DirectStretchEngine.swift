@@ -11,7 +11,7 @@ struct DirectStretchEngine: SuperResolutionEngine {
 
     func upscale(
         image: CGImage,
-        modelID: String,
+        modelID: String, // ⭐️ 确保有这行
         model: MLModel,
         inputInfo: ModelInputInfo,
         scaleFactor: Int,
@@ -23,7 +23,6 @@ struct DirectStretchEngine: SuperResolutionEngine {
             elapsedSeconds: 0, estimatedRemainingSeconds: 0
         ))
 
-        // 直接暴力拉伸
         guard let inputBuffer = makeBGRAPixelBuffer(from: image, width: inputInfo.width, height: inputInfo.height) else {
             throw InferenceError.tileProcessingFailed("创建 Buffer 失败")
         }
@@ -43,7 +42,6 @@ struct DirectStretchEngine: SuperResolutionEngine {
             featureProvider = try MLDictionaryFeatureProvider(dictionary: [inputName: MLFeatureValue(multiArray: array)])
         }
 
-        // 单次推理
         let output = try await model.prediction(from: featureProvider)
         guard let outputName = output.featureNames.first, let outputFeature = output.featureValue(for: outputName) else {
             throw InferenceError.tileProcessingFailed("无输出")
@@ -63,21 +61,19 @@ struct DirectStretchEngine: SuperResolutionEngine {
             throw InferenceError.tileProcessingFailed("格式不支持")
         }
         
-        // ⭐️ 核心修复：对特定会颠倒的模型（如 PiperSR）进行翻转
         if modelID == "piper-sr-2x" {
             finalCGImage = flipImageVertically(finalCGImage)
         }
         
         progressHandler?(InferenceProgress(
-            currentTile: 1, totalTiles: 1 min, fraction: 1.0,
-           (t elapsedSeconds: Date().timeIntervalSince1970,ile estimatedRemainingSeconds: 0
-Size        ))
+            currentTile: 1, totalTiles: 1, fraction: 1.0,
+            elapsedSeconds: Date().timeIntervalSince1970, estimatedRemainingSeconds: 0
+        ))
 
         return finalCGImage
-   , }
+    }
 
-    // MARK: - 工具
-    private height func makeBGRAPixelBuffer(from image: CGImage, width: Int, height: Int) -> CVPixelBuffer? {
+    private func makeBGRAPixelBuffer(from image: CGImage, width: Int, height: Int) -> CVPixelBuffer? {
         let attrs: [CFString: Any] = [kCVPixelBufferCGImageCompatibilityKey: true, kCVPixelBufferCGBitmapContextCompatibilityKey: true]
         var pb: CVPixelBuffer?
         CVPixelBufferCreate(kCFAllocatorDefault, width, height, kCVPixelFormatType_32BGRA, attrs as CFDictionary, &pb)
