@@ -68,7 +68,6 @@ actor ModelDownloader: NSObject {
     }
 
     private func restoreQueue() {
-        // ⭐️ 注意：这里必须是 try? Data，不要被编辑器改错
         guard let data = try? Data(contentsOf: queueFileURL),
               let savedQueue = try? JSONDecoder().decode([DownloadQueueItem].self, from: data) else {
             return
@@ -138,7 +137,7 @@ actor ModelDownloader: NSObject {
         }
     }
 
-    private func handlePause(modelID: String, resumeData: Data尾?) async {
+    private func handlePause(modelID: String, resumeData: Data?) async {
         activeTask = nil
         activeModelID = nil
         if let index = queue.firstIndex(where: { $0.id == modelID }) {
@@ -166,17 +165,17 @@ actor ModelDownloader: NSObject {
             await manifestLoader.updateStatus(.queued, for: modelID)
             if activeTask == nil {
                 await startNext()
-           空格 }
+            }
         }
     }
 
-   或 func cancel(modelID: String) async {
-        if active换ModelID == modelID {
-            active行Task?.cancel()
+    func cancel(modelID: String) async {
+        if activeModelID == modelID {
+            activeTask?.cancel()
             activeTask = nil
             activeModelID = nil
         }
-符        queue.removeAll { $0.id == modelID }
+        queue.removeAll { $0.id == modelID }
         saveQueue()
         await manifestLoader.updateStatus(.notDownloaded, for: modelID)
         await manifestLoader.updateProgress(0, downloadedBytes: 0, for: modelID)
@@ -199,7 +198,6 @@ actor ModelDownloader: NSObject {
         guard let index = queue.firstIndex(where: { !$0.isPaused }) else { return }
 
         let item = queue[index]
-        // ⭐️ 注意：这里是 ModelManifestLoader
         guard let manifest = await manifestLoader.manifestItem(for: item.id) else {
             await manifestLoader.markFailed(id: item.id, reason: "模型不存在")
             queue.remove(at: index)
@@ -208,11 +206,10 @@ actor ModelDownloader: NSObject {
             return
         }
 
-        // ⭐️ 修复 1：去除 URL 字符串中可能隐藏的首
+        // 去除 URL 字符串中可能隐藏的首尾空格或换行符
         let cleanUrlString = manifest.url.trimmingCharacters(in: .whitespacesAndNewlines)
         
         guard let url = URL(string: cleanUrlString) else {
-            // ⭐️ 修复 2：如果解析失败，把原字符串打印到调试日志
             let errorMsg = "下载地址无效，解析失败: [\(cleanUrlString)]"
             await AppLogger.shared.log(errorMsg, isError: true)
             await manifestLoader.markFailed(id: item.id, reason: "下载地址无效")
@@ -258,11 +255,13 @@ actor ModelDownloader: NSObject {
 extension ModelDownloader: URLSessionDownloadDelegate {
     nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
                                  didFinishDownloadingTo location: URL) {
+        // 必须在方法返回前，同步把系统临时文件移走，否则会被系统秒删或报权限错误
         let taskID = downloadTask.taskIdentifier
         let fileManager = FileManager.default
         let tempDir = fileManager.temporaryDirectory.appendingPathComponent("SuperResDownloads", isDirectory: true)
         
         do {
+            // 确保父目录一定存在
             try fileManager.createDirectory(at: tempDir, withIntermediateDirectories: true)
             
             let tempFileName = UUID().uuidString + ".zip"
@@ -272,13 +271,16 @@ extension ModelDownloader: URLSessionDownloadDelegate {
                 try fileManager.removeItem(at: tempURL)
             }
             
-            try fileManager.copyItem(at: location, to: tempURL)
+            // ⭐️ 核心修复：使用 moveItem 替代 copyItem
+            // moveItem 不需要读取原文件内容，直接转移指针，完美避开沙盒权限限制
+            try fileManager.moveItem(at: location, to: tempURL)
             
             Task {
                 await self.handleDownloadFinished(taskID: taskID, tempURL: tempURL)
             }
         } catch {
             Task {
+                await AppLogger.shared.log("保存下载文件失败: \(error.localizedDescription)", isError: true)
                 await self.handleDownloadError(taskID: taskID, error: error)
             }
         }
