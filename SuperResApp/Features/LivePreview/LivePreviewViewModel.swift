@@ -24,13 +24,12 @@ final class LivePreviewViewModel: ObservableObject {
     private let superResolver = SuperResolver.shared
     private let modelStore = ModelStore.shared
     
-    // 用于高效、安全地将 CVPixelBuffer 转为图片，兼容 YUV/BGRA
+    // 用于高效、安全地将 CVPixelBuffer 转为图片
     private let ciContext = CIContext(options: [.useSoftwareRenderer: false])
 
     // MARK: - 调试开关
-    // ⭐️ 打开这个开关，会直接显示原图，跳过 AI 超分。
-    // 如果用原图能显示画面，说明相机配置没问题，是 AI 推理模块报错或太慢。
-    private let isDebugBypassAI = true 
+    // ⭐️ 记得改回 false，正式走 AI 推理
+    private let isDebugBypassAI = false 
 
     // MARK: - FPS 计算
 
@@ -38,7 +37,7 @@ final class LivePreviewViewModel: ObservableObject {
     private var lastFPSUpdate: TimeInterval = 0
     private var lowPerformanceStartTime: TimeInterval?
     
-    // ⭐️ 防止任务堆积：如果上一帧还在处理，直接丢弃当前帧
+    // 防止任务堆积：如果上一帧还在处理，直接丢弃当前帧
     private var isProcessingFrame = false
 
     // MARK: - 生命周期
@@ -74,7 +73,6 @@ final class LivePreviewViewModel: ObservableObject {
         do {
             // 设置帧回调
             await cameraSession.setFrameHandler { [weak self] pixelBuffer, _ in
-                // 由于 self 是 @MainActor 修饰，这里的 Task 会自动切回主线程
                 Task { [weak self] in
                     await self?.handleFrame(pixelBuffer)
                 }
@@ -113,7 +111,7 @@ final class LivePreviewViewModel: ObservableObject {
     // MARK: - 帧处理
 
     private func handleFrame(_ pixelBuffer: CVPixelBuffer) async {
-        // 1. FPS 计算 (无论是否丢帧都要算，反映真实相机帧率)
+        // 1. FPS 计算
         let now = Date().timeIntervalSince1970
         frameTimestamps.append(now)
         if frameTimestamps.count > DesignTokens.fpsWindowSize {
@@ -130,7 +128,7 @@ final class LivePreviewViewModel: ObservableObject {
         
         defer { isProcessingFrame = false }
 
-        // 3. 安全转换：将转换操作放到后台线程，避免卡顿主线程
+        // 3. 安全转换：将转换操作放到后台线程
         let cgImage: CGImage? = await Task.detached(priority: .userInitiated) { [ciContext] in
             let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
             return ciContext.createCGImage(ciImage, from: ciImage.extent)
@@ -141,24 +139,21 @@ final class LivePreviewViewModel: ObservableObject {
             return
         }
 
-        // ⭐️ 调试：直接显示原图，绕过 AI 推理
+        // ⭐️ 调试模式（已关闭）
         if isDebugBypassAI {
             self.previewImage = UIImage(cgImage: cgImage)
             return
         }
 
-        // 4. PiperSR 推理（2x）
+        // 4. PiperSR 推理（使用快速整图推理）
         do {
-            let result = try await superResolver.upscale(
+            let outputCGImage = try await superResolver.fastUpscale(
                 image: cgImage,
-                modelID: "piper-sr-2x",
-                tileSize: 512
+                modelID: "piper-sr-2x"
             )
             
-            // 因为类是 @MainActor，这里直接更新 UI
-            self.previewImage = UIImage(cgImage: result.outputImage)
+            self.previewImage = UIImage(cgImage: outputCGImage)
         } catch {
-            // ⭐️ 千万不要静默忽略错误！如果推理失败，打印出来看看是什么原因
             print("❌ 实时超分推理失败: \(error)")
         }
     }
