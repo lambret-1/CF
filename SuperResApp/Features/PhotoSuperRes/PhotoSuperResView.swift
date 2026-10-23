@@ -96,7 +96,7 @@ struct PhotoSuperResView: View {
                 case .imageSelected, .failed:
                     if let image = viewModel.selectedImage {
                         ZoomableImageView(image: image, zoomScale: $zoomScale)
-                            // ⭐️ 确保包裹组件完全撑满
+                            // 确保包裹组件完全撑满可用区域
                             .frame(width: geometry.size.width, height: geometry.size.height)
                     }
                     if case .failed(let message) = viewModel.state {
@@ -119,7 +119,6 @@ struct PhotoSuperResView: View {
                             .resizable()
                             .aspectRatio(contentMode: .fit)
                             .opacity(0.6)
-                            // ❌ 删除了 .ignoresSafeArea()
                             .frame(width: geometry.size.width, height: geometry.size.height)
                     }
                     VStack(spacing: DesignTokens.spacingMD) {
@@ -153,12 +152,11 @@ struct PhotoSuperResView: View {
                             isShowingOriginal: $isShowingOriginal,
                             zoomScale: $zoomScale
                         )
-                        // ❌ 删除了 .ignoresSafeArea()
                         .frame(width: geometry.size.width, height: geometry.size.height)
                     }
                 }
             }
-            // ⭐️ 关键修复：强制 ZStack 尺寸严格等于屏幕计算出的可用区域，并裁剪越界部分
+            // 强制 ZStack 尺寸严格等于屏幕计算出的可用区域，并裁剪越界部分
             .frame(width: geometry.size.width, height: geometry.size.height)
             .clipped()
         }
@@ -245,9 +243,19 @@ struct PhotoSuperResView: View {
                         modelRow(model)
                     }
                 }
+                
                 Section("已下载模型") {
-                    ForEach(availableModels.filter { !$0.isBuiltin }) { model in
-                        modelRow(model)
+                    // ⭐️ 修复：只显示非内置且状态为 downloaded 的模型
+                    let downloadedModels = availableModels.filter { !$0.isBuiltin && $0.status == .downloaded }
+                    
+                    if downloadedModels.isEmpty {
+                        Text("暂无已下载模型")
+                            .font(.subheadline)
+                            .foregroundColor(AppTheme.tertiaryText)
+                    } else {
+                        ForEach(downloadedModels) { model in
+                            modelRow(model)
+                        }
                     }
                 }
             }
