@@ -30,7 +30,7 @@ enum ImageTensorConverter {
             bitsPerComponent: 8,
             bytesPerRow: width * bytesPerPixel,
             space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue // RGBA
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ) else {
             throw InferenceError.tileProcessingFailed("创建 CGContext 失败")
         }
@@ -40,9 +40,11 @@ enum ImageTensorConverter {
         context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
         
         let realBytesPerRow = context.bytesPerRow
+        let arrayPointer = array.dataPointer
         
-        // ⭐️ 输入部分的处理：保持你原本安全的 NSNumber 逻辑（防止极个别模型输入不支持 Float）
-        // 如果你的输入模型极多，这里也可以加指针优化，但我们先保输出不崩
+        // 统一处理输入类型 (输入模型通常兼容 Float32)
+        let isDouble = constraint.dataType == .double
+        
         for y in 0..<height {
             for x in 0..<width {
                 let pixelIndex = y * realBytesPerRow + x * bytesPerPixel
@@ -51,25 +53,42 @@ enum ImageTensorConverter {
                 let b = Float(pixelData[pixelIndex + 2]) / 255.0
                 
                 if isNCHW {
-                    array[[0, 0, y, x] as [NSNumber]] = NSNumber(value: r)
-                    array[[0, 1, y, x] as [NSNumber]] = NSNumber(value: g)
-                    array[[0, 2, y, x] as [NSNumber]] = NSNumber(value: b)
+                    let channelStride = height * width
+                    let baseIdx = y * width + x
+                    if isDouble {
+                        let ptr = arrayPointer.assumingMemoryBound(to: Double.self)
+                        ptr[baseIdx] = Double(r)
+                        ptr[channelStride + baseIdx] = Double(g)
+                        ptr[channelStride * 2 + baseIdx] = Double(b)
+                    } else {
+                        let ptr = arrayPointer.assumingMemoryBound(to: Float.self)
+                        ptr[baseIdx] = r
+                        ptr[channelStride + baseIdx] = g
+                        ptr[channelStride * 2 + baseIdx] = b
+                    }
                 } else {
-                    array[[0, y, x, 0] as [NSNumber]] = NSNumber(value: r)
-                    array[[0, y, x, 1] as [NSNumber]] = NSNumber(value: g)
-                    array[[0, y, x, 2] as [NSNumber]] = NSNumber(value: b)
+                    let baseIdx = (y * width + x) * 3
+                    if isDouble {
+                        let ptr = arrayPointer.assumingMemoryBound(to: Double.self)
+                        ptr[baseIdx] = Double(r)
+                        ptr[baseIdx + 1] = Double(g)
+                        ptr[baseIdx + 2] = Double(b)
+                    } else {
+                        let ptr = arrayPointer.assumingMemoryBound(to: Float.self)
+                        ptr[baseIdx] = r
+                        ptr[baseIdx + 1] = g
+                        ptr[baseIdx + 2] = b
+                    }
                 }
             }
         }
         return array
     }
 
-    // MARK: - MLMultiArray -> CGImage
+    // MARK: - MLMultiArray -> CGImage (核心修复区)
     static func multiArrayToImage(_ array: MLMultiArray, isNCHW: Bool) throws -> CGImage {
         let shape = array.shape.map { $0.intValue }
-        
-        // ⭐️ 安全校验：ESRGAN 某些版本可能是 5 维，或者是奇怪的 3 维
-        guard shape.count >= 3 else { throw InferenceError.tileProcessingFailed("张量维度不支持: \(shape)") }
+        guard shape.count >= 3 else { throw InferenceError.tileProcessingFailed("张量维度不支持") }
         
         let height = isNCHW ? shape[shape.count - 2] : shape[shape.count - 3]
         let width = isNCHW ? shape[shape.count - 1] : shape[shape.count - 2]
@@ -79,71 +98,89 @@ enum ImageTensorConverter {
         let bytesPerRow = bytesPerPixel * width
         var pixelData = [UInt8](repeating: 0, count: height * bytesPerRow)
         
-        // ⭐️ 核心修复：判断数据类型。如果是不认识的类型，走最安全的 NSNumber 通道！
-        let isFloat32 = array.dataType == .float32
-        let isDouble = array.dataType == .double
-        
-        // 只有是 Float32 或者 Double 时，才走极速指针
+        let dataType = array.dataType
         let arrayPointer = array.dataPointer
+        
+        // ⭐️ 核心修复 1：判断是否支持指针高速读取。如果是 Float16，为了防崩溃，退回安全读取
+        let canUsePointer = (dataType == .float32 || dataType == .double)
+        let isDouble = (dataType == .double)
+        
+        // ⭐️ 核心修复 2：判断值域。如果模型输出可能是 0-255，通过采样动态判断
+        // 采样中心点的像素值，大于 1.5 就认为是 0-255 的域
+        var scaleFactor: Float = 1.0
+        let midIdx = (height / 2) * width + (width / 2)
+        let sampleVal: Float
+        if canUsePointer {
+            if isDouble {
+                sampleVal = Float(arrayPointer.assumingMemoryBound(to: Double.self)[midIdx])
+            } else {
+                sampleVal = arrayPointer.assumingMemoryBound(to: Float.self)[midIdx]
+            }
+        } else {
+            let idx: [NSNumber] = isNCHW ? [0, 0, height/2, width/2] : [0, height/2, width/2, 0]
+            sampleVal = array[idx].floatValue
+        }
+        if sampleVal > 1.5 { scaleFactor = 255.0 }
         
         for y in 0..<height {
             for x in 0..<width {
                 let pixelIndex = y * bytesPerRow + x * bytesPerPixel
                 
-                var r: Float = 0
-                var g: Float = 0
-                var b: Float = 0
+                let r: Float
+                let g: Float
+                let b: Float
                 
-                if isNCHW {
-                    let channelStride = height * width
-                    let baseIdx = y * width + x
-                    
-                    if isFloat32 {
-                        let ptr = arrayPointer.assumingMemoryBound(to: Float.self)
-                        r = ptr[baseIdx]
-                        g = channels > 1 ? ptr[channelStride + baseIdx] : r
-                        b = channels > 2 ? ptr[channelStride * 2 + baseIdx] : r
-                    } else if isDouble {
-                        let ptr = arrayPointer.assumingMemoryBound(to: Double.self)
-                        r = Float(ptr[baseIdx])
-                        g = channels > 1 ? Float(ptr[channelStride + baseIdx]) : r
-                        b = channels > 2 ? Float(ptr[channelStride * 2 + baseIdx]) : r
+                if canUsePointer {
+                    if isNCHW {
+                        let channelStride = height * width
+                        let baseIdx = y * width + x
+                        if isDouble {
+                            let ptr = arrayPointer.assumingMemoryBound(to: Double.self)
+                            r = Float(ptr[baseIdx])
+                            g = channels > 1 ? Float(ptr[channelStride + baseIdx]) : r
+                            b = channels > 2 ? Float(ptr[channelStride * 2 + baseIdx]) : r
+                        } else {
+                            let ptr = arrayPointer.assumingMemoryBound(to: Float.self)
+                            r = ptr[baseIdx]
+                            g = channels > 1 ? ptr[channelStride + baseIdx] : r
+                            b = channels > 2 ? ptr[channelStride * 2 + baseIdx] : r
+                        }
                     } else {
-                        // ⭐️ 兜底逻辑：针对 Float16 或未知类型
+                        let baseIdx = (y * width + x) * channels
+                        if isDouble {
+                            let ptr = arrayPointer.assumingMemoryBound(to: Double.self)
+                            r = Float(ptr[baseIdx])
+                            g = channels > 1 ? Float(ptr[baseIdx + 1]) : r
+                            b = channels > 2 ? Float(ptr[baseIdx + 2]) : r
+                        } else {
+                            let ptr = arrayPointer.assumingMemoryBound(to: Float.self)
+                            r = ptr[baseIdx]
+                            g = channels > 1 ? ptr[baseIdx + 1] : r
+                            b = channels > 2 ? ptr[baseIdx + 2] : r
+                        }
+                    }
+                } else {
+                    // ⭐️ 修复 3：如果是 Float16 等不支持直接内存映射的类型，使用绝对的 NSNumber 读取防崩溃
+                    if isNCHW {
                         r = array[[0, 0, y, x] as [NSNumber]].floatValue
                         g = channels > 1 ? array[[0, 1, y, x] as [NSNumber]].floatValue : r
                         b = channels > 2 ? array[[0, 2, y, x] as [NSNumber]].floatValue : r
-                    }
-                } else {
-                    let baseIdx = (y * width + x) * channels
-                    if isFloat32 {
-                        let ptr = arrayPointer.assumingMemoryBound(to: Float.self)
-                        r = ptr[baseIdx]
-                        g = channels > 1 ? ptr[baseIdx + 1] : r
-                        b = channels > 2 ? ptr[baseIdx + 2] : r
-                    } else if isDouble {
-                        let ptr = arrayPointer.assumingMemoryBound(to: Double.self)
-                        r = Float(ptr[baseIdx])
-                        g = channels > 1 ? Float(ptr[baseIdx + 1]) : r
-                        b = channels > 2 ? Float(ptr[baseIdx + 2]) : r
                     } else {
-                        // ⭐️ 兜底逻辑：针对 Float16 或未知类型
                         r = array[[0, y, x, 0] as [NSNumber]].floatValue
                         g = channels > 1 ? array[[0, y, x, 1] as [NSNumber]].floatValue : r
                         b = channels > 2 ? array[[0, y, x, 2] as [NSNumber]].floatValue : r
                     }
                 }
                 
-                // ⭐️ 修复 ESRGAN 范围可能超出 0~1 的问题（如 0~255 或 -1~1）
-                // 这里假设如果是负数说明是 -1~1，如果是大于 2 说明是 0~255
-                let clampR = r < 0 ? (r + 1.0) / 2.0 : (r > 2.0 ? r / 255.0 : r)
-                let clampG = g < 0 ? (g + 1.0) / 2.0 : (g > 2.0 ? g / 255.0 : g)
-                let clampB = b < 0 ? (b + 1.0) / 2.0 : (b > 2.0 ? b / 255.0 : b)
+                // 根据动态判断的 scaleFactor 转换并限制在 0-255
+                let finalR = min(max(r * scaleFactor, 0.0), 255.0)
+                let finalG = min(max(g * scaleFactor, 0.0), 255.0)
+                let finalB = min(max(b * scaleFactor, 0.0), 255.0)
                 
-                pixelData[pixelIndex]     = UInt8(clamping: Int((min(max(clampR, 0.0), 1.0) * 255.0).rounded()))
-                pixelData[pixelIndex + 1] = UInt8(clamping: Int((min(max(clampG, 0.0), 1.0) * 255.0).rounded()))
-                pixelData[pixelIndex + 2] = UInt8(clamping: Int((min(max(clampB, 0.0), 1.0) * 255.0).rounded()))
-                pixelData[pixelIndex + 3] = 255
+                pixelData[pixelIndex]     = UInt8(finalR.rounded())
+                pixelData[pixelIndex + 1] = UInt8(finalG.rounded())
+                pixelData[pixelIndex + 2] = UInt8(finalB.rounded())
+                pixelData[pixelIndex + 3] = 255 // Alpha
             }
         }
         
