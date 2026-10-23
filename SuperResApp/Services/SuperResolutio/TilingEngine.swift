@@ -29,6 +29,7 @@ struct TilingEngine: SuperResolutionEngine {
         let outputWidth = image.width * scaleFactor
         let outputHeight = image.height * scaleFactor
 
+        // ⭐️ 极简的画布，不做任何翻转
         guard let outputContext = CGContext(
             data: nil, width: outputWidth, height: outputHeight,
             bitsPerComponent: 8, bytesPerRow: 0,
@@ -38,27 +39,35 @@ struct TilingEngine: SuperResolutionEngine {
         
         for (index, tile) in tiles.enumerated() {
             try autoreleasepool {
-                // 原生裁剪（极度安全）
+                // 原生裁剪
                 let cropRect = CGRect(x: tile.x, y: tile.y, width: tile.width, height: tile.height)
                 guard let croppedCG = image.cropping(to: cropRect) else { return }
                 
-                // 推理
-                let outputTile = try self.processTile(image: croppedCG, model: model, inputInfo: inputInfo)
+                var outputTile = try self.processTile(image: croppedCG, model: model, inputInfo: inputInfo)
                 
-                // 计算位置
+                // ⭐️ 核心修复：判断是否需要给该模型额外翻转一次
+                if modelID.contains("x4plus") {
+                    // 针对 x4plus 输出数组导致的颠倒问题，在拼接前翻转单块
+                    let ci = CIImage(cgImage: outputTile)
+                    let flipped = ci.transformed(by: CGAffineTransform(scaleX: 1, y: -1).translatedBy(x: 0, y: -ci.extent.height))
+                    if let flippedCG = self.ciContext.createCGImage(flipped, from: flipped.extent) {
+                        outputTile = flippedCG
+                    }
+                }
+                
                 let drawWidth = CGFloat(tile.width) * CGFloat(scaleFactor)
                 let drawHeight = CGFloat(tile.height) * CGFloat(scaleFactor)
                 let destX = CGFloat(tile.x) * CGFloat(scaleFactor)
                 let destY = CGFloat(tile.y) * CGFloat(scaleFactor)
                 
-                // ⭐️ 用最原始的数学方式映射 Y 轴
+                // ⭐️ 坐标转换：通过绝对数学计算，避开翻转坐标系
                 let cgY = CGFloat(outputHeight) - destY - drawHeight
                 
                 let safeWidth = min(Int(drawWidth), outputTile.width)
                 let safeHeight = min(Int(drawHeight), outputTile.height)
                 
                 if let validTile = outputTile.cropping(to: CGRect(x: 0, y: 0, width: safeWidth, height: safeHeight)) {
-                    // 直接 draw，不搞任何坐标系翻转魔法
+                    // 直接画，没有任何 translateBy 和 scaleBy，从根本上切断坐标错乱的可能
                     outputContext.draw(validTile, in: CGRect(x: destX, y: cgY, width: drawWidth, height: drawHeight))
                 }
             }
