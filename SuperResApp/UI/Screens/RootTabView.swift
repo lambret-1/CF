@@ -1,5 +1,5 @@
 // SuperResApp/UI/Screens/RootTabView.swift
-// 根标签页：照片 / 实时 / 模型 / 调试
+// 根标签页：照片 / 视频 / 模型 / 调试
 
 import SwiftUI
 
@@ -9,16 +9,16 @@ struct RootTabView: View {
 
     enum Tab: String {
         case photo = "照片"
-        case live = "实时"
+        case video = "视频" // ⭐️ 将 realtime/live 替换为 video
         case models = "模型"
-        case debug = "调试" // ⭐️ 新增
+        case debug = "调试"
 
         var icon: String {
             switch self {
             case .photo: return "photo.on.rectangle"
-            case .live: return "camera.viewfinder"
+            case .video: return "film.stack" // ⭐️ 视频图标
             case .models: return "square.stack.3d.up"
-            case .debug: return "ladybug.fill" // ⭐️ 新增
+            case .debug: return "ladybug.fill"
             }
         }
     }
@@ -31,11 +31,12 @@ struct RootTabView: View {
                 }
                 .tag(Tab.photo)
 
-            LivePreviewView()
+            // ⭐️ 这里换成我们刚才写的 HomeView (包含 AI补帧 & 视频超分)
+            HomeView()
                 .tabItem {
-                    Label(Tab.live.rawValue, systemImage: Tab.live.icon)
+                    Label(Tab.video.rawValue, systemImage: Tab.video.icon)
                 }
-                .tag(Tab.live)
+                .tag(Tab.video)
 
             ModelManagerView()
                 .tabItem {
@@ -43,7 +44,7 @@ struct RootTabView: View {
                 }
                 .tag(Tab.models)
                 
-            // ⭐️ 新增的调试日志页面
+            // 调试日志页面
             DebugConsoleView()
                 .tabItem {
                     Label(Tab.debug.rawValue, systemImage: Tab.debug.icon)
@@ -68,7 +69,7 @@ struct FirstLaunchGuide: View {
                 .foregroundColor(AppTheme.accent)
 
             VStack(spacing: DesignTokens.spacingSM) {
-                Text("欢迎使用超分工坊")
+                Text("欢迎使用Ai超分工坊")
                     .font(AppFont.title(weight: .bold))
 
                 Text("内置 PiperSR 和 Real-ESRGAN x4v3，可直接使用。更多模型可在「模型」页下载。")
