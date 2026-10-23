@@ -81,12 +81,11 @@ actor SuperResolver {
             throw InferenceError.tileProcessingFailed("模型输出无效")
         }
 
-        // 4. 提取输出，裁掉黑边，并放大回目标尺寸
-        let finalCGImage: CGImage
         let scaleFactor = descriptor.scaleFactor
         let targetWidth = image.width * scaleFactor
         let targetHeight = image.height * scaleFactor
         
+        let finalCGImage: CGImage
         if let outputBuffer = outputFeature.imageBufferValue {
             finalCGImage = try processOutput(
                 ciImage: CIImage(cvPixelBuffer: outputBuffer),
@@ -125,11 +124,7 @@ actor SuperResolver {
         )
     }
 
-// ==========================================
-// ⭐️ 第一段结束，请空一行接着粘贴第二段
-// ==========================================
-
-// MARK: - 实时预览（等比例极速版）
+    // MARK: - 实时预览（极速版）
     func fastUpscale(image: CGImage, modelID: String) async throws -> CGImage {
         guard let manifest = await manifestLoader.manifestItem(for: modelID) else {
             throw InferenceError.modelNotLoaded(modelID)
@@ -194,7 +189,7 @@ actor SuperResolver {
         throw InferenceError.tileProcessingFailed("格式不支持")
     }
 
-    // MARK: - 核心工具：等比例填充黑边 (Aspect Fit)
+    // MARK: - 核心工具：等比例填充黑边 (强制修正坐标系)
     private func createLetterboxedPixelBuffer(from image: CGImage, targetWidth: Int, targetHeight: Int) throws -> (CVPixelBuffer, CGRect) {
         var pixelBuffer: CVPixelBuffer?
         let attrs = [
@@ -209,10 +204,8 @@ actor SuperResolver {
             throw InferenceError.tileProcessingFailed("创建 Buffer 失败")
         }
         
-        // 填充黑底
-        CVPixelBufferLockBaseAddress(buffer, [])
-        memset(CVPixelBufferGetBaseAddress(buffer), 0, CVPixelBufferGetDataSize(buffer))
-        CVPixelBufferUnlockBaseAddress(buffer, [])
+        // 用纯黑底图，防止出现透明区域
+        let blackImage = CIImage(color: CIColor(red: 0, green: 0, blue: 0, alpha: 1)).cropped(to: CGRect(x: 0, y: 0, width: targetWidth, height: targetHeight))
         
         let ciImage = CIImage(cgImage: image)
         let scale = min(CGFloat(targetWidth) / ciImage.extent.width, CGFloat(targetHeight) / ciImage.extent.height)
@@ -222,22 +215,27 @@ actor SuperResolver {
         let xOffset = (CGFloat(targetWidth) - scaledWidth) / 2.0
         let yOffset = (CGFloat(targetHeight) - scaledHeight) / 2.0
         
-        // ⭐️ 核心修复：在 CoreImage 坐标系中缩放，并注意 Y 轴翻转问题
-        // CIImage 渲染到 CVPixelBuffer 时，如果没有指定原点，默认是从左上角开始。
-        // 为保证正向，我们使用 CGAffineTransform 同时处理缩放和居中。
         let scaledImage = ciImage.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
         let translatedImage = scaledImage.transformed(by: CGAffineTransform(translationX: xOffset, y: yOffset))
         
-        ciContext.render(translatedImage, to: buffer)
+        // ⭐️ 核心修复：CoreImage 渲染到 PixelBuffer 时，会自动翻转 Y 轴。如果不加这一步，256模型会颠倒。
+        let flippedImage = translatedImage.transformed(by: CGAffineTransform(translationX: 0, y: CGFloat(targetHeight)).scaledBy(x: 1, y: -1))
         
-        // 记录有效区域，以便后续从输出中裁掉黑边
-        let validRect = CGRect(x: xOffset, y: yOffset, width: scaledWidth, height: scaledHeight)
+        let combinedImage = flippedImage.composited(over: blackImage)
+        ciContext.render(combinedImage, to: buffer)
+        
+        // 因为翻转了，有效区域的 Y 坐标也要重新计算（转换为左上角为原点）
+        let validRect = CGRect(
+            x: xOffset,
+            y: CGFloat(targetHeight) - yOffset - scaledHeight,
+            width: scaledWidth,
+            height: scaledHeight
+        )
         return (buffer, validRect)
     }
 
     // MARK: - 核心工具：从模型输出中裁掉黑边，并拉伸到目标尺寸
     private func processOutput(ciImage: CIImage, validRect: CGRect, scaleFactor: Int, targetWidth: Int, targetHeight: Int) throws -> CGImage {
-        // 根据放大倍数，计算出在模型输出图中的有效区域
         let outRect = CGRect(
             x: validRect.origin.x * CGFloat(scaleFactor),
             y: validRect.origin.y * CGFloat(scaleFactor),
@@ -245,13 +243,9 @@ actor SuperResolver {
             height: validRect.height * CGFloat(scaleFactor)
         )
         
-        // 裁剪出有效区域
         let croppedImage = ciImage.cropped(to: outRect)
-        
-        // 将原点移回 (0,0)
         let finalImage = croppedImage.transformed(by: CGAffineTransform(translationX: -outRect.origin.x, y: -outRect.origin.y))
         
-        // 缩放到最终尺寸
         let scaleX = CGFloat(targetWidth) / outRect.width
         let scaleY = CGFloat(targetHeight) / outRect.height
         let resizedImage = finalImage.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
