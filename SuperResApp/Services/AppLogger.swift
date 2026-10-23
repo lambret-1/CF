@@ -10,7 +10,6 @@ import OSLog
 final class AppLogger: ObservableObject {
     static let shared = AppLogger()
     
-    //️ 优化 1：定义统一的日志级别
     enum LogLevel: String {
         case debug = "💬 [DBG]"
         case info = "ℹ️ [INF]"
@@ -20,7 +19,7 @@ final class AppLogger: ObservableObject {
     
     struct LogItem: Identifiable {
         let id = UUID()
-        let time: String // ⭐️ 优化 5：直接存格式化后的时间字符串
+        let time: String
         let message: String
         let level: LogLevel
     }
@@ -28,14 +27,12 @@ final class AppLogger: ObservableObject {
     @Published var logs: [LogItem] = []
     private let maxLogs = 300 
     
-    // ⭐️ 优化 1：引入缓冲池和节流机制
+    // 缓冲池和节流机制
     private var pendingLogs: [LogItem] = []
     private var updateTask: Task<Void, Never>?
     
-    // ⭐️ 优化 2：使用 OSLog 替代 print
     private let osLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "SuperRes", category: "AppLogger")
     
-    // 时间格式化器
     private let timeFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss.SSS"
@@ -43,19 +40,16 @@ final class AppLogger: ObservableObject {
     }()
     
     private init() {
-        // 启动定时刷新任务（每 0.1 秒把缓冲池的数据刷到 UI 上）
         startThrottling()
     }
     
     private func startThrottling() {
         updateTask = Task { [weak self] in
             while !Task.isCancelled {
-                // 每 100 毫秒刷新一次 UI
                 try? await Task.sleep(nanoseconds: 100_000_000)
                 
                 guard let self = self else { return }
                 
-                // 取出缓冲池的数据
                 if !self.pendingLogs.isEmpty {
                     let newLogs = self.pendingLogs
                     self.pendingLogs.removeAll()
@@ -69,11 +63,10 @@ final class AppLogger: ObservableObject {
         }
     }
     
-    // ⭐️ 优化 3：使用 nonisolated 允许任意线程调用，并在内部处理线程安全
+    // 允许任意线程调用
     nonisolated func log(_ message: String, level: LogLevel = .info) {
-        let timeStr = Date().timeIntervalSince1970.description // 暂时用时间戳，稍后在主线程转格式
+        // ⭐️ 修复 1：删除了无用的 timeStr 变量
         
-        // 先输出到系统控制台（OSLog 极低开销，不阻塞线程）
         switch level {
         case .debug: osLogger.debug("\(message)")
         case .info:  osLogger.info("\(message)")
@@ -81,7 +74,6 @@ final class AppLogger: ObservableObject {
         case .error: osLogger.error("\(message)")
         }
         
-        // 异步丢回主线程缓冲池
         Task { @MainActor in
             let item = LogItem(
                 time: self.formatTime(Date()),
@@ -89,6 +81,11 @@ final class AppLogger: ObservableObject {
                 level: level
             )
             self.pendingLogs.append(item)
+            
+            // ⭐️ 修复 2：给缓冲池也加上容量限制，防止主线程卡顿时内存爆炸
+            if self.pendingLogs.count > self.maxLogs {
+                self.pendingLogs.removeFirst(self.pendingLogs.count - self.maxLogs)
+            }
         }
     }
     
