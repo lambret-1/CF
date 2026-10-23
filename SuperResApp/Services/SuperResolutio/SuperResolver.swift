@@ -17,7 +17,7 @@ actor SuperResolver {
 
     func cancel() { isCancelled = true }
 
-    // MARK: - 照片超分（动态切块，稳妥极速版）
+    // MARK: - 照片超分（Model Zoo 官方极简极速版）
     func upscale(
         image: CGImage,
         modelID: String,
@@ -26,9 +26,10 @@ actor SuperResolver {
         isCancelled = false
         let startTime = Date()
         
+        // 1. 秒出进度条（防止卡在“加载模型”）
         progressHandler?(InferenceProgress(
-            currentTile: 0, totalTiles: 1, fraction: 0.01,
-            elapsedSeconds: 0, estimatedRemainingSeconds: nil
+            currentTile: 0, totalTiles: 1, fraction: 0.1,
+            elapsedSeconds: 0, estimatedRemainingSeconds: 0
         ))
 
         guard let manifest = await manifestLoader.manifestItem(for: modelID) else {
@@ -42,76 +43,70 @@ actor SuperResolver {
         let model = try await modelStore.load(modelID: modelID, computeUnits: config.computeUnits)
         let inputInfo = try ModelInputInfo.parse(from: model)
         
-        let tileSize = inputInfo.width
-        let overlap = tileSize / 16
+        await AppLogger.shared.log("🚀 [官方极简版] 尺寸: \(image.width)x\(image.height) -> 模型输入: \(inputInfo.width)x\(inputInfo.height)")
 
-        let tiles = calculateTiles(width: image.width, height: image.height, tileSize: tileSize, overlap: overlap)
-        let totalTiles = tiles.count
-        let scaleFactor = descriptor.scaleFactor
-        let outputWidth = image.width * scaleFactor
-        let outputHeight = image.height * scaleFactor
-
-        await AppLogger.shared.log("⚡️ [极速串行] 尺寸: \(image.width)x\(image.height) -> \(tileSize)x\(tileSize) (\(totalTiles)块)")
-
-        guard let outputContext = CGContext(
-            data: nil, width: outputWidth, height: outputHeight,
-            bitsPerComponent: 8, bytesPerRow: 0,
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else { throw InferenceError.outputCreationFailed }
-        
-        outputContext.translateBy(x: 0, y: CGFloat(outputHeight))
-        outputContext.scaleBy(x: 1.0, y: -1.0)
-
-        let ciImage = CIImage(cgImage: image)
-        
-        for (index, tile) in tiles.enumerated() {
-            if isCancelled { throw InferenceError.cancelled }
-            
-            let cropRect = CGRect(x: tile.x, y: tile.y, width: tileSize, height: tileSize)
-            let croppedCIImage = ciImage.cropped(to: cropRect)
-            let movedCIImage = croppedCIImage.transformed(by: CGAffineTransform(translationX: -cropRect.origin.x, y: -cropRect.origin.y))
-            
-            guard let croppedCG = self.ciContext.createCGImage(movedCIImage, from: CGRect(x: 0, y: 0, width: tileSize, height: tileSize)) else {
-                continue
-            }
-            
-            let outputTile = try self.processTile(image: croppedCG, model: model, inputInfo: inputInfo)
-            
-            blendTile(
-                context: outputContext,
-                tileImage: outputTile,
-                tileInfo: tile,
-                scaleFactor: scaleFactor,
-                overlap: overlap,
-                tileSize: tileSize
-            )
-            
-            let elapsed = Date().timeIntervalSince(startTime)
-            progressHandler?(InferenceProgress(
-                currentTile: index + 1,
-                totalTiles: totalTiles,
-                fraction: Double(index + 1) / Double(totalTiles),
-                elapsedSeconds: elapsed,
-                estimatedRemainingSeconds: estimateRemaining(elapsed: elapsed, completed: index + 1, total: totalTiles)
-            ))
+        // 2. 官方做法：暴力拉伸，直接填满模型
+        guard let inputBuffer = makeBGRAPixelBuffer(from: image, width: inputInfo.width, height: inputInfo.height) else {
+            throw InferenceError.tileProcessingFailed("创建 Buffer 失败")
+        }
+        guard let inputName = model.modelDescription.inputDescriptionsByName.first?.key else {
+            throw InferenceError.tileProcessingFailed("无输入")
         }
 
-        guard let finalOutput = outputContext.makeImage() else {
-            throw InferenceError.outputCreationFailed
+        let featureProvider: MLDictionaryFeatureProvider
+        if inputInfo.isImageInput {
+            featureProvider = try MLDictionaryFeatureProvider(dictionary: [inputName: MLFeatureValue(pixelBuffer: inputBuffer)])
+        } else {
+            let constraint = model.modelDescription.inputDescriptionsByName[inputName]!.multiArrayConstraint!
+            guard let scaledCG = ciContext.createCGImage(CIImage(cvPixelBuffer: inputBuffer), from: CGRect(x: 0, y: 0, width: inputInfo.width, height: inputInfo.height)) else {
+                throw InferenceError.tileProcessingFailed("转换失败")
+            }
+            let array = try ImageTensorConverter.imageToMultiArray(scaledCG, constraint: constraint, isNCHW: inputInfo.isNCHW)
+            featureProvider = try MLDictionaryFeatureProvider(dictionary: [inputName: MLFeatureValue(multiArray: array)])
+        }
+
+        if isCancelled { throw InferenceError.cancelled }
+
+        // 3. 单次推理
+        let output = try await model.prediction(from: featureProvider)
+        
+        guard let outputName = output.featureNames.first, let outputFeature = output.featureValue(for: outputName) else {
+            throw InferenceError.tileProcessingFailed("无输出")
+        }
+
+        // 4. 拿结果并放大到目标尺寸
+        let scaleFactor = descriptor.scaleFactor
+        let targetWidth = image.width * scaleFactor
+        let targetHeight = image.height * scaleFactor
+        
+        let finalCGImage: CGImage
+        if let outputBuffer = outputFeature.imageBufferValue {
+            finalCGImage = scalePixelBufferToCGImage(outputBuffer, targetWidth: targetWidth, targetHeight: targetHeight)
+        } else if let outputArray = outputFeature.multiArrayValue {
+            let outIsNCHW = outputArray.shape[1].intValue == 3
+            let rawCGImage = try ImageTensorConverter.multiArrayToImage(outputArray, isNCHW: outIsNCHW)
+            finalCGImage = resizeCGImage(rawCGImage, targetWidth: targetWidth, targetHeight: targetHeight)
+        } else {
+            throw InferenceError.tileProcessingFailed("格式不支持")
         }
 
         let elapsed = Date().timeIntervalSince(startTime)
+        
+        progressHandler?(InferenceProgress(
+            currentTile: 1, totalTiles: 1, fraction: 1.0,
+            elapsedSeconds: elapsed, estimatedRemainingSeconds: 0
+        ))
+
         return InferenceResult(
-            outputImage: finalOutput,
+            outputImage: finalCGImage,
             inputSize: CGSize(width: image.width, height: image.height),
-            outputSize: CGSize(width: outputWidth, height: outputHeight),
+            outputSize: CGSize(width: targetWidth, height: targetHeight),
             elapsedSeconds: elapsed, modelID: modelID,
-            tileSize: tileSize, totalTiles: totalTiles
+            tileSize: inputInfo.width, totalTiles: 1
         )
     }
 
-    // MARK: - 实时预览
+    // MARK: - 实时预览（同款逻辑）
     func fastUpscale(image: CGImage, modelID: String) async throws -> CGImage {
         guard let manifest = await manifestLoader.manifestItem(for: modelID) else {
             throw InferenceError.modelNotLoaded(modelID)
@@ -152,7 +147,6 @@ actor SuperResolver {
         if let outputBuffer = outputFeature.imageBufferValue {
             return scalePixelBufferToCGImage(outputBuffer, targetWidth: targetWidth, targetHeight: targetHeight)
         } else if let outputArray = outputFeature.multiArrayValue {
-            // ⭐️ 改用显式下标判断，彻底避免乱码
             let outIsNCHW = outputArray.shape[1].intValue == 3
             let rawCGImage = try ImageTensorConverter.multiArrayToImage(outputArray, isNCHW: outIsNCHW)
             return resizeCGImage(rawCGImage, targetWidth: targetWidth, targetHeight: targetHeight)
@@ -160,96 +154,7 @@ actor SuperResolver {
         throw InferenceError.tileProcessingFailed("格式不支持")
     }
 
-    // MARK: - 智能网格计算
-    private struct TileInfo {
-        let x: Int; let y: Int; let width: Int; let height: Int
-    }
-
-    private func calculateTiles(width: Int, height: Int, tileSize: Int, overlap: Int) -> [TileInfo] {
-        var tiles: [TileInfo] = []
-        let step = max(1, tileSize - overlap)
-        
-        var y = 0
-        while y < height {
-            var x = 0
-            while x < width {
-                let startX = min(x, max(0, width - tileSize))
-                let startY = min(y, max(0, height - tileSize))
-                
-                let validWidth = min(tileSize, width)
-                let validHeight = min(tileSize, height)
-                
-                tiles.append(TileInfo(x: startX, y: startY, width: validWidth, height: validHeight))
-                
-                if x + tileSize >= width { break }
-                x += step
-            }
-            if y + tileSize >= height { break }
-            y += step
-        }
-        return tiles
-    }
-
-    // MARK: - 单块推理
-    nonisolated private func processTile(image: CGImage, model: MLModel, inputInfo: ModelInputInfo) throws -> CGImage {
-        let featureProvider: MLDictionaryFeatureProvider
-        guard let inputName = model.modelDescription.inputDescriptionsByName.first?.key else {
-            throw InferenceError.tileProcessingFailed("无输入节点")
-        }
-
-        if inputInfo.isImageInput {
-            let pixelBuffer = try ImageTensorConverter.createPixelBuffer(from: image, width: inputInfo.width, height: inputInfo.height, pixelFormat: kCVPixelFormatType_32BGRA)
-            featureProvider = try MLDictionaryFeatureProvider(dictionary: [inputName: MLFeatureValue(pixelBuffer: pixelBuffer)])
-        } else {
-            let constraint = model.modelDescription.inputDescriptionsByName[inputName]!.multiArrayConstraint!
-            let array = try ImageTensorConverter.imageToMultiArray(image, constraint: constraint, isNCHW: inputInfo.isNCHW)
-            featureProvider = try MLDictionaryFeatureProvider(dictionary: [inputName: MLFeatureValue(multiArray: array)])
-        }
-
-        let output = try model.prediction(from: featureProvider)
-        guard let outputName = output.featureNames.first, let outputFeature = output.featureValue(for: outputName) else {
-            throw InferenceError.tileProcessingFailed("模型输出无效")
-        }
-
-        if let outputBuffer = outputFeature.imageBufferValue {
-            return try ImageTensorConverter.createCGImage(from: outputBuffer)
-        } else if let outputArray = outputFeature.multiArrayValue {
-            // ⭐️ 改用显式下标判断
-            let outIsNCHW = outputArray.shape[1].intValue == 3
-            return try ImageTensorConverter.multiArrayToImage(outputArray, isNCHW: outIsNCHW)
-        }
-        throw InferenceError.tileProcessingFailed("输出格式不支持")
-    }
-
-    // MARK: - 拼接
-    private func blendTile(context: CGContext, tileImage: CGImage, tileInfo: TileInfo, scaleFactor: Int, overlap: Int, tileSize: Int) {
-        let drawWidth = CGFloat(tileInfo.width * scaleFactor)
-        let drawHeight = CGFloat(tileInfo.height * scaleFactor)
-        let destX = CGFloat(tileInfo.x * scaleFactor)
-        let destY = CGFloat(tileInfo.y * scaleFactor)
-        
-        let cropX = CGFloat(overlap * scaleFactor) / 2
-        let cropY = CGFloat(overlap * scaleFactor) / 2
-        
-        var validRect = CGRect(x: cropX, y: cropY, width: drawWidth - cropX * 2, height: drawHeight - cropY * 2)
-        
-        if validRect.width <= 0 { validRect.size.width = drawWidth }
-        if validRect.height <= 0 { validRect.size.height = drawHeight }
-        
-        guard let validTile = tileImage.cropping(to: validRect) else { return }
-        
-        context.saveGState()
-        context.translateBy(x: destX + cropX, y: destY + drawHeight - cropY)
-        context.scaleBy(x: 1.0, y: -1.0)
-        context.draw(validTile, in: CGRect(x: 0, y: 0, width: validRect.width, height: validRect.height))
-        context.restoreGState()
-    }
-
-    private func estimateRemaining(elapsed: TimeInterval, completed: Int, total: Int) -> TimeInterval? {
-        guard completed > 0 else { return nil }
-        return (elapsed / Double(completed)) * Double(total - completed)
-    }
-
+    // MARK: - 官方代码复刻：暴力拉伸 BGRA Buffer
     private func makeBGRAPixelBuffer(from image: CGImage, width: Int, height: Int) -> CVPixelBuffer? {
         let attrs: [CFString: Any] = [
             kCVPixelBufferCGImageCompatibilityKey: true,
@@ -269,10 +174,12 @@ actor SuperResolver {
             bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
         ) else { return nil }
         
+        // 关键：直接拉伸画进去，没有任何黑边！
         ctx.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
         return buffer
     }
 
+    // MARK: - CIContext 极速缩放
     private func scalePixelBufferToCGImage(_ buffer: CVPixelBuffer, targetWidth: Int, targetHeight: Int) -> CGImage {
         let ciImage = CIImage(cvPixelBuffer: buffer)
         let scaleX = CGFloat(targetWidth) / CGFloat(CVPixelBufferGetWidth(buffer))
