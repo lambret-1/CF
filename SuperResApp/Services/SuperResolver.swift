@@ -17,7 +17,7 @@ actor SuperResolver {
     func upscale(
         image: CGImage,
         modelID: String,
-        tileSize: Int = 512,
+        tileSize: Int = 512, // 这个参数目前没用上，因为按模型固定尺寸切图了
         progressHandler: ((InferenceProgress) -> Void)? = nil
     ) async throws -> InferenceResult {
         isCancelled = false
@@ -32,31 +32,43 @@ actor SuperResolver {
             computeUnits: descriptor.primaryComputeUnits
         )
 
-        guard let inputDesc = model.modelDescription.inputDescriptionsByName.first?.value,
-              let constraint = inputDesc.multiArrayConstraint else {
-            // 修复点：改为抛出现有的错误枚举
-            throw InferenceError.tileProcessingFailed("模型无输入或输入约束不匹配")
+        // ⭐️ 核心修复 1：兼容 Image 和 MultiArray 两种输入类型
+        guard let inputDesc = model.modelDescription.inputDescriptionsByName.first?.value else {
+            throw InferenceError.tileProcessingFailed("模型无输入")
         }
         
-        let shape = constraint.shape.map { $0.intValue }
         var height = 0
         var width = 0
+        var isNCHW = false
         
-        if shape.count == 4 {
-            if shape[1] == 3 { // NCHW
-                height = shape[2]
-                width = shape[3]
-            } else if shape[3] == 3 { // NHWC
-                height = shape[1]
-                width = shape[2]
+        if let imageConstraint = inputDesc.imageConstraint {
+            // 如果是图片输入
+            height = imageConstraint.pixelsHigh
+            width = imageConstraint.pixelsWide
+        } else if let multiArrayConstraint = inputDesc.multiArrayConstraint {
+            // 如果是数组输入
+            let shape = multiArrayConstraint.shape.map { $0.intValue }
+            if shape.count == 4 {
+                if shape[1] == 3 { // NCHW
+                    height = shape[2]
+                    width = shape[3]
+                    isNCHW = true
+                } else if shape[3] == 3 { // NHWC
+                    height = shape[1]
+                    width = shape[2]
+                    isNCHW = false
+                } else {
+                    throw InferenceError.tileProcessingFailed("未知的模型输入形状")
+                }
             } else {
-                throw InferenceError.tileProcessingFailed("未知的模型输入形状")
+                throw InferenceError.tileProcessingFailed("模型输入维度不是 4")
             }
         } else {
-            throw InferenceError.tileProcessingFailed("模型输入维度不是 4")
+            throw InferenceError.tileProcessingFailed("不支持的输入类型")
         }
 
         let overlap = 16
+        // ⭐️ 使用模型约束的 width/height 来切图
         let tiles = calculateTiles(width: image.width, height: image.height, tileSize: width, overlap: overlap)
         let totalTiles = tiles.count
         let outputWidth = image.width * descriptor.scaleFactor
@@ -88,7 +100,8 @@ actor SuperResolver {
                 continue
             }
             
-            guard let outputTile = try? processTile(image: inputTile, model: model, isNCHW: shape[1] == 3) else {
+            // ⭐️ 传入正确的 isNCHW
+            guard let outputTile = try? processTile(image: inputTile, model: model, isNCHW: isNCHW) else {
                 continue
             }
 
