@@ -10,6 +10,9 @@ struct PhotoSuperResView: View {
     @State private var zoomScale: CGFloat = 1.0
     @State private var availableModels: [ModelRuntimeInfo] = []
     
+    // ⭐️ 1. 新增极速模式状态
+    @State private var isFastMode: Bool = false
+    
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
@@ -55,11 +58,13 @@ struct PhotoSuperResView: View {
             }
             .photosPicker(
                 isPresented: $viewModel.showPhotoPicker,
+()
                 selection: $viewModel.photoPickerItem,
-                matching: .images
+                           matching: .images
             )
-            .onChange(of: viewModel.photoPickerItem) { _, newItem in
-                guard let newItem else { return }
+            .onChange(of: }
+ viewModel.photoPickerItem) { _, newItem in
+                guard let new       Item else { return }
                 Task {
                     await viewModel.handlePickerSelection(newItem)
                 }
@@ -68,9 +73,7 @@ struct PhotoSuperResView: View {
                 modelPickerSheet
             }
             .task {
-                availableModels = await viewModel.availableModels()
-            }
-        }
+                availableModels = await viewModel.availableModels }
     }
     
     // MARK: - 预览区
@@ -96,7 +99,6 @@ struct PhotoSuperResView: View {
                 case .imageSelected, .failed:
                     if let image = viewModel.selectedImage {
                         ZoomableImageView(image: image, zoomScale: $zoomScale)
-                            // 确保包裹组件完全撑满可用区域
                             .frame(width: geometry.size.width, height: geometry.size.height)
                     }
                     if case .failed(let message) = viewModel.state {
@@ -106,7 +108,7 @@ struct PhotoSuperResView: View {
                                 title: "推理失败",
                                 message: message,
                                 actionTitle: "重试",
-                                action: { Task { await viewModel.startInference() } }
+                                action: { Task { await viewModel.startInference(isFastMode: isFastMode) } } // ⭐️ 传入参数
                             )
                             .padding(.horizontal, DesignTokens.pageMargin)
                             .padding(.bottom, DesignTokens.spacingMD)
@@ -118,15 +120,13 @@ struct PhotoSuperResView: View {
                         Image(uiImage: image)
                             .resizable()
                             .aspectRatio(contentMode: .fit)
-                            .opacity(0.5) // 稍微变暗
-                            .blur(radius: 1) // 轻微模糊，突出底部进度
+                            .opacity(0.5)
+                            .blur(radius: 1)
                             .frame(width: geometry.size.width, height: geometry.size.height)
                     }
                     
                     VStack {
                         Spacer()
-                        
-                        // ⭐️ 底部绿色进度条区域
                         VStack(spacing: 8) {
                             HStack {
                                 if let progress = viewModel.inferenceProgress {
@@ -134,7 +134,7 @@ struct PhotoSuperResView: View {
                                         Text("处理中 \(progress.currentTile)/\(progress.totalTiles) 块")
                                             .font(.system(size: 13, weight: .medium))
                                     } else {
-                                        Text("正在极速处理...")
+                                        Text(isFastMode ? "正在极速处理..." : "正在处理...") // ⭐️ 动态文案
                                             .font(.system(size: 13, weight: .medium))
                                     }
                                 } else {
@@ -152,7 +152,6 @@ struct PhotoSuperResView: View {
                             }
                             .foregroundColor(.white)
                             
-                            // 进度条
                             GeometryReader { barGeo in
                                 ZStack(alignment: .leading) {
                                     Capsule()
@@ -161,7 +160,6 @@ struct PhotoSuperResView: View {
                                     
                                     Capsule()
                                         .fill(Color.green)
-                                        // 进度为 0 时给一点点宽度，防止消失
                                         .frame(width: max(barGeo.size.width * (viewModel.inferenceProgress?.fraction ?? 0.02), 6), height: 6)
                                         .animation(.easeInOut(duration: 0.3), value: viewModel.inferenceProgress?.fraction ?? 0)
                                 }
@@ -173,7 +171,7 @@ struct PhotoSuperResView: View {
                         .background(Color.black.opacity(0.65))
                         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                         .padding(.horizontal, 24)
-                        .padding(.bottom, 20) // 距离照片底部的距离
+                        .padding(.bottom, 20)
                     }
                     
                 case .completed:
@@ -191,7 +189,6 @@ struct PhotoSuperResView: View {
                     }
                 }
             }
-            // 强制 ZStack 尺寸严格等于屏幕计算出的可用区域，并裁剪越界部分
             .frame(width: geometry.size.width, height: geometry.size.height)
             .clipped()
         }
@@ -212,7 +209,7 @@ struct PhotoSuperResView: View {
     
     // MARK: - 模型信息
     private var modelInfoSection: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: 8) {
             Button(action: { viewModel.showModelPicker = true }) {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
@@ -243,6 +240,26 @@ struct PhotoSuperResView: View {
                 .font(.subheadline)
                 .foregroundColor(AppTheme.tertiaryText)
             }
+            
+            // ⭐️ 2. 新增极速模式开关
+            // 通过判断原图尺寸，防止大图开启极速模式导致内存溢出闪退
+            let isLargeImage = (viewModel.originalImageSize.width * viewModel.originalImageSize.height) > 4000000 // 约 400 万像素
+            
+            Toggle(isOn: $isFastMode) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("极速模式")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundColor(isLargeImage ? AppTheme.tertiaryText : AppTheme.primaryText)
+                    
+                    Text(isLargeImage ? "当前图片过大，已禁用极速模式" : "跳过分块直接拉伸，速度快但可能失真")
+                        .font(.caption)
+                        .foregroundColor(isLargeImage ? .red.opacity(0.8) : AppTheme.tertiaryText)
+                }
+            }
+            .toggleStyle(SwitchToggleStyle(tint: AppTheme.accent))
+            .disabled(isLargeImage)
+            .padding(.top, 4)
         }
         .padding(.horizontal, DesignTokens.pageMargin)
         .padding(.vertical, DesignTokens.spacingXS)
@@ -256,7 +273,8 @@ struct PhotoSuperResView: View {
             EmptyView()
         case .imageSelected, .failed:
             PrimaryButton(title: "开始超分", icon: "wand.and.stars", action: {
-                Task { await viewModel.startInference() }
+                // ⭐️ 3. 点击时把 isFastMode 传给 ViewModel
+                Task { await viewModel.startInference(isFastMode: isFastMode) }
             })
         case .inferring:
             PrimaryButton(title: "取消", isDestructive: true, action: {
@@ -264,7 +282,8 @@ struct PhotoSuperResView: View {
             })
         case .completed:
             PrimaryButton(title: "重新超分", icon: "arrow.clockwise", action: {
-                Task { await viewModel.startInference() }
+                // ⭐️ 4. 重新超分时也传递
+                Task { await viewModel.startInference(isFastMode: isFastMode) }
             })
         }
     }
