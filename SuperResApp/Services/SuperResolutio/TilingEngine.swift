@@ -29,7 +29,6 @@ struct TilingEngine: SuperResolutionEngine {
         let outputWidth = image.width * scaleFactor
         let outputHeight = image.height * scaleFactor
 
-        // ⭐️ 极简的画布，不做任何翻转
         guard let outputContext = CGContext(
             data: nil, width: outputWidth, height: outputHeight,
             bitsPerComponent: 8, bytesPerRow: 0,
@@ -39,26 +38,29 @@ struct TilingEngine: SuperResolutionEngine {
         
         for (index, tile) in tiles.enumerated() {
             try autoreleasepool {
-                // 原生裁剪
                 let cropRect = CGRect(x: tile.x, y: tile.y, width: tile.width, height: tile.height)
                 guard let croppedCG = image.cropping(to: cropRect) else { return }
                 
                 var outputTile = try self.processTile(image: croppedCG, model: model, inputInfo: inputInfo)
                 
+                // ⭐️ 核心：因为 x4plus 是多维数组，转成 CGImage 后必定是倒的。在这里把它翻正。
+                let ci = CIImage(cgImage: outputTile)
+                let flipped = ci.transformed(by: CGAffineTransform(scaleX: 1, y: -1).translatedBy(x: 0, y: -ci.extent.height))
+                if let flippedCG = self.ciContext.createCGImage(flipped, from: flipped.extent) {
+                    outputTile = flippedCG
+                }
                 
                 let drawWidth = CGFloat(tile.width) * CGFloat(scaleFactor)
                 let drawHeight = CGFloat(tile.height) * CGFloat(scaleFactor)
                 let destX = CGFloat(tile.x) * CGFloat(scaleFactor)
                 let destY = CGFloat(tile.y) * CGFloat(scaleFactor)
                 
-                // ⭐️ 坐标转换：通过绝对数学计算，避开翻转坐标系
                 let cgY = CGFloat(outputHeight) - destY - drawHeight
                 
                 let safeWidth = min(Int(drawWidth), outputTile.width)
                 let safeHeight = min(Int(drawHeight), outputTile.height)
                 
                 if let validTile = outputTile.cropping(to: CGRect(x: 0, y: 0, width: safeWidth, height: safeHeight)) {
-                    // 直接画，没有任何 translateBy 和 scaleBy，从根本上切断坐标错乱的可能
                     outputContext.draw(validTile, in: CGRect(x: destX, y: cgY, width: drawWidth, height: drawHeight))
                 }
             }
