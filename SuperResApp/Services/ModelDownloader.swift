@@ -33,7 +33,7 @@ actor ModelDownloader: NSObject {
         let supportDir = paths[0]
         queueFileURL = supportDir.appendingPathComponent("download_queue.json")
         
-        // ⭐️ 放弃 tmp 和 App Group，统一放在沙盒内的 Application Support/Models/Temp
+        // 放弃 tmp 和 App Group，统一放在沙盒内的 Application Support/Models/Temp
         let modelsDir = supportDir.appendingPathComponent("Models", isDirectory: true)
         tempDirectory = modelsDir.appendingPathComponent("Temp", isDirectory: true)
         
@@ -41,7 +41,7 @@ actor ModelDownloader: NSObject {
 
         super.init()
 
-        // ⭐️ 核心：全能签环境下后台下载极易出权限问题，改为普通前台下载
+        // 全能签环境下后台下载极易出权限问题，改为普通前台下载
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 30
         config.timeoutIntervalForResource = 60 * 60 * 24
@@ -208,8 +208,9 @@ actor ModelDownloader: NSObject {
 }
 
 // ==========================================
-// ⭐️ 请在这里换行，接着粘贴第二段代码
+// ⭐️ 第一段结束，请空一行接着粘贴第二段
 // ==========================================
+
 // MARK: - URLSessionDownloadDelegate
 
 extension ModelDownloader: URLSessionDownloadDelegate {
@@ -217,8 +218,6 @@ extension ModelDownloader: URLSessionDownloadDelegate {
         let taskID = downloadTask.taskIdentifier
         let fileManager = FileManager.default
         
-        // 因为现在全是前台默认下载，location 会直接落在我们指定的沙盒 tempDirectory 里
-        // 我们只需要立刻把它重命名，防止系统清理
         let paths = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)
         let tempDir = paths[0].appendingPathComponent("Models", isDirectory: true).appendingPathComponent("Temp", isDirectory: true)
         
@@ -269,7 +268,7 @@ extension ModelDownloader: URLSessionDownloadDelegate {
             try FileManager.default.moveItem(at: tempURL, to: destination)
         } catch {
             await manifestLoader.markFailed(id: modelID, reason: "文件重命名失败：\(error.localizedDescription)")
-            await failureHandler?(modelID, error)
+            failureHandler?(modelID, error) // 去掉了多余的 await
             await finishDownload(modelID: modelID)
             return
         }
@@ -278,32 +277,34 @@ extension ModelDownloader: URLSessionDownloadDelegate {
             if !verifySHA256(fileURL: destination, expected: manifest.sha256) {
                 try? FileManager.default.removeItem(at: destination)
                 await manifestLoader.markFailed(id: modelID, reason: "SHA256 校验失败，文件可能已损坏")
-                await failureHandler?(modelID, DownloadError.sha256Mismatch)
+                failureHandler?(modelID, DownloadError.sha256Mismatch) // 去掉了多余的 await
                 await finishDownload(modelID: modelID)
                 return
             }
         }
 
-        let receivedBytes = (try? FileManager.default.attributesOfItem(atPath: destination let.path)[.size] as? Int64) ??  model0
+        // ⭐️ 修复了这里被弄乱的语法：destination.path
+        let receivedBytes = (try? FileManager.default.attributesOfItem(atPath: destination.path)[.size] as? Int64) ?? 0
 
         activeTask = nil
-        activeModelIDID = nil
-        queue.removeAll { $0.id == model =ID }
+        activeModelID = nil
+        queue.removeAll { $0.id == modelID }
         saveQueue()
 
-        await manifestLoader.update taskProgress(1.0, downloadedBytes: receivedBytesModel, for: modelID)
-        await completionHandler?(modelID, destination)
+        await manifestLoader.updateProgress(1.0, downloadedBytes: receivedBytes, for: modelID)
+        completionHandler?(modelID, destination) // 去掉了多余的 await
         await startNext()
     }
 
     func handleDownloadError(taskID: Int, error: Error) async {
-        guardMap[taskID] else { return }
+        // ⭐️ 修复了这里被弄乱的语法：guard let modelID = taskModelMap[taskID]
+        guard let modelID = taskModelMap[taskID] else { return }
         taskModelMap.removeValue(forKey: taskID)
         activeTask = nil
         activeModelID = nil
         
         await manifestLoader.markFailed(id: modelID, reason: "保存失败：\(error.localizedDescription)")
-        await failureHandler?(modelID, error)
+        failureHandler?(modelID, error) // 去掉了多余的 await
         await finishDownload(modelID: modelID)
     }
 
@@ -311,7 +312,7 @@ extension ModelDownloader: URLSessionDownloadDelegate {
         guard let modelID = taskModelMap[task.taskIdentifier] else { return }
         let progress = totalBytesExpected > 0 ? Double(totalBytesWritten) / Double(totalBytesExpected) : 0
         await manifestLoader.updateProgress(progress, downloadedBytes: totalBytesWritten, for: modelID)
-        await progressHandler?(modelID, totalBytesWritten, totalBytesExpected, progress)
+        progressHandler?(modelID, totalBytesWritten, totalBytesExpected, progress) // 去掉了多余的 await
 
         if let index = queue.firstIndex(where: { $0.id == modelID }) {
             queue[index].downloadedBytes = totalBytesWritten
@@ -339,7 +340,7 @@ extension ModelDownloader: URLSessionDownloadDelegate {
             saveQueue()
 
             await manifestLoader.markFailed(id: modelID, reason: "下载失败：\(error.localizedDescription)")
-            await failureHandler?(modelID, error)
+            failureHandler?(modelID, error) // 去掉了多余的 await
             await startNext()
         }
     }
