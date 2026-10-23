@@ -1,5 +1,5 @@
 // SuperResApp/UI/Screens/RootTabView.swift
-// 根标签页：照片 / 实时 / 模型
+// 根标签页：照片 / 实时 / 模型 / 调试
 
 import SwiftUI
 
@@ -11,12 +11,14 @@ struct RootTabView: View {
         case photo = "照片"
         case live = "实时"
         case models = "模型"
+        case debug = "调试" // ⭐️ 新增
 
         var icon: String {
             switch self {
             case .photo: return "photo.on.rectangle"
             case .live: return "camera.viewfinder"
             case .models: return "square.stack.3d.up"
+            case .debug: return "ladybug.fill" // ⭐️ 新增
             }
         }
     }
@@ -40,6 +42,13 @@ struct RootTabView: View {
                     Label(Tab.models.rawValue, systemImage: Tab.models.icon)
                 }
                 .tag(Tab.models)
+                
+            // ⭐️ 新增的调试日志页面
+            DebugConsoleView()
+                .tabItem {
+                    Label(Tab.debug.rawValue, systemImage: Tab.debug.icon)
+                }
+                .tag(Tab.debug)
         }
         .tint(AppTheme.accent)
         // 统一 TabBar 背景为系统背景
