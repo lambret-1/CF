@@ -5,9 +5,10 @@ import CoreML
 import CoreImage
 import UIKit
 
+/// 负责 CGImage 和 MLMultiArray / CVPixelBuffer 的转换
 enum ImageTensorConverter {
     
-    // MARK: - CGImage -> MLMultiArray (安全寻址版)
+    // MARK: - CGImage -> MLMultiArray
     static func imageToMultiArray(_ image: CGImage, constraint: MLMultiArrayConstraint, isNCHW: Bool) throws -> MLMultiArray {
         let shape = constraint.shape.map { $0.intValue }
         let height = isNCHW ? shape[2] : shape[1]
@@ -26,7 +27,7 @@ enum ImageTensorConverter {
         context.scaleBy(x: 1.0, y: -1.0)
         context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
 
-        // ⭐️ 彻底废弃 bindMemory，改用绝对安全的 NSNumber 下标
+        // ⭐️ 彻底废弃 bindMemory，改用绝对安全的 NSNumber 下标赋值
         for y in 0..<height {
             for x in 0..<width {
                 let pixelIndex = y * bytesPerRow + x * bytesPerPixel
@@ -48,7 +49,7 @@ enum ImageTensorConverter {
         return array
     }
 
-    // MARK: - MLMultiArray -> CGImage (安全寻址版，告别撕裂)
+    // MARK: - MLMultiArray -> CGImage
     static func multiArrayToImage(_ array: MLMultiArray, isNCHW: Bool) throws -> CGImage {
         let shape = array.shape.map { $0.intValue }
         let height = isNCHW ? shape[2] : shape[1]
@@ -58,7 +59,7 @@ enum ImageTensorConverter {
         let bytesPerRow = bytesPerPixel * width
         var pixelData = [UInt8](repeating: 0, count: height * bytesPerRow)
 
-        // ⭐️ 绝对安全的读取，无论底层 Padding 怎么排，都不会读错位
+        // ⭐️ 绝对安全的逐元素读取
         for y in 0..<height {
             for x in 0..<width {
                 let pixelIndex = y * bytesPerRow + x * bytesPerPixel
@@ -88,7 +89,6 @@ enum ImageTensorConverter {
             throw InferenceError.tileProcessingFailed("创建输出 CGContext 失败")
         }
         
-        // 翻转回来（因为 CoreML 输出的数组有时会颠倒）
         context.translateBy(x: 0, y: CGFloat(height))
         context.scaleBy(x: 1.0, y: -1.0)
         
