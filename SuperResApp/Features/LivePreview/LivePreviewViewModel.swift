@@ -17,6 +17,9 @@ final class LivePreviewViewModel: ObservableObject {
     @Published private(set) var previewImage: UIImage?
     @Published private(set) var errorMessage: String?
     @Published var showLowPerformanceWarning = false
+    
+    // ⭐️ 新增：用于在 UI 上显示推理错误
+    @Published var inferenceError: String?
 
     // MARK: - 依赖
 
@@ -28,8 +31,9 @@ final class LivePreviewViewModel: ObservableObject {
     private let ciContext = CIContext(options: [.useSoftwareRenderer: false])
 
     // MARK: - 调试开关
-    // ⭐️ 记得改回 false，正式走 AI 推理
-    private let isDebugBypassAI = false 
+    // ⭐️ 第一步：保持 true 运行一次，确认相机画面是否正常显示。
+    // ⭐️ 第二步：改成 false 再运行一次，如果转圈，请看屏幕上显示的红字报错。
+    private let isDebugBypassAI = true 
 
     // MARK: - FPS 计算
 
@@ -122,13 +126,13 @@ final class LivePreviewViewModel: ObservableObject {
             lastFPSUpdate = now
         }
 
-        // 2. 丢帧机制：如果上一帧的 AI 推理还没结束，直接忽略这一帧
+        // 2. 丢帧机制
         guard !isProcessingFrame else { return }
         isProcessingFrame = true
         
         defer { isProcessingFrame = false }
 
-        // 3. 安全转换：将转换操作放到后台线程
+        // 3. 安全转换
         let cgImage: CGImage? = await Task.detached(priority: .userInitiated) { [ciContext] in
             let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
             return ciContext.createCGImage(ciImage, from: ciImage.extent)
@@ -139,13 +143,14 @@ final class LivePreviewViewModel: ObservableObject {
             return
         }
 
-        // ⭐️ 调试模式（已关闭）
+        // ⭐️ 调试模式：直接显示原图
         if isDebugBypassAI {
             self.previewImage = UIImage(cgImage: cgImage)
+            self.inferenceError = nil
             return
         }
 
-        // 4. PiperSR 推理（使用快速整图推理）
+        // 4. 推理（如果开启 AI，速度极慢时会报错或转圈）
         do {
             let outputCGImage = try await superResolver.fastUpscale(
                 image: cgImage,
@@ -153,7 +158,10 @@ final class LivePreviewViewModel: ObservableObject {
             )
             
             self.previewImage = UIImage(cgImage: outputCGImage)
+            self.inferenceError = nil // 成功时清除错误
         } catch {
+            // ⭐️ 捕获错误，并更新到 UI 上
+            self.inferenceError = error.localizedDescription
             print("❌ 实时超分推理失败: \(error)")
         }
     }
