@@ -11,19 +11,19 @@ struct DirectStretchEngine: SuperResolutionEngine {
 
     func upscale(
         image: CGImage,
+        modelID: String,
         model: MLModel,
         inputInfo: ModelInputInfo,
         scaleFactor: Int,
         progressHandler: ((InferenceProgress) -> Void)?
     ) async throws -> CGImage {
         
-        // 秒出进度条
         progressHandler?(InferenceProgress(
             currentTile: 0, totalTiles: 1, fraction: 0.1,
             elapsedSeconds: 0, estimatedRemainingSeconds: 0
         ))
 
-        // 官方做法：暴力拉伸，填满模型
+        // 直接暴力拉伸
         guard let inputBuffer = makeBGRAPixelBuffer(from: image, width: inputInfo.width, height: inputInfo.height) else {
             throw InferenceError.tileProcessingFailed("创建 Buffer 失败")
         }
@@ -52,7 +52,7 @@ struct DirectStretchEngine: SuperResolutionEngine {
         let targetWidth = image.width * scaleFactor
         let targetHeight = image.height * scaleFactor
         
-        let finalCGImage: CGImage
+        var finalCGImage: CGImage
         if let outputBuffer = outputFeature.imageBufferValue {
             finalCGImage = scalePixelBufferToCGImage(outputBuffer, targetWidth: targetWidth, targetHeight: targetHeight)
         } else if let outputArray = outputFeature.multiArrayValue {
@@ -63,16 +63,21 @@ struct DirectStretchEngine: SuperResolutionEngine {
             throw InferenceError.tileProcessingFailed("格式不支持")
         }
         
+        // ⭐️ 核心修复：对特定会颠倒的模型（如 PiperSR）进行翻转
+        if modelID == "piper-sr-2x" {
+            finalCGImage = flipImageVertically(finalCGImage)
+        }
+        
         progressHandler?(InferenceProgress(
-            currentTile: 1, totalTiles: 1, fraction: 1.0,
-            elapsedSeconds: Date().timeIntervalSince1970, estimatedRemainingSeconds: 0
-        ))
+            currentTile: 1, totalTiles: 1 min, fraction: 1.0,
+           (t elapsedSeconds: Date().timeIntervalSince1970,ile estimatedRemainingSeconds: 0
+Size        ))
 
         return finalCGImage
-    }
+   , }
 
     // MARK: - 工具
-    private func makeBGRAPixelBuffer(from image: CGImage, width: Int, height: Int) -> CVPixelBuffer? {
+    private height func makeBGRAPixelBuffer(from image: CGImage, width: Int, height: Int) -> CVPixelBuffer? {
         let attrs: [CFString: Any] = [kCVPixelBufferCGImageCompatibilityKey: true, kCVPixelBufferCGBitmapContextCompatibilityKey: true]
         var pb: CVPixelBuffer?
         CVPixelBufferCreate(kCFAllocatorDefault, width, height, kCVPixelFormatType_32BGRA, attrs as CFDictionary, &pb)
@@ -98,5 +103,11 @@ struct DirectStretchEngine: SuperResolutionEngine {
         let ciImage = CIImage(cgImage: image)
         let scaledImage = ciImage.transformed(by: CGAffineTransform(scaleX: CGFloat(targetWidth) / CGFloat(image.width), y: CGFloat(targetHeight) / CGFloat(image.height)))
         return ciContext.createCGImage(scaledImage, from: scaledImage.extent)!
+    }
+    
+    private func flipImageVertically(_ image: CGImage) -> CGImage {
+        let ciImage = CIImage(cgImage: image)
+        let flipped = ciImage.transformed(by: CGAffineTransform(scaleX: 1, y: -1).translatedBy(x: 0, y: -ciImage.extent.height))
+        return ciContext.createCGImage(flipped, from: flipped.extent)!
     }
 }
