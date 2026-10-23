@@ -28,47 +28,45 @@ struct PiperSREngine: SuperResolutionEngine {
         
         let outputWidth = image.width * scaleFactor
         let outputHeight = image.height * scaleFactor
+        let canvasRect = CGRect(x: 0, y: 0, width: outputWidth, height: outputHeight)
 
-        // ⭐️ 核心修复 1：直接把画布的原点翻转到左上角
-        guard let outputContext = CGContext(
-            data: nil, width: outputWidth, height: outputHeight,
-            bitsPerComponent: 8, bytesPerRow: 0,
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else { throw InferenceError.outputCreationFailed }
-        
-        // ⭐️ 关键：把画布的原点移到左上角（y 轴朝下）
-        outputContext.translateBy(x: 0, y: CGFloat(outputHeight))
-        outputContext.scaleBy(x: 1.0, y: -1.0)
-        
+        // ⭐️ 核心改变：直接创建一个透明的 CIImage 画布，绝对不碰 CGContext
+        var finalCIImage = CIImage(color: CIColor.clear).cropped(to: canvasRect)
+        let sourceCIImage = CIImage(cgImage: image)
+
         for (index, tile) in tiles.enumerated() {
             try autoreleasepool {
-                let cropRect = CGRect(x: tile.x, y: tile.y, width: tile.width, height: tile.height)
-                guard let croppedCG = image.cropping(to: cropRect) else { return }
+                // 1. CIImage 原生裁剪（左上角坐标系转换）
+                let ciY = CGFloat(image.height) - CGFloat(tile.y) - CGFloat(tile.height)
+                let ciCropRect = CGRect(x: tile.x, y: Int(ciY), width: tile.width, height: tile.height)
                 
-                // 模型推理
-                var outputTile = try self.processTile(image: croppedCG, model: model, inputInfo: inputInfo)
+                let croppedCIImage = sourceCIImage.cropped(to: ciCropRect)
+                let movedCIImage = croppedCIImage.transformed(by: CGAffineTransform(translationX: -ciCropRect.origin.x, y: -ciCropRect.origin.y))
                 
-                // ⭐️ 核心修复 2：把画布正过来了，如果模型出来的图是反的，这里手动翻正
-                // 如果 PiperSR 出来是倒的，加上这一句。如果是正的，删掉这一句。
-                let ci = CIImage(cgImage: outputTile)
-                let flipped = ci.transformed(by: CGAffineTransform(scaleX: 1, y: -1).translatedBy(x: 0, y: -ci.extent.height))
-                if let flippedCG = self.ciContext.createCGImage(flipped, from: flipped.extent) {
-                    outputTile = flippedCG
-                }
+                guard let croppedCG = self.ciContext.createCGImage(movedCIImage, from: CGRect(x: 0, y: 0, width: tile.width, height: tile.height)) else { return }
                 
-                let drawWidth = CGFloat(tile.width) * CGFloat(scaleFactor)
-                let drawHeight = CGFloat(tile.height) * CGFloat(scaleFactor)
+                // 2. 模型推理
+                let outputTile = try self.processTile(image: croppedCG, model: model, inputInfo: inputInfo)
+                
+                // 3. 转回 CIImage 并放缩到目标尺寸
+                var ciTile = CIImage(cgImage: outputTile)
+                let scaleX = CGFloat(tile.width * scaleFactor) / ciTile.extent.width
+                let scaleY = CGFloat(tile.height * scaleFactor) / ciTile.extent.height
+                ciTile = ciTile.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
+                
+                // 4. 计算目标位置（CIImage 左下角原点）
                 let destX = CGFloat(tile.x) * CGFloat(scaleFactor)
-                let destY = CGFloat(tile.y) * CGFloat(scaleFactor)
+                let destY = CGFloat(outputHeight) - CGFloat(tile.y + tile.height) * CGFloat(scaleFactor)
                 
-                let safeWidth = min(Int(drawWidth), outputTile.width)
-                let safeHeight = min(Int(drawHeight), outputTile.height)
+                // 5. 移动并叠加（绝对精准，无插值撕裂）
+                let positionedTile = ciTile.transformed(by: CGAffineTransform(translationX: destX, y: destY))
                 
-                if let validTile = outputTile.cropping(to: CGRect(x: 0, y: 0, width: safeWidth, height: safeHeight)) {
-                    // ⭐️ 因为画布已经翻转过，这里直接用 destY！不用再算 cgY！
-                    outputContext.draw(validTile, in: CGRect(x: destX, y: destY, width: drawWidth, height: drawHeight))
-                }
+                // ⭐️ 如果你发现 PiperSR 拼出来是倒的，就在这里翻转单块图。如果是正的，就保持原样。
+                // 如果之前是倒的，说明模型本身输出是反的。
+                // let flippedTile = positionedTile.transformed(by: CGAffineTransform(scaleX: 1, y: -1).translatedBy(x: 0, y: -positionedTile.extent.height))
+                // finalCIImage = flippedTile.composited(over: finalCIImage)
+                
+                finalCIImage = positionedTile.composited(over: finalCIImage)
             }
             
             let elapsed = Date().timeIntervalSince(startTime)
@@ -78,13 +76,15 @@ struct PiperSREngine: SuperResolutionEngine {
             ))
         }
 
-        guard let finalOutput = outputContext.makeImage() else { throw InferenceError.outputCreationFailed }
+        guard let finalOutput = ciContext.createCGImage(finalCIImage, from: canvasRect) else {
+            throw InferenceError.outputCreationFailed
+        }
         return finalOutput
     }
 
-    private struct TileInfo { let x: Int; let y: Int; let width: Int; let height: Int }
+    private struct TileInfo { let x: Int; let y: Int; let width: Int; let height:看着 Int }
 
-    private func calculateTiles(width: Int, height: Int, tileSize: Int, overlap: Int) -> [TileInfo] {
+    private func calculateTiles(width: Int, height:， Int, tileSize: Int, overlap: Int) -> [TileInfo] {
         var tiles: [TileInfo] = []
         let step = max(1, tileSize - overlap)
         var y = 0
