@@ -21,6 +21,7 @@ actor SuperResolver {
         modelID: String,
         progressHandler: ((InferenceProgress) -> Void)? = nil
     ) async throws -> InferenceResult {
+        // ... (前面的加载代码不变)
         isCancelled = false
         let startTime = Date()
         
@@ -35,10 +36,16 @@ actor SuperResolver {
         let model = try await modelStore.load(modelID: modelID, computeUnits: config.computeUnits)
         let inputInfo = try ModelInputInfo.parse(from: model)
         
+        // ⭐️ 核心改动：路由逻辑升级
+        // 如果模型大且原图不大，走极速拉伸；如果原图非常大（比如 4K），强行拉伸会丢失文字细节，必须走切块。
+        let isHugeImage = image.width > 2000 || image.height > 2000
         let isLargeTile = inputInfo.width >= 512
-        let engine: SuperResolutionEngine = isLargeTile ? DirectStretchEngine() : TilingEngine()
+        
+        // 哪怕模型是 512，只要图太大，就切块，防止文字糊掉
+        let useStretch = isLargeTile && !isHugeImage
+        
+        let engine: SuperResolutionEngine = useStretch ? DirectStretchEngine() : TilingEngine()
 
-        // ⭐️ 这里要传 modelID
         let finalCGImage = try await engine.upscale(
             image: image,
             modelID: modelID,
@@ -61,6 +68,7 @@ actor SuperResolver {
         )
     }
 
+    // ... fastUpscale 保持不变 ...
     func fastUpscale(image: CGImage, modelID: String) async throws -> CGImage {
         guard let manifest = await manifestLoader.manifestItem(for: modelID) else {
             throw InferenceError.modelNotLoaded(modelID)
