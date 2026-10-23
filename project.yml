@@ -59,10 +59,8 @@ targets:
       - path: SuperResApp
         excludes:
           - "Models/Builtin/**"
-          - "Resources/**"
           - "Info.plist"
     resources:
-      - path: SuperResApp/Resources/Assets.xcassets
       - path: SuperResApp/Resources/model_manifest.json
     postBuildScripts:
       - name: 复制或编译内置 Core ML 模型与清单
