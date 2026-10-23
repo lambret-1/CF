@@ -52,17 +52,12 @@ struct TilingEngine: SuperResolutionEngine {
         outputContext.translateBy(x: 0, y: CGFloat(outputHeight))
         outputContext.scaleBy(x: 1.0, y: -1.0)
 
-        let ciImage = CIImage(cgImage: image)
-        
         for (index, tile) in tiles.enumerated() {
-            // ⭐️ 删除了 if isCancelled { break }，因为 struct 无法访问 actor 的私有属性
             
             try autoreleasepool {
-                let cropRect = CGRect(x: tile.x, y: tile.y, width: tileSize, height: tileSize)
-                let croppedCIImage = ciImage.cropped(to: cropRect)
-                let movedCIImage = croppedCIImage.transformed(by: CGAffineTransform(translationX: -cropRect.origin.x, y: -cropRect.origin.y))
-                
-                guard let croppedCG = self.ciContext.createCGImage(movedCIImage, from: CGRect(x: 0, y: 0, width: tileSize, height: tileSize)) else { return }
+                // ⭐️ 核心修复：放弃 CIImage 裁剪，直接使用 CGImage 裁剪（避免左下角坐标系颠倒）
+                let cropRect = CGRect(x: tile.x, y: tile.y, width: tile.width, height: tile.height)
+                guard let croppedCG = image.cropping(to: cropRect) else { return }
                 
                 let outputTile = try self.processTile(image: croppedCG, model: model, inputInfo: inputInfo)
                 
