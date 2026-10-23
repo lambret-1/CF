@@ -29,7 +29,6 @@ struct TilingEngine: SuperResolutionEngine {
         let outputWidth = image.width * scaleFactor
         let outputHeight = image.height * scaleFactor
 
-        // ⭐️ 创建纯净画布，保持系统默认（左下角原点）
         guard let outputContext = CGContext(
             data: nil, width: outputWidth, height: outputHeight,
             bitsPerComponent: 8, bytesPerRow: 0,
@@ -39,39 +38,27 @@ struct TilingEngine: SuperResolutionEngine {
         
         for (index, tile) in tiles.enumerated() {
             try autoreleasepool {
-                // 1. 原生裁剪（左上角原点）
+                // 原生裁剪（极度安全）
                 let cropRect = CGRect(x: tile.x, y: tile.y, width: tile.width, height: tile.height)
                 guard let croppedCG = image.cropping(to: cropRect) else { return }
                 
-                // 2. 模型推理
-                var outputTile = try self.processTile(image: croppedCG, model: model, inputInfo: inputInfo)
+                // 推理
+                let outputTile = try self.processTile(image: croppedCG, model: model, inputInfo: inputInfo)
                 
-                // 3. 如果是 PiperSR，单块推理结果是倒置的，这里进行翻转
-                if modelID == "piper-sr-2x" {
-                    if let context = CGContext(data: nil, width: outputTile.width, height: outputTile.height, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) {
-                        context.translateBy(x: 0, y: CGFloat(outputTile.height))
-                        context.scaleBy(x: 1.0, y: -1.0)
-                        context.draw(outputTile, in: CGRect(x: 0, y: 0, width: outputTile.width, height: outputTile.height))
-                        if let flipped = context.makeImage() {
-                            outputTile = flipped
-                        }
-                    }
-                }
-                
-                // 4. 计算尺寸和目标位置
+                // 计算位置
                 let drawWidth = CGFloat(tile.width) * CGFloat(scaleFactor)
                 let drawHeight = CGFloat(tile.height) * CGFloat(scaleFactor)
                 let destX = CGFloat(tile.x) * CGFloat(scaleFactor)
                 let destY = CGFloat(tile.y) * CGFloat(scaleFactor)
                 
-                // ⭐️ 核心数学计算：因为 outputContext 原点在左下角，而 destY 是左上角的坐标，需要换算一下
+                // ⭐️ 用最原始的数学方式映射 Y 轴
                 let cgY = CGFloat(outputHeight) - destY - drawHeight
                 
                 let safeWidth = min(Int(drawWidth), outputTile.width)
                 let safeHeight = min(Int(drawHeight), outputTile.height)
                 
                 if let validTile = outputTile.cropping(to: CGRect(x: 0, y: 0, width: safeWidth, height: safeHeight)) {
-                    // 5. 直接画图，不偏移、不翻转 Context，系统会自动处理好方向
+                    // 直接 draw，不搞任何坐标系翻转魔法
                     outputContext.draw(validTile, in: CGRect(x: destX, y: cgY, width: drawWidth, height: drawHeight))
                 }
             }
