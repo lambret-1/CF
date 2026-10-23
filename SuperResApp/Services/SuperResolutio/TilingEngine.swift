@@ -22,13 +22,12 @@ struct TilingEngine: SuperResolutionEngine {
         progressHandler?(InferenceProgress(currentTile: 0, totalTiles: 1, fraction: 0.01, elapsedSeconds: 0, estimatedRemainingSeconds: nil))
 
         let tileSize = inputInfo.width
-        // ⭐️ 重叠区域改回极小，减少计算量
         let overlap = tileSize / 16 
         let tiles = calculateTiles(width: image.width, height: image.height, tileSize: tileSize, overlap: overlap)
         let totalTiles = tiles.count
         
-        // ⭐️ 内存保护：限制最大输出分辨率，防止 192MP 撑爆内存闪退
-        let maxPixels = 8000 * 8000 // 限制最大 64MP
+        // 内存保护
+        let maxPixels = 8000 * 8000
         let originalWidth = image.width * scaleFactor
         let originalHeight = image.height * scaleFactor
         
@@ -43,7 +42,6 @@ struct TilingEngine: SuperResolutionEngine {
         let outputWidth = Int(Double(image.width) * actualScaleFactor)
         let outputHeight = Int(Double(image.height) * actualScaleFactor)
 
-        // ⭐️ 回归极其省内存的 CGContext 拼接
         guard let outputContext = CGContext(
             data: nil, width: outputWidth, height: outputHeight,
             bitsPerComponent: 8, bytesPerRow: 0,
@@ -57,9 +55,8 @@ struct TilingEngine: SuperResolutionEngine {
         let ciImage = CIImage(cgImage: image)
         
         for (index, tile) in tiles.enumerated() {
-            if isCancelled { break }
+            // ⭐️ 删除了 if isCancelled { break }，因为 struct 无法访问 actor 的私有属性
             
-            // ⭐️ 核心防闪退：autoreleasepool 确保每块的内存用完立刻释放
             try autoreleasepool {
                 let cropRect = CGRect(x: tile.x, y: tile.y, width: tileSize, height: tileSize)
                 let croppedCIImage = ciImage.cropped(to: cropRect)
@@ -69,13 +66,11 @@ struct TilingEngine: SuperResolutionEngine {
                 
                 let outputTile = try self.processTile(image: croppedCG, model: model, inputInfo: inputInfo)
                 
-                // 计算缩放后的绘制尺寸
                 let drawWidth = CGFloat(tile.width) * CGFloat(actualScaleFactor)
                 let drawHeight = CGFloat(tile.height) * CGFloat(actualScaleFactor)
                 let destX = CGFloat(tile.x) * CGFloat(actualScaleFactor)
                 let destY = CGFloat(tile.y) * CGFloat(actualScaleFactor)
                 
-                // 绘制到画布（极其省内存）
                 let safeWidth = min(Int(drawWidth), outputTile.width)
                 let safeHeight = min(Int(drawHeight), outputTile.height)
                 if let validTile = outputTile.cropping(to: CGRect(x: 0, y: 0, width: safeWidth, height: safeHeight)) {
@@ -98,7 +93,6 @@ struct TilingEngine: SuperResolutionEngine {
         return finalOutput
     }
 
-    // MARK: - 私有工具
     private struct TileInfo { let x: Int; let y: Int; let width: Int; let height: Int }
 
     private func calculateTiles(width: Int, height: Int, tileSize: Int, overlap: Int) -> [TileInfo] {
