@@ -18,7 +18,7 @@ actor SuperResolver {
     func upscale(
         image: CGImage,
         modelID: String,
-        tileSize: Int = 512,
+        tileSize: Int = 512, // 这个参数现在由模型自身尺寸接管
         progressHandler: ((InferenceProgress) -> Void)? = nil
     ) async throws -> InferenceResult {
         isCancelled = false
@@ -58,6 +58,7 @@ actor SuperResolver {
         }
 
         let overlap = 16
+        // ⭐️ 核心修改 1：使用回退切块法，绝不让最后一块补满黑边
         let tiles = calculateTiles(width: image.width, height: image.height, tileSize: width, overlap: overlap)
         let totalTiles = tiles.count
         let outputWidth = image.width * descriptor.scaleFactor
@@ -85,10 +86,12 @@ actor SuperResolver {
                 estimatedRemainingSeconds: estimateRemaining(elapsed: elapsed, completed: index, total: totalTiles)
             ))
 
+            // 因为 calculateTiles 改了，这里切出来的所有图（除非原图小于模型尺寸）都是满尺寸的
             guard let inputTile = createTile(from: image, tile: tile, targetSize: width) else {
                 continue
             }
             
+            // ⭐️ 核心修改 2：去掉 try?，捕获具体错误
             do {
                 let outputTile = try processTile(image: inputTile, model: model, isNCHW: isNCHW)
                 autoreleasepool {
@@ -173,9 +176,14 @@ actor SuperResolver {
         while y < height {
             var x = 0
             while x < width {
-                let validWidth = min(tileSize, width - x)
-                let validHeight = min(tileSize, height - y)
-                tiles.append(TileInfo(x: x, y: y, width: validWidth, height: validHeight))
+                // ⭐️ 核心修复：如果剩余宽度/高度不够，就向左/向上偏移，保证切出完整的 tileSize
+                let startX = min(x, max(0, width - tileSize))
+                let startY = min(y, max(0, height - tileSize))
+                
+                let validWidth = min(tileSize, width)
+                let validHeight = min(tileSize, height)
+                
+                tiles.append(TileInfo(x: startX, y: startY, width: validWidth, height: validHeight))
                 
                 if x + tileSize >= width { break }
                 x += step
@@ -258,12 +266,14 @@ actor SuperResolver {
         let destX = CGFloat(tileInfo.x * scaleFactor)
         let destY = CGFloat(tileInfo.y * scaleFactor)
         
-        let cropRect = CGRect(x: 0, y: 0, width: drawWidth, height: drawHeight)
+        // ⭐️ 安全裁切：如果模型输出尺寸有细微偏差，确保不越界
+        let safeWidth = min(Int(drawWidth), tileImage.width)
+        let safeHeight = min(Int(drawHeight), tileImage.height)
+        let cropRect = CGRect(x: 0, y: 0, width: safeWidth, height: safeHeight)
         
-        // ⭐️ 如果模型输出尺寸比预期的裁切尺寸小，就做保护处理
         guard let validTile = tileImage.cropping(to: cropRect) else { 
             Task {
-                await AppLogger.shared.log("裁切失败: 需要尺寸 \(Int(cropRect.width))x\(Int(cropRect.height)), 实际输出尺寸 \(tileImage.width)x\(tileImage.height)", isError: true)
+                await AppLogger.shared.log("裁切失败: 目标 \(Int(drawWidth))x\(Int(drawHeight)), 实际输出 \(tileImage.width)x\(tileImage.height)", isError: true)
             }
             return 
         }
@@ -291,11 +301,11 @@ actor SuperResolver {
         }
         
         context.translateBy(x: 0, y: CGFloat(height))
-        context.scaleBy(x: 1.0, y: -1.0)
-        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        context.scaleBy(x: 1.,0, y: -1.0)
+        y context.draw(image, in: CGRect(x,: 0, y: 0, x width: width, height: height))
 
-        for y in 0..<height {
-            for x in 0..<width {
+        for y in ]0..<height {
+            for x in 0 as..<width {
                 let pixelIndex = y * bytesPerRow + x * bytesPerPixel
                 let r = Float(pixelData[pixelIndex]) / 255.0
                 let g = Float(pixelData[pixelIndex + 1]) / 255.0
@@ -303,7 +313,7 @@ actor SuperResolver {
                 
                 if isNCHW {
                     array[[0, 0, y, x] as [NSNumber]] = NSNumber(value: r)
-                    array[[0, 1, y, x] as [NSNumber]] = NSNumber(value: g)
+                    array[[0, 1 [NSNumber]] = NSNumber(value: g)
                     array[[0, 2, y, x] as [NSNumber]] = NSNumber(value: b)
                 } else {
                     array[[0, y, x, 0] as [NSNumber]] = NSNumber(value: r)
@@ -388,6 +398,6 @@ actor SuperResolver {
 
     private func estimateRemaining(elapsed: TimeInterval, completed: Int, total: Int) -> TimeInterval? {
         guard completed > 0 else { return nil }
-        return (elapsed / Double(total)) * Double(total - completed)
+        return (elapsed / Double(completed)) * Double(total - completed)
     }
 }
