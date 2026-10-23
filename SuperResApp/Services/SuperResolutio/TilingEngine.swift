@@ -1,5 +1,3 @@
-// SuperResApp/Services/SuperResolutio/Engines/TilingEngine.swift
-
 import Foundation
 import CoreML
 import UIKit
@@ -7,7 +5,6 @@ import CoreVideo
 import CoreImage
 
 struct TilingEngine: SuperResolutionEngine {
-    // ⭐️ 提取为静态属性，避免反复分配内存
     private static let ciContext = CIContext(options: [.workingColorSpace: NSNull()])
 
     func upscale(
@@ -17,7 +14,7 @@ struct TilingEngine: SuperResolutionEngine {
         inputInfo: ModelInputInfo,
         scaleFactor: Int,
         progressHandler: ((InferenceProgress) -> Void)?
-    ) async throws -> CGImage {
+    ) async throws -> EngineResult { // ⭐️ 修改返回值
         
         let startTime = Date()
         progressHandler?(InferenceProgress(currentTile: 0, totalTiles: 1, fraction: 0.01, elapsedSeconds: 0, estimatedRemainingSeconds: nil))
@@ -38,33 +35,27 @@ struct TilingEngine: SuperResolutionEngine {
         ) else { throw InferenceError.outputCreationFailed }
         
         for (index, tile) in tiles.enumerated() {
+            try Task.checkCancellation() // ⭐️ 支持取消
             try autoreleasepool {
                 let cropRect = CGRect(x: tile.x, y: tile.y, width: tile.width, height: tile.height)
                 guard let croppedCG = image.cropping(to: cropRect) else { return }
                 
-                // ⭐️ 修复 1：补齐边缘图像。如果切下来的块不够 128x128，用边缘拉伸补齐
                 let paddedTile = padImageIfNeeded(croppedCG, targetSize: tileSize)
-                
-                // 模型推理
                 var outputTile = try self.processTile(image: paddedTile, model: model, inputInfo: inputInfo)
                 
-                // ⭐️ 修复 4：因为 x4plus 这类模型是多维数组，转成 CGImage 后必定是倒的。在这里把它翻正。
                 let ci = CIImage(cgImage: outputTile)
                 let flipped = ci.transformed(by: CGAffineTransform(scaleX: 1, y: -1).translatedBy(x: 0, y: -ci.extent.height))
                 if let flippedCG = Self.ciContext.createCGImage(flipped, from: flipped.extent) {
                     outputTile = flippedCG
                 }
                 
-                // 计算绘制区域
                 let drawWidth = CGFloat(tile.width) * CGFloat(scaleFactor)
                 let drawHeight = CGFloat(tile.height) * CGFloat(scaleFactor)
                 let destX = CGFloat(tile.x) * CGFloat(scaleFactor)
                 let destY = CGFloat(tile.y) * CGFloat(scaleFactor)
                 
-                // 坐标转换（CGContext 左下角原点）
                 let cgY = CGFloat(outputHeight) - destY - drawHeight
                 
-                // 因为可能被 Padding 补齐过，需要裁剪出有效区域画到画布上
                 let safeWidth = min(Int(drawWidth), outputTile.width)
                 let safeHeight = min(Int(drawHeight), outputTile.height)
                 
@@ -81,29 +72,20 @@ struct TilingEngine: SuperResolutionEngine {
         }
 
         guard let finalOutput = outputContext.makeImage() else { throw InferenceError.outputCreationFailed }
-        return finalOutput
+        
+        // ⭐️ 返回 EngineResult
+        return EngineResult(image: finalOutput, tileSize: tileSize, totalTiles: totalTiles)
     }
 
-    // MARK: - 辅助方法
-
-    /// ⭐️ 新增：将尺寸不足的图像通过边缘拉伸补齐到目标尺寸，防止模型输入越界
     private func padImageIfNeeded(_ image: CGImage, targetSize: Int) -> CGImage {
-        if image.width == targetSize && image.height == targetSize {
-            return image
-        }
+        if image.width == targetSize && image.height == targetSize { return image }
         let ciImage = CIImage(cgImage: image)
-        // 边缘拉伸
         let clamped = ciImage.clampedToExtent()
-        // 锚定左上角向右下角扩展
         let translateY = CGFloat(targetSize - image.height)
         let transformed = clamped.transformed(by: CGAffineTransform(translationX: 0, y: translateY))
         let cropRect = CGRect(x: 0, y: 0, width: targetSize, height: targetSize)
         let padded = transformed.cropped(to: cropRect)
-        
-        if let result = Self.ciContext.createCGImage(padded, from: padded.extent) {
-            return result
-        }
-        return image // 如果转换失败，回退到原图
+        return Self.ciContext.createCGImage(padded, from: padded.extent) ?? image
     }
 
     private struct TileInfo { let x: Int; let y: Int; let width: Int; let height: Int }
@@ -137,7 +119,6 @@ struct TilingEngine: SuperResolutionEngine {
             let pixelBuffer = try ImageTensorConverter.createPixelBuffer(from: image, width: inputInfo.width, height: inputInfo.height, pixelFormat: kCVPixelFormatType_32BGRA)
             featureProvider = try MLDictionaryFeatureProvider(dictionary: [inputName: MLFeatureValue(pixelBuffer: pixelBuffer)])
         } else {
-            // ⭐️ 修复 3：移除强制解包
             guard let constraint = model.modelDescription.inputDescriptionsByName[inputName]?.multiArrayConstraint else {
                 throw InferenceError.tileProcessingFailed("缺少输入约束")
             }
@@ -152,19 +133,15 @@ struct TilingEngine: SuperResolutionEngine {
 
         if let outputBuffer = outputFeature.imageBufferValue {
             let ciOut = CIImage(cvPixelBuffer: outputBuffer)
-            // ⭐️ 修复 3：移除强制解包
             guard let cgOut = Self.ciContext.createCGImage(ciOut, from: ciOut.extent) else {
                 throw InferenceError.tileProcessingFailed("输出转换失败")
             }
             return cgOut
         } else if let outputArray = outputFeature.multiArrayValue {
-            // ⭐️ 修复 2：兼容 4 通道 (RGBA)
             var outIsNCHW = false
             let shape = outputArray.shape.map { $0.intValue }
             if shape.count == 4 {
-                if shape[1] == 3 || shape[1] == 4 {
-                    outIsNCHW = true
-                }
+                if shape[1] == 3 || shape[1] == 4 { outIsNCHW = true }
             }
             return try ImageTensorConverter.multiArrayToImage(outputArray, isNCHW: outIsNCHW)
         }
