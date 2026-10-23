@@ -35,9 +35,21 @@ actor SuperResolver {
         let model = try await modelStore.load(modelID: modelID, computeUnits: config.computeUnits)
         let inputInfo = try ModelInputInfo.parse(from: model)
         
-        // ⭐️ 路由策略调整：只要模型是 512，就全部走极速拉伸！(因为极速不仅快，内存也稳)
+// 修改前：
+        // let isLargeTile = inputInfo.width >= 512
+        // let engine: SuperResolutionEngine = isLargeTile ? DirectStretchEngine() : TilingEngine()
+
+        // 修改后：
         let isLargeTile = inputInfo.width >= 512
-        let engine: SuperResolutionEngine = isLargeTile ? DirectStretchEngine() : TilingEngine()
+        
+        let engine: SuperResolutionEngine
+        if modelID == "piper-sr-2x" {
+            engine = PiperSREngine() // ⭐️ 专属通道
+        } else if isLargeTile {
+            engine = DirectStretchEngine()
+        } else {
+            engine = TilingEngine()
+        }
 
         let finalCGImage = try await engine.upscale(
             image: image,
