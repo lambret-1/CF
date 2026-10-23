@@ -1,5 +1,3 @@
-// SuperResApp/Services/SuperResolutio/Engines/PiperSREngine.swift
-
 import Foundation
 import CoreML
 import UIKit
@@ -7,7 +5,6 @@ import CoreVideo
 import CoreImage
 
 struct PiperSREngine: SuperResolutionEngine {
-    // 128瓦片模型，不需要频繁用CIContext转换，直接走原生CGContext最快最稳
     func upscale(
         image: CGImage,
         modelID: String,
@@ -15,12 +12,12 @@ struct PiperSREngine: SuperResolutionEngine {
         inputInfo: ModelInputInfo,
         scaleFactor: Int,
         progressHandler: ((InferenceProgress) -> Void)?
-    ) async throws -> CGImage {
+    ) async throws -> EngineResult { // ⭐️ 修改返回值
         
         let startTime = Date()
         progressHandler?(InferenceProgress(currentTile: 0, totalTiles: 1, fraction: 0.01, elapsedSeconds: 0, estimatedRemainingSeconds: nil))
 
-        let tileSize = inputInfo.width // PiperSR 是 128
+        let tileSize = inputInfo.width
         let overlap = tileSize / 16 
         let tiles = calculateTiles(width: image.width, height: image.height, tileSize: tileSize, overlap: overlap)
         let totalTiles = tiles.count
@@ -28,24 +25,21 @@ struct PiperSREngine: SuperResolutionEngine {
         let outputWidth = image.width * scaleFactor
         let outputHeight = image.height * scaleFactor
 
-        // 1. 创建标准画布（左下角为原点，不使用全局翻转）
         guard let outputContext = CGContext(
             data: nil, width: outputWidth, height: outputHeight,
             bitsPerComponent: 8, bytesPerRow: 0,
             space: CGColorSpaceCreateDeviceRGB(),
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ) else { throw InferenceError.outputCreationFailed }
-
+        
         for (index, tile) in tiles.enumerated() {
+            try Task.checkCancellation() // ⭐️ 支持取消
             try autoreleasepool {
-                // 2. 原生裁剪
                 let cropRect = CGRect(x: tile.x, y: tile.y, width: tile.width, height: tile.height)
                 guard let croppedCG = image.cropping(to: cropRect) else { return }
                 
-                // 3. 模型推理
                 var outputTile = try self.processTile(image: croppedCG, model: model, inputInfo: inputInfo)
                 
-                // ⭐️ 核心修复：手动将输出的 Tile 垂直翻转（因为 CoreML 输出的 Buffer 通常是倒的）
                 if let flipped = flipImageVertically(outputTile) {
                     outputTile = flipped
                 }
@@ -55,13 +49,11 @@ struct PiperSREngine: SuperResolutionEngine {
                 let destX = CGFloat(tile.x * scaleFactor)
                 let destY = CGFloat(tile.y * scaleFactor)
                 
-                // ⭐️ 核心修复：使用标准 CGContext（左下角原点）的 Y 坐标计算公式
                 let cgY = CGFloat(outputHeight) - destY - drawHeight
                 
                 let cropRect2 = CGRect(x: 0, y: 0, width: drawWidth, height: drawHeight)
                 guard let validTile = outputTile.cropping(to: cropRect2) else { return }
                 
-                // 4. 正常绘制（此时图像和坐标系都已正确匹配）
                 outputContext.draw(validTile, in: CGRect(x: destX, y: cgY, width: drawWidth, height: drawHeight))
             }
             
@@ -73,7 +65,25 @@ struct PiperSREngine: SuperResolutionEngine {
         }
 
         guard let finalOutput = outputContext.makeImage() else { throw InferenceError.outputCreationFailed }
-        return finalOutput
+        
+        // ⭐️ 返回 EngineResult
+        return EngineResult(image: finalOutput, tileSize: tileSize, totalTiles: totalTiles)
+    }
+
+    private func flipImageVertically(_ image: CGImage) -> CGImage? {
+        let width = image.width
+        let height = image.height
+        guard let context = CGContext(
+            data: nil, width: width, height: height,
+            bitsPerComponent: image.bitsPerComponent, bytesPerRow: image.bytesPerRow,
+            space: image.colorSpace ?? CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: image.bitmapInfo.rawValue
+        ) else { return nil }
+        
+        context.translateBy(x: 0, y: CGFloat(height))
+        context.scaleBy(x: 1.0, y: -1.0)
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return context.makeImage()
     }
 
     private struct TileInfo { let x: Int; let y: Int; let width: Int; let height: Int }
@@ -97,23 +107,6 @@ struct PiperSREngine: SuperResolutionEngine {
         return tiles
     }
 
-    // ⭐️ 新增：使用原生 CGContext 进行垂直翻转的辅助函数，避免引入 CIContext 造成性能损耗
-    private func flipImageVertically(_ image: CGImage) -> CGImage? {
-        let width = image.width
-        let height = image.height
-        guard let context = CGContext(
-            data: nil, width: width, height: height,
-            bitsPerComponent: image.bitsPerComponent, bytesPerRow: image.bytesPerRow,
-            space: image.colorSpace ?? CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: image.bitmapInfo.rawValue
-        ) else { return nil }
-        
-        context.translateBy(x: 0, y: CGFloat(height))
-        context.scaleBy(x: 1.0, y: -1.0)
-        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
-        return context.makeImage()
-    }
-
     private func processTile(image: CGImage, model: MLModel, inputInfo: ModelInputInfo) throws -> CGImage {
         let featureProvider: MLDictionaryFeatureProvider
         guard let inputName = model.modelDescription.inputDescriptionsByName.first?.key else { throw InferenceError.tileProcessingFailed("无输入节点") }
@@ -122,7 +115,9 @@ struct PiperSREngine: SuperResolutionEngine {
             let pixelBuffer = try ImageTensorConverter.createPixelBuffer(from: image, width: inputInfo.width, height: inputInfo.height, pixelFormat: kCVPixelFormatType_32BGRA)
             featureProvider = try MLDictionaryFeatureProvider(dictionary: [inputName: MLFeatureValue(pixelBuffer: pixelBuffer)])
         } else {
-            let constraint = model.modelDescription.inputDescriptionsByName[inputName]!.multiArrayConstraint!
+            guard let constraint = model.modelDescription.inputDescriptionsByName[inputName]?.multiArrayConstraint else {
+                throw InferenceError.tileProcessingFailed("无约束")
+            }
             let array = try ImageTensorConverter.imageToMultiArray(image, constraint: constraint, isNCHW: inputInfo.isNCHW)
             featureProvider = try MLDictionaryFeatureProvider(dictionary: [inputName: MLFeatureValue(multiArray: array)])
         }
@@ -131,7 +126,6 @@ struct PiperSREngine: SuperResolutionEngine {
         guard let outputName = output.featureNames.first, let outputFeature = output.featureValue(for: outputName) else { throw InferenceError.tileProcessingFailed("模型输出无效") }
 
         if let outputBuffer = outputFeature.imageBufferValue {
-            // 原样转出来，交给外面的 flipImageVertically 处
             return try ImageTensorConverter.createCGImage(from: outputBuffer)
         } else if let outputArray = outputFeature.multiArrayValue {
             let outIsNCHW = outputArray.shape[1].intValue == 3
