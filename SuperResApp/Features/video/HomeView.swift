@@ -33,7 +33,7 @@ struct HomeView: View {
                         }
                         
                         // 右侧：视频超分 (你刚才创建的页面)
-                        NavigationLink(destination: VideoSuperResView()) {
+                        NavigationLink(destination: HomeView()) {
                             FeatureCard(icon: "film.stack", title: "视频超分", color: .blue)
                         }
                     }
