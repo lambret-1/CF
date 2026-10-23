@@ -9,6 +9,9 @@ actor ModelDownloader: NSObject {
     /// 单例
     static let shared = ModelDownloader()
 
+    // 共享容器 ID
+    private let appGroupID = "group.com.superres.app"
+
     // MARK: - 回调类型
 
     typealias ProgressHandler = (String, Int64, Int64, Double) -> Void
@@ -38,9 +41,14 @@ actor ModelDownloader: NSObject {
         let paths = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
         let supportDir = paths[0]
         queueFileURL = supportDir.appendingPathComponent("download_queue.json")
-        tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("SuperResDownloads", isDirectory: true)
         
-        // 确保临时下载目录存在
+        // ⭐️ 如果支持 App Group，把临时目录放到共享容器里；否则退回私有临时目录
+        if let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.superres.app") {
+            tempDirectory = containerURL.appendingPathComponent("SuperResDownloads", isDirectory: true)
+        } else {
+            tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("SuperResDownloads", isDirectory: true)
+        }
+        
         try? FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
 
         super.init()
@@ -51,6 +59,9 @@ actor ModelDownloader: NSObject {
         config.shouldUseExtendedBackgroundIdleMode = true
         config.timeoutIntervalForRequest = 30
         config.timeoutIntervalForResource = 60 * 60 * 24 // 24小时
+        // ⭐️ 核心：告诉系统把文件下载到共享容器里
+        config.sharedContainerIdentifier = "group.com.superres.app"
+        
         session = URLSession(configuration: config, delegate: self, delegateQueue: nil)
 
         restoreQueue()
@@ -259,7 +270,14 @@ extension ModelDownloader: URLSessionDownloadDelegate {
                                  didFinishDownloadingTo location: URL) {
         let taskID = downloadTask.taskIdentifier
         let fileManager = FileManager.default
-        let tempDir = fileManager.temporaryDirectory.appendingPathComponent("SuperResDownloads", isDirectory: true)
+        
+        // ⭐️ 核心修复：在共享容器内，直接将文件移过去，不需要用 Data(contentsOf:)
+        let tempDir: URL
+        if let containerURL = fileManager.containerURL(forSecurityApplicationGroupIdentifier: "group.com.superres.app") {
+            tempDir = containerURL.appendingPathComponent("SuperResDownloads", isDirectory: true)
+        } else {
+            tempDir = fileManager.temporaryDirectory.appendingPathComponent("SuperResDownloads", isDirectory: true)
+        }
         
         do {
             try fileManager.createDirectory(at: tempDir, withIntermediateDirectories: true)
@@ -267,8 +285,12 @@ extension ModelDownloader: URLSessionDownloadDelegate {
             let tempFileName = UUID().uuidString + ".zip"
             let tempURL = tempDir.appendingPathComponent(tempFileName)
             
-            let data = try Data(contentsOf: location)
-            try data.write(to: tempURL, options: .atomic)
+            if fileManager.fileExists(atPath: tempURL.path) {
+                try fileManager.removeItem(at: tempURL)
+            }
+            
+            // 因为是同一个 sharedContainer，moveItem 拥有最高权限，秒过
+            try fileManager.moveItem(at: location, to: tempURL)
             
             Task {
                 await self.handleDownloadFinished(taskID: taskID, tempURL: tempURL)
@@ -300,7 +322,6 @@ extension ModelDownloader: URLSessionDownloadDelegate {
         }
     }
 
-    // ⭐️ 注意：以下方法去掉了 private 修饰符，防止跨扩展调用时找不到
     func handleDownloadFinished(taskID: Int, tempURL: URL) async {
         guard let modelID = taskModelMap[taskID] else {
             try? FileManager.default.removeItem(at: tempURL)
