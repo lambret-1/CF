@@ -402,7 +402,7 @@ extension ModelDownloader: URLSessionDownloadDelegate {
     }
 }
 
-// MARK: - 下载错误
+// MARK: - 下载错
 
 enum DownloadError: LocalizedError {
     case sha256Mismatch
