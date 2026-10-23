@@ -7,23 +7,16 @@ import ZIPFoundation
 
 /// 模型编译器，负责将下载的 zip 包编译为可加载的 .mlmodelc
 actor ModelCompiler {
-    /// 单例
     static let shared = ModelCompiler()
 
     private let manifestLoader = ModelManifestLoader.shared
 
-    /// 编译回调
     typealias CompileProgressHandler = (String) -> Void
 
     private init() {}
 
     // MARK: - 编译模型
 
-    /// 编译下载的模型 zip 包
-    /// - Parameters:
-    ///   - modelID: 模型 id
-    ///   - zipURL: zip 文件路径
-    /// - Returns: 编译后的 .mlmodelc 路径
     func compile(modelID: String, zipURL: URL) async throws -> URL {
         await manifestLoader.updateStatus(.compiling, for: modelID)
 
@@ -31,12 +24,11 @@ actor ModelCompiler {
         let tempDir = fileManager.temporaryDirectory
             .appendingPathComponent("SuperResCompile_\(modelID)", isDirectory: true)
 
-        // 清理旧的临时目录
+        // 清理旧的临时目录并重新创建
         try? fileManager.removeItem(at: tempDir)
         try fileManager.createDirectory(at: tempDir, withIntermediateDirectories: true)
 
         defer {
-            // 清理临时文件
             try? fileManager.removeItem(at: tempDir)
             try? fileManager.removeItem(at: zipURL)
         }
@@ -67,17 +59,18 @@ actor ModelCompiler {
         // 4. 移动到 Application Support/Models/
         let destination = await manifestLoader.compiledModelURL(for: modelID)
         let destDir = destination.deletingLastPathComponent()
+        
+        // ⭐️ 确保目标父目录绝对存在
         try? fileManager.createDirectory(at: destDir, withIntermediateDirectories: true)
 
-        // 如果目标已存在，先删除
         if fileManager.fileExists(atPath: destination.path) {
-            try fileManager.removeItem(at: destination)
+            try? fileManager.removeItem(at: destination)
         }
 
         do {
             try fileManager.moveItem(at: compiledURL, to: destination)
         } catch {
-            // move 失败时尝试 copy
+            // ⭐️ 如果 move 失败，尝试 copy 兜底
             try fileManager.copyItem(at: compiledURL, to: destination)
         }
 
@@ -87,10 +80,6 @@ actor ModelCompiler {
 
     // MARK: - SinSR 三件套特殊处理
 
-    /// 编译 SinSR 三件套（Encoder/Decoder/Denoiser）
-    /// - Parameters:
-    ///   - zipURL: 包含三个子模型的 zip
-    /// - Returns: 三个子模型的编译后路径
     func compileSinSRBundle(zipURL: URL) async throws -> (encoder: URL, decoder: URL, denoiser: URL) {
         let fileManager = FileManager.default
         let tempDir = fileManager.temporaryDirectory
@@ -104,26 +93,22 @@ actor ModelCompiler {
             try? fileManager.removeItem(at: zipURL)
         }
 
-        // 解压
         do {
             try fileManager.unzipItem(at: zipURL, to: tempDir)
         } catch {
             throw CompileError.unzipFailed(error.localizedDescription)
         }
 
-        // 查找三个子模型
         guard let encoderPackage = findSubmodelPackage(in: tempDir, keyword: "Encoder"),
               let decoderPackage = findSubmodelPackage(in: tempDir, keyword: "Decoder"),
               let denoiserPackage = findSubmodelPackage(in: tempDir, keyword: "Denoiser") else {
             throw CompileError.sinSRSubmodelNotFound
         }
 
-        // 编译三个子模型
         let encoderCompiled = try await MLModel.compileModel(at: encoderPackage)
         let decoderCompiled = try await MLModel.compileModel(at: decoderPackage)
         let denoiserCompiled = try await MLModel.compileModel(at: denoiserPackage)
 
-        // 移动到目标目录
         let modelsDir = await manifestLoader.compiledModelURL(for: "sinsr").deletingLastPathComponent()
         try? fileManager.createDirectory(at: modelsDir, withIntermediateDirectories: true)
 
@@ -133,7 +118,7 @@ actor ModelCompiler {
 
         for (src, dest) in [(encoderCompiled, encoderDest), (decoderCompiled, decoderDest), (denoiserCompiled, denoiserDest)] {
             if fileManager.fileExists(atPath: dest.path) {
-                try fileManager.removeItem(at: dest)
+                try? fileManager.removeItem(at: dest)
             }
             try fileManager.moveItem(at: src, to: dest)
         }
@@ -144,14 +129,12 @@ actor ModelCompiler {
 
     // MARK: - 删除模型
 
-    /// 删除已编译的模型
     func delete(modelID: String) async throws {
         let destination = await manifestLoader.compiledModelURL(for: modelID)
         let fileManager = FileManager.default
         if fileManager.fileExists(atPath: destination.path) {
             try fileManager.removeItem(at: destination)
         }
-        // SinSR 需要额外删除子模型
         if modelID == "sinsr" {
             let modelsDir = destination.deletingLastPathComponent()
             for submodel in ["sinsr_encoder", "sinsr_decoder", "sinsr_denoiser"] {
@@ -165,7 +148,6 @@ actor ModelCompiler {
 
     // MARK: - 私有方法
 
-    /// 在目录中递归查找 .mlpackage
     private func findMLPackage(in directory: URL, modelID: String) throws -> URL? {
         let fileManager = FileManager.default
         guard let enumerator = fileManager.enumerator(
@@ -183,7 +165,6 @@ actor ModelCompiler {
 
         if packages.isEmpty { return nil }
 
-        // 优先匹配模型 id
         if let match = packages.first(where: {
             $0.lastPathComponent.lowercased().contains(modelID.lowercased())
         }) {
@@ -193,7 +174,6 @@ actor ModelCompiler {
         return packages.first
     }
 
-    /// 查找 SinSR 子模型包
     private func findSubmodelPackage(in directory: URL, keyword: String) -> URL? {
         let fileManager = FileManager.default
         guard let enumerator = fileManager.enumerator(
