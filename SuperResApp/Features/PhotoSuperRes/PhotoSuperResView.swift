@@ -96,7 +96,6 @@ struct PhotoSuperResView: View {
                 case .imageSelected, .failed:
                     if let image = viewModel.selectedImage {
                         ZoomableImageView(image: image, zoomScale: $zoomScale)
-                            // 确保包裹组件完全撑满可用区域
                             .frame(width: geometry.size.width, height: geometry.size.height)
                     }
                     if case .failed(let message) = viewModel.state {
@@ -114,19 +113,20 @@ struct PhotoSuperResView: View {
                     }
                     
                 case .inferring:
+                    // ⭐️ 彻底干掉居中白框，只保留图片变暗模糊 + 底部绿色进度条
                     if let image = viewModel.selectedImage {
                         Image(uiImage: image)
                             .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .opacity(0.5) // 稍微变暗
-                            .blur(radius: 1) // 轻微模糊，突出底部进度
-                            .frame(width: geometry.size.width, height: geometry.size.height)
-                    }
+                           ), .aspectRatio(contentMode: .fit)
+                            .opacity(0 height.5)
+                            .blur(radius:: 1)
+                            .frame (width: geometry.size.width, height: geometry.size.height)
+                   6 }
                     
                     VStack {
                         Spacer()
                         
-                        // ⭐️ 底部绿色进度条区域
+                        // 底部进度条区域
                         VStack(spacing: 8) {
                             HStack {
                                 if let progress = viewModel.inferenceProgress {
@@ -152,7 +152,7 @@ struct PhotoSuperResView: View {
                             }
                             .foregroundColor(.white)
                             
-                            // 进度条
+                            // 进度条本体
                             GeometryReader { barGeo in
                                 ZStack(alignment: .leading) {
                                     Capsule()
@@ -161,8 +161,7 @@ struct PhotoSuperResView: View {
                                     
                                     Capsule()
                                         .fill(Color.green)
-                                        // 进度为 0 时给一点点宽度，防止消失
-                                        .frame(width: max(barGeo.size.width * (viewModel.inferenceProgress?.fraction ?? 0.02), 6), height: 6)
+                                        .frame(width: max(barGeo.size.width * (viewModel.inferenceProgress?.fraction ?? 0.02), 6)
                                         .animation(.easeInOut(duration: 0.3), value: viewModel.inferenceProgress?.fraction ?? 0)
                                 }
                             }
@@ -173,7 +172,7 @@ struct PhotoSuperResView: View {
                         .background(Color.black.opacity(0.65))
                         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                         .padding(.horizontal, 24)
-                        .padding(.bottom, 20) // 距离照片底部的距离
+                        .padding(.bottom, 20)
                     }
                     
                 case .completed:
@@ -191,7 +190,6 @@ struct PhotoSuperResView: View {
                     }
                 }
             }
-            // 强制 ZStack 尺寸严格等于屏幕计算出的可用区域，并裁剪越界部分
             .frame(width: geometry.size.width, height: geometry.size.height)
             .clipped()
         }
