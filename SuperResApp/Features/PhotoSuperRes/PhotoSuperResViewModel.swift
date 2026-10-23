@@ -5,7 +5,7 @@ import PhotosUI
 import CoreImage
 import UIKit
 import Photos
-import ImageIO // ⭐️ 新增，用于提取和写入 EXIF
+import ImageIO
 
 @MainActor
 final class PhotoSuperResViewModel: ObservableObject {
@@ -26,10 +26,13 @@ final class PhotoSuperResViewModel: ObservableObject {
     @Published var isSaving = false
     @Published var canSave = false
     
+    // ⭐️ 新增：用于在 UI 上展示保存成功的反馈
+    @Published var saveSuccessMessage: String? = nil
+    
     @Published var selectedModelID: String = "realesrgan-x4v3" 
     @Published var isFastMode: Bool = false
     
-    // ⭐️ 新增：用于保存原图的原始数据（包含 EXIF）
+    // 用于保存原图的原始数据（包含 EXIF）
     private var originalImageData: Data?
     
     // MARK: - 依赖
@@ -45,13 +48,12 @@ final class PhotoSuperResViewModel: ObservableObject {
             return
         }
         
-        // ⭐️ 核心：把包含 EXIF 的原始数据存起来
         self.originalImageData = data
-        
         self.selectedImage = image
         self.resultImage = nil
         self.inferenceProgress = nil
         self.canSave = false
+        self.saveSuccessMessage = nil
         
         let pixelWidth = Int(image.size.width * image.scale)
         let pixelHeight = Int(image.size.height * image.scale)
@@ -67,6 +69,7 @@ final class PhotoSuperResViewModel: ObservableObject {
         
         state = .inferring
         inferenceProgress = nil
+        saveSuccessMessage = nil
         
         do {
             let finalResultImage: CGImage
@@ -114,10 +117,11 @@ final class PhotoSuperResViewModel: ObservableObject {
         }
     }
     
-    // MARK: - 保存到相册（带 EXIF 元数据）
+    // MARK: - 保存到相册（彻底修复相册看不见的问题）
     func saveToAlbum() async {
         guard let result = resultImage, let cgResult = result.cgImage else { return }
         isSaving = true
+        saveSuccessMessage = nil
         
         let success = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
             PHPhotoLibrary.requestAuthorization { [weak self] status in
@@ -126,59 +130,68 @@ final class PhotoSuperResViewModel: ObservableObject {
                     return
                 }
                 
-                // ⭐️ 1. 尝试构造带有原图 EXIF 的新数据
-                var dataToSave: Data?
+                // 1. 准备临时文件路径（用 URL 存相册是解决“看不见”的最优解）
+                let tempDirectory = FileManager.default.temporaryDirectory
+                let tempURL = tempDirectory.appendingPathComponent("SuperRes_\(Int(Date().timeIntervalSince1970)).jpg")
                 
+                // 2. 准备 EXIF 属性
+                var properties: [CFString: Any] = [:]
                 if let originalData = self.originalImageData,
                    let source = CGImageSourceCreateWithData(originalData as CFData, nil),
-                   var properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] {
+                   let originalProps = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] {
                     
-                    // 移除原图的尺寸和方向属性（因为超分后尺寸变了，而且 CGImage 已经是正方向的）
-                    properties.removeValue(forKey: kCGImagePropertyPixelWidth)
-                    properties.removeValue(forKey: kCGImagePropertyPixelHeight)
-                    // 强制设为 1 (Up)，防止在相册里显示成侧翻的
-                    properties[kCGImagePropertyOrientation] = 1 
+                    properties = originalProps
                     
-                    // 创建一个新的 Data 缓存区
-                    let mutableData = NSMutableData()
+                    // 清理可能导致相册解析失败的冲突属性
+                    if var tiff = properties[kCGImagePropertyTIFFDictionary] as? [CFString: Any] {
+                        tiff.removeValue(forKey: kCGImagePropertyTIFFOrientation)
+                        properties[kCGImagePropertyTIFFDictionary] = tiff
+                    }
+                    if var exif = properties[kCGImagePropertyExifDictionary] as? [CFString: Any] {
+                        exif.removeValue(forKey: kCGImagePropertyExifPixelXDimension)
+                        exif.removeValue(forKey: kCGImagePropertyExifPixelYDimension)
+                        properties[kCGImagePropertyExifDictionary] = exif
+                    }
+                    // 强制设置正确的方向
+                    properties[kCGImagePropertyOrientation] = 1
+                }
+                
+                // 3. 写入临时文件
+                if let destination = CGImageDestinationCreateWithURL(tempURL as CFURL, "public.jpeg" as CFString, 1, nil) {
+                    let options: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: 0.95]
+                    CGImageDestinationAddImage(destination, cgResult, properties as CFDictionary)
                     
-                    // 使用 JPEG 格式写入（因为 JPEG 对 EXIF 的兼容性最好）
-                    if let destination = CGImageDestinationCreateWithData(mutableData, "public.jpeg" as CFString, 1, nil) {
-                        // 设置最高画质 (1.0)，避免二次压缩损失画质
-                        let options: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: 1.0]
-                        
-                        // 将新图片和原图的属性一起写入
-                        CGImageDestinationAddImage(destination, cgResult, properties as CFDictionary)
-                        
-                        if CGImageDestinationFinalize(destination) {
-                            dataToSave = mutableData as Data
+                    if CGImageDestinationFinalize(destination) {
+                        // 4. 文件生成成功，调用相册保存（使用 fileURL 方式）
+                        PHPhotoLibrary.shared().performChanges({
+                            let creationRequest = PHAssetCreationRequest.forAsset()
+                            let options = PHAssetResourceCreationOptions()
+                            options.originalFilename = tempURL.lastPathComponent
+                            creationRequest.addResource(with: .photo, fileURL: tempURL, options: options)
+                        }) { saved, error in
+                            // 保存完毕后，删掉临时文件
+                            try? FileManager.default.removeItem(at: tempURL)
+                            
+                            if let error = error {
+                                print("保存失败: \(error)")
+                            }
+                            continuation.resume(returning: saved)
                         }
+                        return
                     }
                 }
                 
-                // ⭐️ 2. 保存到相册
+                // 如果上面生成文件失败了，走最原始的降级方案
                 PHPhotoLibrary.shared().performChanges({
-                    if let finalData = dataToSave {
-                        // 如果有带 EXIF 的数据，走 PHAssetCreationRequest
-                        let creationRequest = PHAssetCreationRequest.forAsset()
-                        let options = PHAssetResourceCreationOptions()
-                        options.originalFilename = "SuperRes_\(Int(Date().timeIntervalSince1970)).jpg"
-                        creationRequest.addResource(with: .photo, data: finalData, options: options)
-                    } else {
-                        // 保底方案：如果提取 EXIF 失败，直接存 UIImage
-                        PHAssetChangeRequest.creationRequestForAsset(from: result)
-                    }
+                    PHAssetChangeRequest.creationRequestForAsset(from: result)
                 }) { saved, error in
-                    if let error = error {
-                        print("保存失败: \(error)")
-                    }
                     continuation.resume(returning: saved)
                 }
             }
         }
         
         if success {
-            print("✅ 已保存到相册（包含原始 EXIF 信息）")
+            saveSuccessMessage = "照片已成功保存到相册"
         }
         
         isSaving = false
@@ -194,7 +207,8 @@ final class PhotoSuperResViewModel: ObservableObject {
         outputSizeText = ""
         canSave = false
         state = .empty
-        originalImageData = nil // ⭐️ 清理原始数据
+        originalImageData = nil
+        saveSuccessMessage = nil
     }
     
     // MARK: - 模型管理
