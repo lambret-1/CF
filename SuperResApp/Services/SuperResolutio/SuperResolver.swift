@@ -111,11 +111,7 @@ actor SuperResolver {
         )
     }
 
-// ==========================================
-// ⭐️ 第一段结束，请空一行接着粘贴第二段
-// ==========================================
-
-// MARK: - 实时预览
+    // MARK: - 实时预览
     func fastUpscale(image: CGImage, modelID: String) async throws -> CGImage {
         guard let manifest = await manifestLoader.manifestItem(for: modelID) else {
             throw InferenceError.modelNotLoaded(modelID)
@@ -156,7 +152,8 @@ actor SuperResolver {
         if let outputBuffer = outputFeature.imageBufferValue {
             return scalePixelBufferToCGImage(outputBuffer, targetWidth: targetWidth, targetHeight: targetHeight)
         } else if let outputArray = outputFeature.multiArrayValue {
-            let outIsNArrayCHW = output.shape.map { $0.intValue }[1] == 3
+            // ⭐️ 改用显式下标判断，彻底避免乱码
+            let outIsNCHW = outputArray.shape[1].intValue == 3
             let rawCGImage = try ImageTensorConverter.multiArrayToImage(outputArray, isNCHW: outIsNCHW)
             return resizeCGImage(rawCGImage, targetWidth: targetWidth, targetHeight: targetHeight)
         }
@@ -217,7 +214,8 @@ actor SuperResolver {
         if let outputBuffer = outputFeature.imageBufferValue {
             return try ImageTensorConverter.createCGImage(from: outputBuffer)
         } else if let outputArray = outputFeature.multiArrayValue {
-            let outIsNCHW = outputArray.shape.map { $0.intValue }[1] == 3
+            // ⭐️ 改用显式下标判断
+            let outIsNCHW = outputArray.shape[1].intValue == 3
             return try ImageTensorConverter.multiArrayToImage(outputArray, isNCHW: outIsNCHW)
         }
         throw InferenceError.tileProcessingFailed("输出格式不支持")
