@@ -30,7 +30,8 @@ actor SuperResolver {
         }
         let descriptor = ModelDescriptor.descriptor(for: manifest)
 
-        var config = MLModelConfiguration()
+        // ⭐️ 改为 let config
+        let config = MLModelConfiguration()
         config.computeUnits = .all // 满血硬件加速
         
         let model = try await modelStore.load(
@@ -79,7 +80,8 @@ actor SuperResolver {
         if isCancelled { throw InferenceError.cancelled }
 
         // 3. 执行单次推理
-        let output = try model.prediction(from: featureProvider)
+        // ⭐️ 核心修复：加上 await
+        let output = try await model.prediction(from: featureProvider)
         
         guard let outputName = output.featureNames.first,
               let outputFeature = output.featureValue(for: outputName) else {
@@ -121,7 +123,6 @@ actor SuperResolver {
 // ==========================================
 // ⭐️ 第一段结束，请空一行接着粘贴第二段
 // ==========================================
-
 // MARK: - 实时预览（极速版）
     func fastUpscale(image: CGImage, modelID: String) async throws -> CGImage {
         guard let manifest = await manifestLoader.manifestItem(for: modelID) else {
@@ -129,7 +130,8 @@ actor SuperResolver {
         }
         let descriptor = ModelDescriptor.descriptor(for: manifest)
 
-        var config = MLModelConfiguration()
+        // ⭐️ 改为 let config
+        let config = MLModelConfiguration()
         config.computeUnits = .all
 
         let model = try await modelStore.load(modelID: modelID, computeUnits: config.computeUnits)
@@ -156,7 +158,9 @@ actor SuperResolver {
             featureProvider = try MLDictionaryFeatureProvider(dictionary: [inputName: MLFeatureValue(multiArray: array)])
         }
 
-        let output = try model.prediction(from: featureProvider)
+        // ⭐️ 核心修复：加上 await
+        let output = try await model.prediction(from: featureProvider)
+        
         guard let outputName = output.featureNames.first, let outputFeature = output.featureValue(for: outputName) else {
             throw InferenceError.tileProcessingFailed("无输出")
         }
