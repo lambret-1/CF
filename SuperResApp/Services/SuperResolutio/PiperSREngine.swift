@@ -29,7 +29,7 @@ struct PiperSREngine: SuperResolutionEngine {
         let outputWidth = image.width * scaleFactor
         let outputHeight = image.height * scaleFactor
 
-        // ⭐️ 原生 CGContext，默认左下角原点
+        // ⭐️ 核心修复 1：直接把画布的原点翻转到左上角
         guard let outputContext = CGContext(
             data: nil, width: outputWidth, height: outputHeight,
             bitsPerComponent: 8, bytesPerRow: 0,
@@ -37,28 +37,37 @@ struct PiperSREngine: SuperResolutionEngine {
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ) else { throw InferenceError.outputCreationFailed }
         
+        // ⭐️ 关键：把画布的原点移到左上角（y 轴朝下）
+        outputContext.translateBy(x: 0, y: CGFloat(outputHeight))
+        outputContext.scaleBy(x: 1.0, y: -1.0)
+        
         for (index, tile) in tiles.enumerated() {
             try autoreleasepool {
                 let cropRect = CGRect(x: tile.x, y: tile.y, width: tile.width, height: tile.height)
                 guard let croppedCG = image.cropping(to: cropRect) else { return }
                 
-                // 推理（不走任何翻转）
-                let outputTile = try self.processTile(image: croppedCG, model: model, inputInfo: inputInfo)
+                // 模型推理
+                var outputTile = try self.processTile(image: croppedCG, model: model, inputInfo: inputInfo)
+                
+                // ⭐️ 核心修复 2：把画布正过来了，如果模型出来的图是反的，这里手动翻正
+                // 如果 PiperSR 出来是倒的，加上这一句。如果是正的，删掉这一句。
+                let ci = CIImage(cgImage: outputTile)
+                let flipped = ci.transformed(by: CGAffineTransform(scaleX: 1, y: -1).translatedBy(x: 0, y: -ci.extent.height))
+                if let flippedCG = self.ciContext.createCGImage(flipped, from: flipped.extent) {
+                    outputTile = flippedCG
+                }
                 
                 let drawWidth = CGFloat(tile.width) * CGFloat(scaleFactor)
                 let drawHeight = CGFloat(tile.height) * CGFloat(scaleFactor)
                 let destX = CGFloat(tile.x) * CGFloat(scaleFactor)
                 let destY = CGFloat(tile.y) * CGFloat(scaleFactor)
                 
-                // 纯数学映射
-                let cgY = CGFloat(outputHeight) - destY - drawHeight
-                
                 let safeWidth = min(Int(drawWidth), outputTile.width)
                 let safeHeight = min(Int(drawHeight), outputTile.height)
                 
                 if let validTile = outputTile.cropping(to: CGRect(x: 0, y: 0, width: safeWidth, height: safeHeight)) {
-                    // 直接画
-                    outputContext.draw(validTile, in: CGRect(x: destX, y: cgY, width: drawWidth, height: drawHeight))
+                    // ⭐️ 因为画布已经翻转过，这里直接用 destY！不用再算 cgY！
+                    outputContext.draw(validTile, in: CGRect(x: destX, y: destY, width: drawWidth, height: drawHeight))
                 }
             }
             
