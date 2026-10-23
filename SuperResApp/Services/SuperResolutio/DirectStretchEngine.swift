@@ -1,3 +1,5 @@
+// SuperResApp/Services/SuperResolutio/Engines/DirectStretchEngine.swift
+
 import Foundation
 import CoreML
 import UIKit
@@ -14,18 +16,27 @@ struct DirectStretchEngine: SuperResolutionEngine {
         inputInfo: ModelInputInfo,
         scaleFactor: Int,
         progressHandler: ((InferenceProgress) -> Void)?
-   Info ) async throws -> EngineResult { // ⭐️.is 修改返回值
+    ) async throws -> EngineResult { 
         
-        let startTime =Image Date()
-        progressHandler?(InferenceProgressInput(currentTile: 0, totalTiles: 1, fraction: 0 {
-.1, elapsedSeconds: 0, estimatedRemainingSeconds: 0           ))
+        let startTime = Date()
+        
+        // 这里的格式我已经给你修正为最标准的单行写法
+        progressHandler?(InferenceProgress(
+            currentTile: 0, 
+            totalTiles: 1, 
+            fraction: 0.1, 
+            elapsedSeconds: 0, 
+            estimatedRemainingSeconds: 0
+        ))
 
         guard let inputName = model.modelDescription.inputDescriptionsByName.first?.key else {
             throw InferenceError.tileProcessingFailed("无输入")
         }
 
         let featureProvider: MLDictionaryFeatureProvider
-        if input guard let inputBuffer = makeBGRAPixelBuffer(from: image, width: inputInfo.width, height: inputInfo.height) else {
+        
+        if inputInfo.isImageInput {
+            guard let inputBuffer = makeBGRAPixelBuffer(from: image, width: inputInfo.width, height: inputInfo.height) else {
                 throw InferenceError.tileProcessingFailed("创建 Buffer 失败")
             }
             featureProvider = try MLDictionaryFeatureProvider(dictionary: [inputName: MLFeatureValue(pixelBuffer: inputBuffer)])
@@ -35,7 +46,11 @@ struct DirectStretchEngine: SuperResolutionEngine {
             }
             
             let ciImage = CIImage(cgImage: image)
-            let scaledCI = ciImage.transformed(by: CGAffineTransform(scaleX: CGFloat(inputInfo.width) / CGFloat(image.width), y: CGFloat(inputInfo.height) / CGFloat(image.height)))
+            let scaledCI = ciImage.transformed(by: CGAffineTransform(
+                scaleX: CGFloat(inputInfo.width) / CGFloat(image.width), 
+                y: CGFloat(inputInfo.height) / CGFloat(image.height)
+            ))
+            
             let cropRect = CGRect(x: 0, y: 0, width: inputInfo.width, height: inputInfo.height)
             let finalCI = scaledCI.cropped(to: cropRect)
             
@@ -56,6 +71,7 @@ struct DirectStretchEngine: SuperResolutionEngine {
         let targetHeight = image.height * scaleFactor
         
         var finalCGImage: CGImage
+        
         if let outputBuffer = outputFeature.imageBufferValue {
             finalCGImage = try scalePixelBufferToCGImage(outputBuffer, targetWidth: targetWidth, targetHeight: targetHeight)
         } else if let outputArray = outputFeature.multiArrayValue {
@@ -75,24 +91,35 @@ struct DirectStretchEngine: SuperResolutionEngine {
         }
         
         let elapsed = Date().timeIntervalSince(startTime)
-        progressHandler?(InferenceProgress(currentTile: 1, totalTiles: 1, fraction: 1.0, elapsedSeconds: elapsed, estimatedRemainingSeconds: 0))
+        progressHandler?(InferenceProgress(
+            currentTile: 1, 
+            totalTiles: 1, 
+            fraction: 1.0, 
+            elapsedSeconds: elapsed, 
+            estimatedRemainingSeconds: 0
+        ))
 
-        // ⭐️ 返回 EngineResult
         return EngineResult(image: finalCGImage, tileSize: inputInfo.width, totalTiles: 1)
     }
 
     private func makeBGRAPixelBuffer(from image: CGImage, width: Int, height: Int) -> CVPixelBuffer? {
-        let attrs: [CFString: Any] = [kCVPixelBufferCGImageCompatibilityKey: true, kCVPixelBufferCGBitmapContextCompatibilityKey: true]
+        let attrs: [CFString: Any] = [
+            kCVPixelBufferCGImageCompatibilityKey: true, 
+            kCVPixelBufferCGBitmapContextCompatibilityKey: true
+        ]
         var pb: CVPixelBuffer?
         CVPixelBufferCreate(kCFAllocatorDefault, width, height, kCVPixelFormatType_32BGRA, attrs as CFDictionary, &pb)
         guard let buffer = pb else { return nil }
+        
         CVPixelBufferLockBaseAddress(buffer, [])
         defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
+        
         guard let ctx = CGContext(
             data: CVPixelBufferGetBaseAddress(buffer), width: width, height: height, bitsPerComponent: 8,
             bytesPerRow: CVPixelBufferGetBytesPerRow(buffer), space: CGColorSpaceCreateDeviceRGB(),
             bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
         ) else { return nil }
+        
         ctx.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
         return buffer
     }
@@ -101,6 +128,7 @@ struct DirectStretchEngine: SuperResolutionEngine {
         let ciImage = CIImage(cvPixelBuffer: buffer)
         let scaleX = CGFloat(targetWidth) / CGFloat(CVPixelBufferGetWidth(buffer))
         let scaleY = CGFloat(targetHeight) / CGFloat(CVPixelBufferGetHeight(buffer))
+        
         let scaledImage = ciImage.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
         guard let cgImage = Self.ciContext.createCGImage(scaledImage, from: scaledImage.extent) else {
             throw InferenceError.tileProcessingFailed("输出 Buffer 转 CGImage 失败")
@@ -112,6 +140,7 @@ struct DirectStretchEngine: SuperResolutionEngine {
         let ciImage = CIImage(cgImage: image)
         let scaleX = CGFloat(targetWidth) / CGFloat(image.width)
         let scaleY = CGFloat(targetHeight) / CGFloat(image.height)
+        
         let scaledImage = ciImage.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
         guard let cgImage = Self.ciContext.createCGImage(scaledImage, from: scaledImage.extent) else {
             throw InferenceError.tileProcessingFailed("输出 Array 转 CGImage 失败")
@@ -122,6 +151,7 @@ struct DirectStretchEngine: SuperResolutionEngine {
     private func flipImageVertically(_ image: CGImage) throws -> CGImage {
         let ciImage = CIImage(cgImage: image)
         let flipped = ciImage.transformed(by: CGAffineTransform(scaleX: 1, y: -1).translatedBy(x: 0, y: -ciImage.extent.height))
+        
         guard let cgImage = Self.ciContext.createCGImage(flipped, from: flipped.extent) else {
             throw InferenceError.tileProcessingFailed("图像翻转失败")
         }
