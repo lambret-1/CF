@@ -140,18 +140,23 @@ final class CameraSession: NSObject {
         let session = AVCaptureSession()
         session.sessionPreset = .hd1280x720 // 720p 输入，PiperSR 2x 输出 1080p
 
-        // 输入
+        // ⭐️ 加上配置事务，保证拓扑图完整
+        session.beginConfiguration()
+        defer { session.commitConfiguration() }
+
+        // 1. 输入
         guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position) else {
             throw CameraError.deviceNotFound
         }
 
         let input = try AVCaptureDeviceInput(device: device)
-        if session.canAddInput(input) {
-            session.addInput(input)
+        guard session.canAddInput(input) else {
+            throw CameraError.configurationFailed("无法添加相机输入")
         }
+        session.addInput(input)
         videoInput = input
 
-        // 输出
+        // 2. 输出
         let output = AVCaptureVideoDataOutput()
         output.videoSettings = [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
@@ -159,15 +164,18 @@ final class CameraSession: NSObject {
         output.alwaysDiscardsLateVideoFrames = true
         output.setSampleBufferDelegate(self, queue: outputQueue)
 
-        if session.canAddOutput(output) {
-            session.addOutput(output)
+        guard session.canAddOutput(output) else {
+            throw CameraError.configurationFailed("无法添加视频输出")
         }
+        session.addOutput(output)
         videoOutput = output
 
-        // 连接方向
+        // 3. 连接方向 ⭐️ 增加了支持性判断
         if let connection = output.connection(with: .video) {
-            connection.videoOrientation = .portrait
-            if position == .front {
+            if connection.isVideoOrientationSupported {
+                connection.videoOrientation = .portrait
+            }
+            if position == .front && connection.isVideoMirroringSupported {
                 connection.isVideoMirrored = true
             }
         }
@@ -191,14 +199,17 @@ final class CameraSession: NSObject {
             throw CameraError.deviceNotFound
         }
         let input = try AVCaptureDeviceInput(device: device)
-        if session.canAddInput(input) {
-            session.addInput(input)
+        guard session.canAddInput(input) else {
+            throw CameraError.configurationFailed("切换摄像头失败：无法添加输入")
         }
+        session.addInput(input)
         videoInput = input
 
         // 更新镜像
         if let connection = videoOutput?.connection(with: .video) {
-            connection.isVideoMirrored = position == .front
+            if connection.isVideoMirroringSupported {
+                connection.isVideoMirrored = position == .front
+            }
         }
     }
 
