@@ -30,7 +30,7 @@ final class LivePreviewViewModel: ObservableObject {
     // MARK: - 调试开关
     // ⭐️ 打开这个开关，会直接显示原图，跳过 AI 超分。
     // 如果用原图能显示画面，说明相机配置没问题，是 AI 推理模块报错或太慢。
-    private let isDebugBypassAI = false 
+    private let isDebugBypassAI = true 
 
     // MARK: - FPS 计算
 
