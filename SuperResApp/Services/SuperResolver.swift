@@ -87,17 +87,20 @@ actor SuperResolver {
                 continue
             }
             
-            guard let outputTile = try? processTile(image: inputTile, model: model, isNCHW: isNCHW) else {
-                continue
-            }
-
-            autoreleasepool {
-                blendTile(
-                    context: outputContext,
-                    tileImage: outputTile,
-                    tileInfo: tile,
-                    scaleFactor: descriptor.scaleFactor
-                )
+            // ⭐️ 注意这里捕获错误，防止因为单块失败导致整图黑屏
+            do {
+                let outputTile = try processTile(image: inputTile, model: model, isNCHW: isNCHW)
+                autoreleasepool {
+                    blendTile(
+                        context: outputContext,
+                        tileImage: outputTile,
+                        tileInfo: tile,
+                        scaleFactor: descriptor.scaleFactor
+                    )
+                }
+            } catch {
+                print("❌ 块 \(index) 推理失败: \(error)")
+                // 如果失败，继续下一块，但可能会导致该区域透明（黑色）
             }
         }
 
@@ -131,30 +134,26 @@ actor SuperResolver {
             throw InferenceError.tileProcessingFailed("模型无输入")
         }
         
-        var height = 0
         var width = 0
         var isNCHW = false
         
         if let imageConstraint = inputDesc.imageConstraint {
-            height = imageConstraint.pixelsHigh
             width = imageConstraint.pixelsWide
         } else if let multiArrayConstraint = inputDesc.multiArrayConstraint {
             let shape = multiArrayConstraint.shape.map { $0.intValue }
             if shape.count == 4 {
-                if shape[1] == 3 { height = shape[2]; width = shape[3]; isNCHW = true }
-                else if shape[3] == 3 { height = shape[1]; width = shape[2]; isNCHW = false }
+                if shape[1] == 3 { width = shape[3]; isNCHW = true }
+                else if shape[3] == 3 { width = shape[2]; isNCHW = false }
                 else { throw InferenceError.tileProcessingFailed("未知输入形状") }
             } else { throw InferenceError.tileProcessingFailed("模型输入维度不对") }
         } else {
             throw InferenceError.tileProcessingFailed("不支持的输入类型")
         }
 
-        // 整图缩放，不切块
         guard let inputTile = createTile(from: image, tile: TileInfo(x: 0, y: 0, width: image.width, height: image.height), targetSize: width) else {
             throw InferenceError.tileProcessingFailed("创建输入图失败")
         }
 
-        // 执行单次推理
         return try processTile(image: inputTile, model: model, isNCHW: isNCHW)
     }
 
@@ -234,8 +233,19 @@ actor SuperResolver {
                 throw InferenceError.tileProcessingFailed("模型输出无效")
             }
 
+            // ⭐️ 核心修复：单独判断输出数组的格式，不再使用输入的 isNCHW
             if outputFeature.type == .multiArray, let outputArray = outputFeature.multiArrayValue {
-                return try multiArrayToImage(outputArray, isNCHW: isNCHW)
+                let outputShape = outputArray.shape.map { $0.intValue }
+                var outputIsNCHW = false
+                if outputShape.count == 4 {
+                    // 绝大多数模型输出是 NHWC [1, H, W, 3]，但为了防止意外，这里做个动态判断
+                    if outputShape[1] == 3 { 
+                        outputIsNCHW = true 
+                    } else if outputShape[3] == 3 { 
+                        outputIsNCHW = false 
+                    }
+                }
+                return try multiArrayToImage(outputArray, isNCHW: outputIsNCHW)
             } else if outputFeature.type == .image, let outputBuffer = outputFeature.imageBufferValue {
                 return try createCGImage(from: outputBuffer)
             }
@@ -251,7 +261,12 @@ actor SuperResolver {
         let destY = CGFloat(tileInfo.y * scaleFactor)
         
         let cropRect = CGRect(x: 0, y: 0, width: drawWidth, height: drawHeight)
-        guard let validTile = tileImage.cropping(to: cropRect) else { return }
+        
+        // 如果模型输出尺寸比预期的裁切尺寸小，就做保护处理
+        guard let validTile = tileImage.cropping(to: cropRect) else { 
+            print("⚠️ 裁切失败: 需要的尺寸 \(cropRect.size), 实际图片尺寸 \(tileImage.width)x\(tileImage.height)")
+            return 
+        }
         
         context.saveGState()
         context.translateBy(x: destX, y: destY + drawHeight)
@@ -302,6 +317,8 @@ actor SuperResolver {
 
     private func multiArrayToImage(_ array: MLMultiArray, isNCHW: Bool) throws -> CGImage {
         let shape = array.shape.map { $0.intValue }
+        
+        // 确保提取的高度和宽度是合理的
         let height = isNCHW ? shape[2] : shape[1]
         let width = isNCHW ? shape[3] : shape[2]
         
