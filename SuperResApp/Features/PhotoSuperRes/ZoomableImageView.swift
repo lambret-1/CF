@@ -4,7 +4,6 @@
 import SwiftUI
 import UIKit
 
-/// 可缩放图片视图（UIViewRepresentable 封装 UIScrollView）
 struct ZoomableImageView: UIViewRepresentable {
     let image: UIImage
     @Binding var zoomScale: CGFloat
@@ -29,23 +28,21 @@ struct ZoomableImageView: UIViewRepresentable {
     func makeUIView(context: Context) -> UIScrollView {
         let scrollView = UIScrollView()
         scrollView.delegate = context.coordinator
-        scrollView.minimumZoomScale = minZoom
+        // ⭐️ 初始先不设置 minZoom，等尺寸计算出来后在 updateLayout 里设置
         scrollView.maximumZoomScale = maxZoom
         scrollView.showsHorizontalScrollIndicator = false
         scrollView.showsVerticalScrollIndicator = false
         scrollView.bouncesZoom = true
         scrollView.bounces = true
         scrollView.contentInsetAdjustmentBehavior = .never
-        scrollView.backgroundColor = .black // 如果图片不可见，这里是黑色的
+        scrollView.backgroundColor = .black
 
-        // 图片视图
         let imageView = UIImageView(image: image)
         imageView.contentMode = .scaleAspectFit
         imageView.isUserInteractionEnabled = true
         imageView.tag = 100
         scrollView.addSubview(imageView)
 
-        // 双击手势
         let doubleTap = UITapGestureRecognizer(
             target: context.coordinator,
             action: #selector(Coordinator.handleDoubleTap(_:))
@@ -64,7 +61,6 @@ struct ZoomableImageView: UIViewRepresentable {
         if imageView.image != image {
             imageView.image = image
         }
-        // 每次状态更新（如尺寸变化、图片更换）时重新计算布局
         context.coordinator.updateLayout()
     }
 
@@ -89,7 +85,6 @@ struct ZoomableImageView: UIViewRepresentable {
 
         func scrollViewDidZoom(_ scrollView: UIScrollView) {
             parent.zoomScale = scrollView.zoomScale
-            // 缩放时只需要重新居中即可，不需要重算 size
             centerImage()
         }
 
@@ -100,7 +95,7 @@ struct ZoomableImageView: UIViewRepresentable {
 
             let scrollSize = scrollView.bounds.size
 
-            // 修复 1：如果 bounds 还没计算出来(为0)，推迟到下一帧执行
+            // 如果 bounds 还没计算出来(为0)，推迟到下一帧执行
             if scrollSize.width == 0 || scrollSize.height == 0 {
                 DispatchQueue.main.async { [weak self] in
                     self?.updateLayout()
@@ -108,16 +103,21 @@ struct ZoomableImageView: UIViewRepresentable {
                 return
             }
 
-            // 计算 aspectFit 的基础尺寸
+            // 计算 aspectFit 的尺寸
             let scale = min(scrollSize.width / imageSize.width, scrollSize.height / imageSize.height)
             let baseWidth = imageSize.width * scale
             let baseHeight = imageSize.height * scale
 
-            // 修复 2：不要乘以 zoomScale。UIScrollView 自己会处理缩放变换。
+            // ⭐️ 强制设置 ImageView 的大小，保证大图不会撑爆
             imageView.frame = CGRect(x: 0, y: 0, width: baseWidth, height: baseHeight)
             scrollView.contentSize = CGSize(width: baseWidth, height: baseHeight)
 
-            // 修复 3：使用 contentInset 居中，放弃手动修改 center
+            // ⭐️ 关键修复：将 UIScrollView 的 1.0 缩放定义为 "恰好适应屏幕的大小"
+            scrollView.minimumZoomScale = 1.0
+            
+            // ⭐️ 关键修复：每次换图或重新布局时，强制重置缩放为适应屏幕状态
+            scrollView.setZoomScale(1.0, animated: false)
+
             centerImage()
         }
 
@@ -130,9 +130,10 @@ struct ZoomableImageView: UIViewRepresentable {
 
         @objc func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
             guard let scrollView = scrollView else { return }
-            if scrollView.zoomScale > parent.minZoom {
-                // 缩放到 1x
-                scrollView.setZoomScale(parent.minZoom, animated: true)
+            // 判断条件改为 1.0
+            if scrollView.zoomScale > 1.0 {
+                // 缩放到 1x (恢复适应屏幕)
+                scrollView.setZoomScale(1.0, animated: true)
             } else {
                 // 缩放到 doubleTapZoom，以点击点为中心
                 let point = gesture.location(in: gesture.view)
