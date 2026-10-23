@@ -49,7 +49,7 @@ targets:
   SuperResApp:
     type: application
     platform: iOS
-    # ⭐️ 新增：配置 App Groups
+    # ⭐️ 配置 App Groups
     entitlements:
       path: SuperResApp/SuperResApp.entitlements
       properties:
@@ -65,20 +65,28 @@ targets:
       - path: SuperResApp/Resources/Assets.xcassets
       - path: SuperResApp/Resources/model_manifest.json
     postBuildScripts:
-      - name: 复制内置 Core ML 模型与清单
+      - name: 复制或编译内置 Core ML 模型与清单
         script: |
           BUILTIN_DIR="$SRCROOT/SuperResApp/Models/Builtin"
           APP_DIR="$BUILT_PRODUCTS_DIR/$PRODUCT_NAME.app"
-          echo "=== 复制内置模型到 $APP_DIR ==="
+          echo "=== 处理内置模型到 $APP_DIR ==="
+          
           for model in PiperSR_2x RealESRGAN_x4v3; do
+            # 情况 1：如果有编译好的 .mlmodelc，直接拷贝
             if [ -d "$BUILTIN_DIR/${model}.mlmodelc" ]; then
               rm -rf "$APP_DIR/${model}.mlmodelc"
               cp -R "$BUILTIN_DIR/${model}.mlmodelc" "$APP_DIR/"
-              echo "  已复制 ${model}.mlmodelc"
+              echo "  已拷贝编译好的 ${model}.mlmodelc"
+            # 情况 2：如果只有 .mlpackage，调用苹果编译器自动编译
+            elif [ -d "$BUILTIN_DIR/${model}.mlpackage" ]; then
+              echo "  发现未编译的 ${model}.mlpackage，正在调用 coremlcompiler 编译..."
+              xcrun coremlcompiler compile "$BUILTIN_DIR/${model}.mlpackage" "$APP_DIR/"
+              echo "  已成功编译并生成 ${model}.mlmodelc"
             else
-              echo "  警告: 未找到 ${model}.mlmodelc"
+              echo "  警告: 未找到 ${model} 的 .mlmodelc 或 .mlpackage"
             fi
           done
+          
           # 复制 model_manifest.json
           MANIFEST_SRC="$SRCROOT/SuperResApp/Resources/model_manifest.json"
           if [ -f "$MANIFEST_SRC" ]; then
@@ -87,6 +95,7 @@ targets:
           else
             echo "  警告: 未找到 model_manifest.json"
           fi
+          
           ls -la "$APP_DIR"/*.mlmodelc "$APP_DIR"/model_manifest.json 2>/dev/null || echo "（检查失败）"
         shell: /bin/sh
     settings:
