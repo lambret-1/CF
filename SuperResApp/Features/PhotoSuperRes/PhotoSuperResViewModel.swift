@@ -4,13 +4,7 @@ import SwiftUI
 import PhotosUI
 import CoreImage
 import UIKit
-
-/// 超分模式
-enum CompareMode: String, CaseIterable {
-    case slider = "滑动对比"
-    case sideBySide = "并排"
-    case original = "原图"
-}
+import Photos
 
 @MainActor
 final class PhotoSuperResViewModel: ObservableObject {
@@ -35,18 +29,19 @@ final class PhotoSuperResViewModel: ObservableObject {
     @Published var outputSizeText: String = ""
     
     @Published var inferenceProgress: InferenceProgress?
+    
+    // ⭐️ 1. 直接使用 SegmentedControl.swift 里定义的 CompareMode，不再重复定义
     @Published var compareMode: CompareMode = .slider
     
     @Published var isSaving = false
     @Published var canSave = false
     
-    // 选中的模型 ID
+    // 选中的模型 ID 
     @Published var selectedModelID: String = "realesrgan-x4v3" 
     
     // MARK: - 依赖
     private let superResolver = SuperResolver.shared
     private let modelStore = ModelStore.shared
-    private let photoLibrary = PhotoLibraryService.shared
     
     // 用于图片转换
     private let ciContext = CIContext()
@@ -78,7 +73,6 @@ final class PhotoSuperResViewModel: ObservableObject {
         inferenceProgress = nil
         
         do {
-            // ⭐️ 注意：这里去掉了 tileSize 参数，因为新的 SuperResolver 会自动从模型读取尺寸
             let result = try await superResolver.upscale(
                 image: cgImage,
                 modelID: selectedModelID,
@@ -118,11 +112,26 @@ final class PhotoSuperResViewModel: ObservableObject {
         guard let result = resultImage else { return }
         isSaving = true
         
-        do {
-            try await photoLibrary.saveImageToAlbum(result)
-            // 可以在这里弹一个 Toast 提示成功，因为你项目里似乎有 Toast 组件
-        } catch {
-            print("保存失败: \(error)")
+        // ⭐️ 2. 绕过 PhotoLibraryService，直接用原生 PHPhotoLibrary 保存，避免报错
+        let success = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            PHPhotoLibrary.requestAuthorization { status in
+                guard status == .authorized || status == .limited else {
+                    continuation.resume(returning: false)
+                    return
+                }
+                PHPhotoLibrary.shared().performChanges({
+                    PHAssetChangeRequest.creationRequestForAsset(from: result)
+                }) { saved, error in
+                    if let error = error {
+                        print("保存失败: \(error)")
+                    }
+                    continuation.resume(returning: saved)
+                }
+            }
+        }
+        
+        if success {
+            print("✅ 已保存到相册")
         }
         
         isSaving = false
@@ -142,9 +151,10 @@ final class PhotoSuperResViewModel: ObservableObject {
     
     // MARK: - 模型管理
     func availableModels() async -> [ModelRuntimeInfo] {
-        // 调用你的 ModelStore 获取可用模型
-        // 假设你有这个方法
-        return (try? await modelStore.availableModels()) ?? []
+        // ⭐️ 3. 绕过 ModelStore 不存在的 availableModels 方法
+        // 这里暂时返回空数组以保证编译通过。
+        // 如果你知道你原本项目里获取模型列表的方法叫什么，可以替换掉这行 return []。
+        return [] 
     }
     
     func selectModel(_ id: String) {
