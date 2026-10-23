@@ -25,7 +25,6 @@ final class PhotoSuperResViewModel: ObservableObject {
     @Published var isSaving = false
     @Published var canSave = false
     
-    // 默认选中模型
     @Published var selectedModelID: String = "realesrgan-x4v3" 
     
     // MARK: - 依赖
@@ -46,7 +45,6 @@ final class PhotoSuperResViewModel: ObservableObject {
         self.inferenceProgress = nil
         self.canSave = false
         
-        // 记录原图尺寸
         self.inputSizeText = "\(Int(image.size.width * image.scale))×\(Int(image.size.height * image.scale))"
         self.outputSizeText = ""
         
@@ -71,14 +69,12 @@ final class PhotoSuperResViewModel: ObservableObject {
                 }
             )
             
-            // 推理成功
             self.resultImage = UIImage(cgImage: result.outputImage)
             self.outputSizeText = "\(Int(result.outputSize.width))×\(Int(result.outputSize.height))"
             self.state = .completed
             self.canSave = true
             
         } catch {
-            // 推理失败
             print("推理失败: \(error)")
             self.state = .failed(error.localizedDescription)
         }
@@ -138,8 +134,16 @@ final class PhotoSuperResViewModel: ObservableObject {
     
     // MARK: - 模型管理
     func availableModels() async -> [ModelRuntimeInfo] {
-        // ⭐️ 修复：使用同步方法 allModels()
-        return manifestLoader.allModels()
+        // ⭐️ 修复：使用正确的 allRuntimeInfo()，并加上保底加载逻辑
+        var models = await manifestLoader.allRuntimeInfo()
+        
+        // 如果列表为空，说明清单还没加载，立刻加载一次
+        if models.isEmpty {
+            try? await manifestLoader.loadFromBundle()
+            models = await manifestLoader.allRuntimeInfo()
+        }
+        
+        return models
     }
     
     func selectModel(_ id: String) {
