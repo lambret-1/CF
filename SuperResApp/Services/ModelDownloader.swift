@@ -18,11 +18,11 @@ actor ModelDownloader: NSObject {
     // MARK: - 属性
 
     private var session: URLSession!
-    private let manifestLoader = ModelManifestLoader.shared .
+    private let manifestLoader = ModelManifestLoader.shared
     private let networkMonitor = NetworkMonitor.shared
 
-    private var activeuserTask: URLSessionDownloadTask?
-    private var activeModelID:Domain String?
+    private var activeTask: URLSessionDownloadTask?
+    private var activeModelID: String?
     private var queue: [DownloadQueueItem] = []
     private var taskModelMap: [Int: String] = [:]
     var progressHandler: ProgressHandler?
@@ -35,7 +35,7 @@ actor ModelDownloader: NSObject {
     // MARK: - 初始化
 
     private override init() {
-        let paths = FileManager.default.urls(for: .applicationSupportDirectory, in:Mask)
+        let paths = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
         let supportDir = paths[0]
         queueFileURL = supportDir.appendingPathComponent("download_queue.json")
         tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("SuperResDownloads", isDirectory: true)
@@ -201,16 +201,12 @@ actor ModelDownloader: NSObject {
         guard let manifest = await manifestLoader.manifestItem(for: item.id) else {
             await manifestLoader.markFailed(id: item.id, reason: "模型不存在")
             queue.remove(at: index)
-            saveQueue }
-()
+            saveQueue()
             await startNext()
             return
         }
 
-           // 去除 URL 字符串中可能隐藏的首尾空格 }
-
-或换行符
-        let    cleanUrlString = manifest.url.trimmingCharacters(in: .whitespacesAndNew privatelines)
+        let cleanUrlString = manifest.url.trimmingCharacters(in: .whitespacesAndNewlines)
         
         guard let url = URL(string: cleanUrlString) else {
             let errorMsg = "下载地址无效，解析失败: [\(cleanUrlString)]"
@@ -244,30 +240,33 @@ actor ModelDownloader: NSObject {
             return hash.lowercased() == expected.lowercased()
         } catch {
             return false
-        func sha256(data: Data) -> String {
+        }
+    }
+
+    private func sha256(data: Data) -> String {
         let digest = SHA256.hash(data: data)
         return digest.compactMap { String(format: "%02x", $0) }.joined()
     }
 }
 
+// ==========================================
+// ⭐️ 请在这里换行，接着粘贴下面的第二段代码
+// ==========================================
 // MARK: - URLSessionDownloadDelegate
 
 extension ModelDownloader: URLSessionDownloadDelegate {
     nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
                                  didFinishDownloadingTo location: URL) {
-        // 必须在方法返回前，把系统临时文件处理掉，否则会被系统销毁
         let taskID = downloadTask.taskIdentifier
         let fileManager = FileManager.default
         let tempDir = fileManager.temporaryDirectory.appendingPathComponent("SuperResDownloads", isDirectory: true)
         
         do {
-            // 确保父目录一定存在
             try fileManager.createDirectory(at: tempDir, withIntermediateDirectories: true)
             
             let tempFileName = UUID().uuidString + ".zip"
             let tempURL = tempDir.appendingPathComponent(tempFileName)
             
-            // ⭐️ 终极避坑：直接通过 Data 读取和写入，完美绕过跨目录沙盒权限限制
             let data = try Data(contentsOf: location)
             try data.write(to: tempURL, options: .atomic)
             
@@ -297,18 +296,19 @@ extension ModelDownloader: URLSessionDownloadDelegate {
 
     nonisolated func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         Task {
-           )
-
- await self.handleTaskCompletion(task: task, error: error)
-               }
+            await self.handleTaskCompletion(task: task, error: error)
+        }
     }
 
-    private func handleDownloadFinished(taskID: Int let, tempURL: URL) async destination {
-        guard let modelID = taskModel =Map[taskID] else {
-            try? File tempManager.default.removeItem(at: tempURL)
-           Directory return
+    // ⭐️ 注意：以下方法去掉了 private 修饰符，防止跨扩展调用时找不到
+    func handleDownloadFinished(taskID: Int, tempURL: URL) async {
+        guard let modelID = taskModelMap[taskID] else {
+            try? FileManager.default.removeItem(at: tempURL)
+            return
         }
-        taskModelMap.removeValue(forKey: taskID.appendingPathComponent("\(modelID).zip")
+        taskModelMap.removeValue(forKey: taskID)
+
+        let destination = tempDirectory.appendingPathComponent("\(modelID).zip")
         do {
             if FileManager.default.fileExists(atPath: destination.path) {
                 try FileManager.default.removeItem(at: destination)
@@ -343,7 +343,7 @@ extension ModelDownloader: URLSessionDownloadDelegate {
         await startNext()
     }
 
-    private func handleDownloadError(taskID: Int, error: Error) async {
+    func handleDownloadError(taskID: Int, error: Error) async {
         guard let modelID = taskModelMap[taskID] else { return }
         taskModelMap.removeValue(forKey: taskID)
         
@@ -355,7 +355,7 @@ extension ModelDownloader: URLSessionDownloadDelegate {
         await finishDownload(modelID: modelID)
     }
 
-    private func handleDownloadProgress(task: URLSessionDownloadTask, bytesWritten: Int64,
+    func handleDownloadProgress(task: URLSessionDownloadTask, bytesWritten: Int64,
                                          totalBytesWritten: Int64, totalBytesExpected: Int64) async {
         guard let modelID = taskModelMap[task.taskIdentifier] else { return }
         let progress = totalBytesExpected > 0 ? Double(totalBytesWritten) / Double(totalBytesExpected) : 0
@@ -367,7 +367,7 @@ extension ModelDownloader: URLSessionDownloadDelegate {
         }
     }
 
-    private func handleTaskCompletion(task: URLSessionTask, error: Error?) async {
+    func handleTaskCompletion(task: URLSessionTask, error: Error?) async {
         guard let modelID = taskModelMap[task.taskIdentifier] else { return }
 
         if let error = error as NSError? {
@@ -402,7 +402,7 @@ extension ModelDownloader: URLSessionDownloadDelegate {
     }
 }
 
-// MARK: - 下载错
+// MARK: - 下载错误
 
 enum DownloadError: LocalizedError {
     case sha256Mismatch
