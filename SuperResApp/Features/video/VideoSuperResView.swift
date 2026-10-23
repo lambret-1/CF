@@ -1,0 +1,167 @@
+import SwiftUI
+import PhotosUI
+import AVKit
+
+struct VideoSuperResView: View {
+    @StateObject private var viewModel = VideoSuperResViewModel()
+    @State private var pickerItem: PhotosPickerItem?
+    @State private var player: AVPlayer?
+    
+    // 弹出保存成功提示
+    @State private var showSaveSuccessAlert = false
+    
+    var body: some View {
+        VStack(spacing: 20) {
+            
+            // 1. 视频预览区
+            ZStack {
+                Color.black.opacity(0.9)
+                
+                if let player = player {
+                    VideoPlayer(player: player)
+                        .ignoresSafeArea(edges: .horizontal)
+                } else {
+                    VStack(spacing: 12) {
+                        Image(systemName: "video.badge.plus")
+                            .font(.system(size: 50))
+                            .foregroundColor(.gray)
+                        Text("请选择视频")
+                            .foregroundColor(.gray)
+                    }
+                }
+                
+                // 处理中的遮罩层
+                if viewModel.state == .processing {
+                    Color.black.opacity(0.6)
+                    VStack(spacing: 16) {
+                        ProgressView(value: viewModel.progress)
+                            .progressViewStyle(.linear)
+                            .tint(.blue)
+                            .frame(width: 200)
+                        
+                        Text("正在超分处理中 \(Int(viewModel.progress * 100))%")
+                            .font(.subheadline)
+                            .foregroundColor(.white)
+                            .bold()
+                    }
+                }
+            }
+            .frame(height: 350)
+            .cornerRadius(12)
+            .padding(.horizontal)
+            
+            // 2. 错误提示
+            if case .failed(let msg) = viewModel.state {
+                Text(msg)
+                    .foregroundColor(.red)
+                    .font(.caption)
+                    .padding(.horizontal)
+            }
+            
+            Spacer()
+            
+            // 3. 底部操作按钮
+            VStack(spacing: 12) {
+                
+                // 选择视频
+                if viewModel.state == .empty || viewModel.originalVideoURL == nil {
+                    PhotosPicker(selection: $pickerItem, matching: .videos) {
+                        Text("从相册选择视频")
+                            .font(.headline)
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding()
+                            .background(Color.blue)
+                            .cornerRadius(10)
+                    }
+                }
+                
+                // 开始处理
+                if viewModel.state == .videoSelected {
+                    Button {
+                        Task { await viewModel.startProcessing() }
+                    } label: {
+                        Text("开始超分")
+                            .font(.headline)
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding()
+                            .background(Color.blue)
+                            .cornerRadius(10)
+                    }
+                }
+                
+                // 处理中取消
+                if viewModel.state == .processing {
+                    Button(role: .destructive) {
+                        viewModel.cancelProcessing()
+                    } label: {
+                        Text("取消处理")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity)
+                            .padding()
+                            .background(Color.red.opacity(0.1))
+                            .foregroundColor(.red)
+                            .cornerRadius(10)
+                    }
+                }
+                
+                // 处理完成后的保存
+                if viewModel.state == .completed {
+                    Button {
+                        Task {
+                            await viewModel.saveToAlbum()
+                            showSaveSuccessAlert = true
+                        }
+                    } label: {
+                        Text("保存到相册")
+                            .font(.headline)
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding()
+                            .background(Color.green)
+                            .cornerRadius(10)
+                    }
+                }
+            }
+            .padding(.horizontal)
+            .padding(.bottom, 20)
+        }
+        .navigationTitle("视频超分")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if viewModel.state != .empty {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("重选") {
+                        player?.pause()
+                        player = nil
+                        viewModel.reset()
+                    }
+                }
+            }
+        }
+        .alert("提示", isPresented: $showSaveSuccessAlert) {
+            Button("好的", role: .cancel) { }
+        } message: {
+            Text("视频已保存到相册")
+        }
+        // 监听选择相册视频
+        .onChange(of: pickerItem) { _, newItem in
+            guard let newItem else { return }
+            Task { await viewModel.handleVideoSelection(newItem) }
+        }
+        // 监听状态变化，刷新播放器
+        .onChange(of: viewModel.state) { _, newState in
+            if newState == .videoSelected, let url = viewModel.originalVideoURL {
+                // 选中后播放原视频预览
+                player?.pause()
+                player = AVPlayer(url: url)
+            } else if newState == .completed, let url = viewModel.resultVideoURL {
+                // 处理完成后自动播放超分后的视频
+                player?.pause()
+                player = AVPlayer(url: url)
+                player?.play()
+            }
+        }
+    }
+}
