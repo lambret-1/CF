@@ -77,7 +77,7 @@ actor SuperResolver {
                         return (index, nil)
                     }
                     
-                    // 2. 推理
+                    // 2. 推理 (调用 nonisolated 方法，无需 await)
                     do {
                         let outputTile = try self.processTile(image: croppedCG, model: model, inputInfo: inputInfo)
                         return (index, outputTile)
@@ -166,9 +166,9 @@ actor SuperResolver {
 
         if let outputBuffer = outputFeature.imageBufferValue {
             return try processOutput(ciImage: CIImage(cvPixelBuffer: outputBuffer), validRect: validRect, scaleFactor: descriptor.scaleFactor, targetWidth: targetWidth, targetHeight: targetHeight, needsFlip: false)
-        }N else if let outputArray = outputFeature.multiArrayValue {
+        } else if let outputArray = outputFeature.multiArrayValue {
             let outIsNCHW = outputArray.shape.map { $0.intValue }[1] == 3
-            let rawCGImage = try ImageTensorConverter.multiArrayToImage(outputArray, isNCHW: outIsCHW)
+            let rawCGImage = try ImageTensorConverter.multiArrayToImage(outputArray, isNCHW: outIsNCHW)
             return try processOutput(ciImage: CIImage(cgImage: rawCGImage), validRect: validRect, scaleFactor: descriptor.scaleFactor, targetWidth: targetWidth, targetHeight: targetHeight, needsFlip: true)
         }
         throw InferenceError.tileProcessingFailed("格式不支持")
@@ -202,24 +202,16 @@ actor SuperResolver {
         return tiles
     }
 
-    // MARK: - 核心工具：单块推理
-    private func processTile(image: CGImage, model: MLModel, inputInfo: ModelInputInfo) throws -> CGImage {
+    // MARK: - 核心工具：单块推理 (⭐️ 加上 nonisolated 摆脱 actor 限制)
+    nonisolated private func processTile(image: CGImage, model: MLModel, inputInfo: ModelInputInfo) throws -> CGImage {
         let featureProvider: MLDictionaryFeatureProvider
         guard let inputName = model.modelDescription.inputDescriptionsByName.first?.key else {
             throw InferenceError.tileProcessingFailed("无输入节点")
         }
 
         if inputInfo.isImageInput {
-            let attrs = [kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA, kCVPixelBufferWidthKey: inputInfo.width, kCVPixelBufferHeightKey: inputInfo.height] as CFDictionary
-            var pixelBuffer: CVPixelBuffer?
-            CVPixelBufferCreate(kCFAllocatorDefault, inputInfo.width, inputInfo.height, kCVPixelFormatType_32BGRA, attrs, &pixelBuffer)
-            guard let buffer = pixelBuffer else { throw InferenceError.tileProcessingFailed("创建 Buffer 失败") }
-            
-            let ciImage = CIImage(cgImage: image)
-            let flipped = ciImage.transformed(by: CGAffineTransform(translationX: 0, y: CGFloat(inputInfo.height)).scaledBy(x: 1, y: -1))
-            ciContext.render(flipped, to: buffer)
-            
-            featureProvider = try MLDictionaryFeatureProvider(dictionary: [inputName: MLFeatureValue(pixelBuffer: buffer)])
+            let pixelBuffer = try ImageTensorConverter.createPixelBuffer(from: image, width: inputInfo.width, height: inputInfo.height, pixelFormat: kCVPixelFormatType_32BGRA)
+            featureProvider = try MLDictionaryFeatureProvider(dictionary: [inputName: MLFeatureValue(pixelBuffer: pixelBuffer)])
         } else {
             let constraint = model.modelDescription.inputDescriptionsByName[inputName]!.multiArrayConstraint!
             let array = try ImageTensorConverter.imageToMultiArray(image, constraint: constraint, isNCHW: inputInfo.isNCHW)
@@ -232,13 +224,10 @@ actor SuperResolver {
         }
 
         if let outputBuffer = outputFeature.imageBufferValue {
-            return scalePixelBufferToCGImage(outputBuffer, targetWidth: image.width * 4, targetHeight: image.height * 4)
+            return try ImageTensorConverter.createCGImage(from: outputBuffer)
         } else if let outputArray = outputFeature.multiArrayValue {
             let outIsNCHW = outputArray.shape.map { $0.intValue }[1] == 3
-            let rawCGImage = try ImageTensorConverter.multiArrayToImage(outputArray, isNCHW: outIsNCHW)
-            // 修正数组输出的颠倒
-            let flipped = CIImage(cgImage: rawCGImage).transformed(by: CGAffineTransform(translationX: 0, y: CGFloat(rawCGImage.height)).scaledBy(x: 1, y: -1))
-            return ciContext.createCGImage(flipped, from: flipped.extent)!
+            return try ImageTensorConverter.multiArrayToImage(outputArray, isNCHW: outIsNCHW)
         }
         throw InferenceError.tileProcessingFailed("输出格式不支持")
     }
@@ -311,13 +300,5 @@ actor SuperResolver {
         if needsFlip { resizedImage = resizedImage.transformed(by: CGAffineTransform(translationX: 0, y: CGFloat(targetHeight)).scaledBy(x: 1, y: -1)) }
         guard let cgImage = ciContext.createCGImage(resizedImage, from: CGRect(x: 0, y: 0, width: targetWidth, height: targetHeight)) else { throw InferenceError.outputCreationFailed }
         return cgImage
-    }
-    
-    private func scalePixelBufferToCGImage(_ buffer: CVPixelBuffer, targetWidth: Int, targetHeight: Int) -> CGImage {
-        let ciImage = CIImage(cvPixelBuffer: buffer)
-        let scaleX = CGFloat(targetWidth) / CGFloat(CVPixelBufferGetWidth(buffer))
-        let scaleY = CGFloat(targetHeight) / CGFloat(CVPixelBufferGetHeight(buffer))
-        let scaledImage = ciImage.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
-        return ciContext.createCGImage(scaledImage, from: scaledImage.extent)!
     }
 }
