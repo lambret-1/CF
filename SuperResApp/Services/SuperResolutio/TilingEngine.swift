@@ -22,52 +22,58 @@ struct TilingEngine: SuperResolutionEngine {
         progressHandler?(InferenceProgress(currentTile: 0, totalTiles: 1, fraction: 0.01, elapsedSeconds: 0, estimatedRemainingSeconds: nil))
 
         let tileSize = inputInfo.width
-        let overlap = tileSize / 16 // 小小的重叠，防止接缝
+        let overlap = tileSize / 16 
         let tiles = calculateTiles(width: image.width, height: image.height, tileSize: tileSize, overlap: overlap)
         let totalTiles = tiles.count
         
         let outputWidth = image.width * scaleFactor
         let outputHeight = image.height * scaleFactor
-        let canvasRect = CGRect(x: 0, y: 0, width: outputWidth, height: outputHeight)
 
-        // 1. 创建一个完全透明的画布
-        var finalCIImage = CIImage(color: .clear).cropped(to: canvasRect)
-        let sourceCIImage = CIImage(cgImage: image)
-
+        // ⭐️ 创建纯净画布，保持系统默认（左下角原点）
+        guard let outputContext = CGContext(
+            data: nil, width: outputWidth, height: outputHeight,
+            bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { throw InferenceError.outputCreationFailed }
+        
         for (index, tile) in tiles.enumerated() {
             try autoreleasepool {
-                // 2. CIImage 的坐标系原点在左下角，所以 Y 轴要换算一下
-                let ciY = CGFloat(image.height) - CGFloat(tile.y) - CGFloat(tile.height)
-                let ciCropRect = CGRect(x: tile.x, y: Int(ciY), width: tile.width, height: tile.height)
+                // 1. 原生裁剪（左上角原点）
+                let cropRect = CGRect(x: tile.x, y: tile.y, width: tile.width, height: tile.height)
+                guard let croppedCG = image.cropping(to: cropRect) else { return }
                 
-                // 3. 极简裁剪，绝不越界
-                let croppedCIImage = sourceCIImage.cropped(to: ciCropRect)
-                let movedCIImage = croppedCIImage.transformed(by: CGAffineTransform(translationX: -ciCropRect.origin.x, y: -ciCropRect.origin.y))
+                // 2. 模型推理
+                var outputTile = try self.processTile(image: croppedCG, model: model, inputInfo: inputInfo)
                 
-                guard let croppedCG = self.ciContext.createCGImage(movedCIImage, from: CGRect(x: 0, y: 0, width: tile.width, height: tile.height)) else { return }
+                // 3. 如果是 PiperSR，单块推理结果是倒置的，这里进行翻转
+                if modelID == "piper-sr-2x" {
+                    if let context = CGContext(data: nil, width: outputTile.width, height: outputTile.height, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) {
+                        context.translateBy(x: 0, y: CGFloat(outputTile.height))
+                        context.scaleBy(x: 1.0, y: -1.0)
+                        context.draw(outputTile, in: CGRect(x: 0, y: 0, width: outputTile.width, height: outputTile.height))
+                        if let flipped = context.makeImage() {
+                            outputTile = flipped
+                        }
+                    }
+                }
                 
-                // 4. 推理
-                let outputTile = try self.processTile(image: croppedCG, model: model, inputInfo: inputInfo)
-                
-                // 5. 缩放并对齐到画布
-                var tileCIImage = CIImage(cgImage: outputTile)
-                
-                // 因为模型输出尺寸可能跟 tile 尺寸有细微区别，我们需要先把它缩放成切块尺寸
-                let scaleX = CGFloat(tile.width) / tileCIImage.extent.width
-                let scaleY = CGFloat(tile.height) / tileCIImage.extent.height
-                tileCIImage = tileCIImage.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
-                
-                // 6. 计算在画布上的目标位置 (CIImage 坐标系左下角)
+                // 4. 计算尺寸和目标位置
+                let drawWidth = CGFloat(tile.width) * CGFloat(scaleFactor)
+                let drawHeight = CGFloat(tile.height) * CGFloat(scaleFactor)
                 let destX = CGFloat(tile.x) * CGFloat(scaleFactor)
-                let destY = CGFloat(outputHeight) - (CGFloat(tile.y) + CGFloat(tile.height)) * CGFloat(scaleFactor)
+                let destY = CGFloat(tile.y) * CGFloat(scaleFactor)
                 
-                // 7. 移动并放大到最终位置
-                let transformedTile = tileCIImage
-                    .transformed(by: CGAffineTransform(scaleX: CGFloat(scaleFactor), y: CGFloat(scaleFactor)))
-                    .transformed(by: CGAffineTransform(translationX: destX, y: destY))
+                // ⭐️ 核心数学计算：因为 outputContext 原点在左下角，而 destY 是左上角的坐标，需要换算一下
+                let cgY = CGFloat(outputHeight) - destY - drawHeight
                 
-                // 8. 叠加到总画布上
-                finalCIImage = transformedTile.composited(over: finalCIImage)
+                let safeWidth = min(Int(drawWidth), outputTile.width)
+                let safeHeight = min(Int(drawHeight), outputTile.height)
+                
+                if let validTile = outputTile.cropping(to: CGRect(x: 0, y: 0, width: safeWidth, height: safeHeight)) {
+                    // 5. 直接画图，不偏移、不翻转 Context，系统会自动处理好方向
+                    outputContext.draw(validTile, in: CGRect(x: destX, y: cgY, width: drawWidth, height: drawHeight))
+                }
             }
             
             let elapsed = Date().timeIntervalSince(startTime)
@@ -77,9 +83,7 @@ struct TilingEngine: SuperResolutionEngine {
             ))
         }
 
-        guard let finalOutput = ciContext.createCGImage(finalCIImage, from: canvasRect) else {
-            throw InferenceError.outputCreationFailed
-        }
+        guard let finalOutput = outputContext.makeImage() else { throw InferenceError.outputCreationFailed }
         return finalOutput
     }
 
@@ -109,7 +113,6 @@ struct TilingEngine: SuperResolutionEngine {
         guard let inputName = model.modelDescription.inputDescriptionsByName.first?.key else { throw InferenceError.tileProcessingFailed("无输入节点") }
 
         if inputInfo.isImageInput {
-            // ⭐️ 这里直接用官方标准方法，绝不乱搞翻转
             let pixelBuffer = try ImageTensorConverter.createPixelBuffer(from: image, width: inputInfo.width, height: inputInfo.height, pixelFormat: kCVPixelFormatType_32BGRA)
             featureProvider = try MLDictionaryFeatureProvider(dictionary: [inputName: MLFeatureValue(pixelBuffer: pixelBuffer)])
         } else {
