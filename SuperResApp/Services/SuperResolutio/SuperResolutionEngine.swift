@@ -9,6 +9,7 @@ protocol SuperResolutionEngine {
     /// 执行图片超分
     func upscale(
         image: CGImage,
+        modelID: String,
         model: MLModel,
         inputInfo: ModelInputInfo,
         scaleFactor: Int,
