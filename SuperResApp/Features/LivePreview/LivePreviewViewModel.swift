@@ -23,16 +23,21 @@ final class LivePreviewViewModel: ObservableObject {
     private let cameraSession = CameraSession.shared
     private let superResolver = SuperResolver.shared
     private let modelStore = ModelStore.shared
+    
+    // ⭐️ 用于高效、安全地将 CVPixelBuffer 转为图片，兼容 YUV 格式
+    private let ciContext = CIContext(options: [.useSoftwareRenderer: false])
 
     // MARK: - FPS 计算
 
     private var frameTimestamps: [TimeInterval] = []
     private var lastFPSUpdate: TimeInterval = 0
     private var lowPerformanceStartTime: TimeInterval?
+    
+    // ⭐️ 防止任务堆积：如果上一帧还在处理，直接丢弃当前帧
+    private var isProcessingFrame = false
 
     // MARK: - 生命周期
 
-    /// 页面出现时启动
     func onAppear() async {
         permissionStatus = cameraSession.authorizationStatus
         if permissionStatus == .authorized {
@@ -40,19 +45,16 @@ final class LivePreviewViewModel: ObservableObject {
         }
     }
 
-    /// 页面消失时停止
     func onDisappear() {
         cameraSession.stop()
         isRunning = false
     }
 
-    /// 进入后台
     func onEnterBackground() {
         cameraSession.stop()
         isRunning = false
     }
 
-    /// 回前台
     func onEnterForeground() async {
         if permissionStatus == .authorized {
             await start()
@@ -67,8 +69,9 @@ final class LivePreviewViewModel: ObservableObject {
         do {
             // 设置帧回调
             await cameraSession.setFrameHandler { [weak self] pixelBuffer, _ in
+                // 由于 self 是 @MainActor 修饰，这里的 Task 会自动切回主线程
                 Task { [weak self] in
-                    await self?.processFrame(pixelBuffer)
+                    await self?.handleFrame(pixelBuffer)
                 }
             }
 
@@ -85,7 +88,6 @@ final class LivePreviewViewModel: ObservableObject {
         isRunning = false
     }
 
-    /// 请求相机权限
     func requestPermission() async {
         let status = await cameraSession.requestAuthorization()
         permissionStatus = status
@@ -94,42 +96,53 @@ final class LivePreviewViewModel: ObservableObject {
         }
     }
 
-    /// 切换摄像头
     func switchCamera() {
         Task {
             try? await cameraSession.switchCamera()
         }
-    }    // MARK: - 帧处理
+    }
 
-    private func processFrame(_ pixelBuffer: CVPixelBuffer) async {
+    // MARK: - 帧处理
+
+    private func handleFrame(_ pixelBuffer: CVPixelBuffer) async {
+        // 1. FPS 计算 (无论是否丢帧都要算，反映真实相机帧率)
         let now = Date().timeIntervalSince1970
-
-        // FPS 计算
         frameTimestamps.append(now)
         if frameTimestamps.count > DesignTokens.fpsWindowSize {
             frameTimestamps.removeFirst()
         }
-
         if now - lastFPSUpdate >= DesignTokens.fpsUpdateInterval {
             updateFPS()
             lastFPSUpdate = now
         }
 
-        // 转换为 CGImage
-        guard let cgImage = pixelBufferToCGImage(pixelBuffer) else { return }
+        // 2. 丢帧机制：如果上一帧的 AI 推理还没结束，直接忽略这一帧
+        guard !isProcessingFrame else { return }
+        isProcessingFrame = true
+        
+        // 确保处理完后释放标志位
+        defer { isProcessingFrame = false }
 
-        // PiperSR 推理（2x）
+        // 3. 安全转换：使用 CIContext 代替手写的 CGContext
+        // CIContext 能自动处理 YUV、BGRA 等各种相机原生格式
+        let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+        guard let cgImage = ciContext.createCGImage(ciImage, from: ciImage.extent) else {
+            return
+        }
+
+        // 4. PiperSR 推理（2x）
         do {
             let result = try await superResolver.upscale(
                 image: cgImage,
                 modelID: "piper-sr-2x",
                 tileSize: 512
             )
-            await MainActor.run {
-                previewImage = UIImage(cgImage: result.outputImage)
-            }
+            
+            // 因为类是 @MainActor，这里直接更新 UI
+            self.previewImage = UIImage(cgImage: result.outputImage)
         } catch {
             // 实时预览中忽略单帧错误
+            print("实时超分推理失败: \(error)")
         }
     }
 
@@ -156,37 +169,9 @@ final class LivePreviewViewModel: ObservableObject {
             showLowPerformanceWarning = false
         }
     }
-
-    // MARK: - 工具
-
-    private func pixelBufferToCGImage(_ pixelBuffer: CVPixelBuffer) -> CGImage? {
-        CVPixelBufferLockBaseAddress(pixelBuffer, [])
-        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, []) }
-
-        let width = CVPixelBufferGetWidth(pixelBuffer)
-        let height = CVPixelBufferGetHeight(pixelBuffer)
-        let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
-        let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer)
-
-        let colorSpace = CGColorSpaceCreateDeviceRGB()
-        let bitmapInfo = CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
-
-        guard let context = CGContext(
-            data: baseAddress,
-            width: width,
-            height: height,
-            bitsPerComponent: 8,
-            bytesPerRow: bytesPerRow,
-            space: colorSpace,
-            bitmapInfo: bitmapInfo
-        ) else { return nil }
-
-        return context.makeImage()
-    }
 }
 
 // MARK: - CameraSession 扩展
-
 extension CameraSession {
     func setFrameHandler(_ handler: @escaping (CVPixelBuffer, CMTime) -> Void) {
         self.frameHandler = handler
