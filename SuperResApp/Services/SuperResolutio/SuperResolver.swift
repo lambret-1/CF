@@ -38,7 +38,7 @@ actor SuperResolver {
         let isLargeTile = inputInfo.width >= 512
         let engine: SuperResolutionEngine = isLargeTile ? DirectStretchEngine() : TilingEngine()
 
-        // ⭐️ 把 modelID 传进去
+        // ⭐️ 这里要传 modelID
         let finalCGImage = try await engine.upscale(
             image: image,
             modelID: modelID,
@@ -55,7 +55,7 @@ actor SuperResolver {
         return InferenceResult(
             outputImage: finalCGImage,
             inputSize: CGSize(width: image.width, height: image.height),
-            outputSize: CGSize(targetWidth == 0 ? image.width : targetWidth, height: targetHeight == 0 ? image.height : targetHeight),
+            outputSize: CGSize(width: targetWidth == 0 ? image.width : targetWidth, height: targetHeight == 0 ? image.height : targetHeight),
             elapsedSeconds: elapsed, modelID: modelID,
             tileSize: inputInfo.width, totalTiles: 1
         )
