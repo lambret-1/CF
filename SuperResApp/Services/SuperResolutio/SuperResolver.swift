@@ -38,14 +38,16 @@ actor SuperResolver {
         
         await AppLogger.shared.log("🚀 路由启动: \(modelID)")
 
-        // ⭐️ 核心路由逻辑：大模型极速拉伸，小模型高清切块
-        let isHeavyModel = manifest.size > 10_000_000 // 假设大于 10MB 的模型属于重量级
-        let engine: SuperResolutionEngine = isHeavyModel ? DirectStretchEngine() : TilingEngine()
+        // ⭐️ 核心修改：根据模型的输入瓦片尺寸来决定策略
+        // 如果模型支持的瓦片 >= 512（如 x4, x4plus），直接拉伸，极速且清晰
+        // 如果瓦片较小（如 256），必须切块，否则会糊成马赛克
+        let isLargeTile = inputInfo.width >= 512
+        let engine: SuperResolutionEngine = isLargeTile ? DirectStretchEngine() : TilingEngine()
         
-        if isHeavyModel {
-            await AppLogger.shared.log("⚡️ [DirectStretch] 极速整图模式")
+        if isLargeTile {
+            await AppLogger.shared.log("⚡️ [DirectStretch] 极速整图模式 (瓦片: \(inputInfo.width))")
         } else {
-            await AppLogger.shared.log("⚡️ [Tiling] 高清切块模式")
+            await AppLogger.shared.log("⚡️ [Tiling] 高清切块模式 (瓦片: \(inputInfo.width))")
         }
 
         let finalCGImage = try await engine.upscale(
