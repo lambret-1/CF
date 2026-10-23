@@ -70,6 +70,15 @@ struct PhotoSuperResView: View {
             .task {
                 availableModels = await viewModel.availableModels()
             }
+            // ⭐️ 新增：保存成功的提示弹窗
+            .alert("提示", isPresented: .init(
+                get: { viewModel.saveSuccessMessage != nil },
+                set: { if !$0 { viewModel.saveSuccessMessage = nil } }
+            )) {
+                Button("好的", role: .cancel) { }
+            } message: {
+                Text(viewModel.saveSuccessMessage ?? "")
+            }
         }
     }
     
@@ -242,9 +251,8 @@ struct PhotoSuperResView: View {
             let components = viewModel.inputSizeText.components(separatedBy: "×")
             let width = Int(components.first ?? "0") ?? 0
             let height = Int(components.last ?? "0") ?? 0
-            let isLargeImage = (width * height) > 4000000
+            let isLargeImage = (width * height) > 20000000
             
-            // 支持极速模式的模型 ID 列表
             let fastModeSupportedModels = ["realesrgan-x4v3", "realesrgan-x4"]
             
             if fastModeSupportedModels.contains(viewModel.selectedModelID) {
@@ -255,7 +263,7 @@ struct PhotoSuperResView: View {
                             .fontWeight(.medium)
                             .foregroundColor(isLargeImage ? AppTheme.tertiaryText : AppTheme.primaryText)
                         
-                        Text(isLargeImage ? "当前图片过大，已禁用极速模式" : "跳过分块直接拉伸，速度快但可能失真")
+                        Text(isLargeImage ? "当前图片过大，已禁用极速模式" : "速度快但可能失真")
                             .font(.caption)
                             .foregroundColor(isLargeImage ? .red.opacity(0.8) : AppTheme.tertiaryText)
                     }
