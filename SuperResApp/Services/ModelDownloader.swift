@@ -11,11 +11,8 @@ actor ModelDownloader: NSObject {
 
     // MARK: - 回调类型
 
-    /// 进度回调：(模型id, 已下载字节, 总字节, 进度0-1)
     typealias ProgressHandler = (String, Int64, Int64, Double) -> Void
-    /// 完成回调：(模型id, 本地文件URL)
     typealias CompletionHandler = (String, URL) -> Void
-    /// 失败回调：(模型id, 错误)
     typealias FailureHandler = (String, Error) -> Void
 
     // MARK: - 属性
@@ -24,25 +21,15 @@ actor ModelDownloader: NSObject {
     private let manifestLoader = ModelManifestLoader.shared
     private let networkMonitor = NetworkMonitor.shared
 
-    /// 当前下载中的任务
     private var activeTask: URLSessionDownloadTask?
-    /// 当前下载的模型 id
     private var activeModelID: String?
-    /// 下载队列
     private var queue: [DownloadQueueItem] = []
-    /// 任务与模型 id 的映射
     private var taskModelMap: [Int: String] = [:]
-    /// 下载进度回调
     var progressHandler: ProgressHandler?
-    /// 下载完成回调
     var completionHandler: CompletionHandler?
-    /// 下载失败回调
     var failureHandler: FailureHandler?
 
-    /// 下载队列持久化文件路径
     private let queueFileURL: URL
-
-    /// 临时下载目录
     private let tempDirectory: URL
 
     // MARK: - 初始化
@@ -52,6 +39,8 @@ actor ModelDownloader: NSObject {
         let supportDir = paths[0]
         queueFileURL = supportDir.appendingPathComponent("download_queue.json")
         tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("SuperResDownloads", isDirectory: true)
+        
+        // 确保目录存在
         try? FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
 
         super.init()
@@ -69,7 +58,6 @@ actor ModelDownloader: NSObject {
 
     // MARK: - 队列持久化
 
-    /// 保存下载队列到磁盘
     private func saveQueue() {
         do {
             let data = try JSONEncoder().encode(queue)
@@ -79,14 +67,12 @@ actor ModelDownloader: NSObject {
         }
     }
 
-    /// 从磁盘恢复下载队列
     private func restoreQueue() {
         guard let data = try? Data(contentsOf: queueFileURL),
               let savedQueue = try? JSONDecoder().decode([DownloadQueueItem].self, from: data) else {
             return
         }
         queue = savedQueue
-        // 恢复后自动开始队列中的第一个任务
         if let first = queue.first, !first.isPaused {
             Task {
                 await startNext()
@@ -96,10 +82,7 @@ actor ModelDownloader: NSObject {
 
     // MARK: - 公共接口
 
-    /// 开始下载模型
-    /// - Parameter modelID: 模型 id
     func download(modelID: String) async {
-        // 检查是否已在队列中
         if queue.contains(where: { $0.id == modelID }) || activeModelID == modelID {
             return
         }
@@ -109,7 +92,6 @@ actor ModelDownloader: NSObject {
             return
         }
 
-        // 检查网络
         let canDownload = await networkMonitor.canDownload(wifiOnly: item.wifiOnly)
         if !canDownload {
             if item.wifiOnly {
@@ -125,7 +107,6 @@ actor ModelDownloader: NSObject {
             return
         }
 
-        // 加入队列
         let queueItem = DownloadQueueItem(
             id: modelID,
             resumeData: nil,
@@ -137,13 +118,11 @@ actor ModelDownloader: NSObject {
         saveQueue()
         await manifestLoader.updateStatus(.queued, for: modelID)
 
-        // 如果当前没有下载任务，立即开始
         if activeTask == nil {
             await startNext()
         }
     }
 
-    /// 暂停下载
     func pause(modelID: String) async {
         if activeModelID == modelID, let task = activeTask {
             task.cancel { [weak self] resumeData in
@@ -179,7 +158,6 @@ actor ModelDownloader: NSObject {
         await startNext()
     }
 
-    /// 恢复下载
     func resume(modelID: String) async {
         if let index = queue.firstIndex(where: { $0.id == modelID }) {
             queue[index].isPaused = false
@@ -191,7 +169,6 @@ actor ModelDownloader: NSObject {
         }
     }
 
-    /// 取消下载
     func cancel(modelID: String) async {
         if activeModelID == modelID {
             activeTask?.cancel()
@@ -205,23 +182,19 @@ actor ModelDownloader: NSObject {
         await startNext()
     }
 
-    /// 获取下载队列
     func queuedModels() -> [DownloadQueueItem] {
         queue
     }
 
-    /// 当前下载中的模型 id
     func currentDownloadingID() -> String? {
         activeModelID
     }
 
     // MARK: - 内部方法
 
-    /// 开始队列中的下一个下载任务
     private func startNext() async {
         guard activeTask == nil else { return }
 
-        // 找到第一个未暂停的任务
         guard let index = queue.firstIndex(where: { !$0.isPaused }) else { return }
 
         let item = queue[index]
@@ -248,9 +221,8 @@ actor ModelDownloader: NSObject {
         activeTask = task
     }
 
-    /// 校验 SHA256
     private func verifySHA256(fileURL: URL, expected: String) -> Bool {
-        guard !expected.isEmpty else { return true } // 留空表示不校验
+        guard !expected.isEmpty else { return true }
         do {
             let data = try Data(contentsOf: fileURL)
             let hash = sha256(data: data)
@@ -260,7 +232,6 @@ actor ModelDownloader: NSObject {
         }
     }
 
-    /// 计算 SHA256
     private func sha256(data: Data) -> String {
         let digest = SHA256.hash(data: data)
         return digest.compactMap { String(format: "%02x", $0) }.joined()
@@ -272,8 +243,33 @@ actor ModelDownloader: NSObject {
 extension ModelDownloader: URLSessionDownloadDelegate {
     nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
                                  didFinishDownloadingTo location: URL) {
-        Task {
-            await self.handleDownloadFinished(task: downloadTask, location: location)
+        // ⭐️ 修复核心：由于 location 在方法返回后会被系统秒删，必须在同步上下文中立刻拷贝走
+        let taskID = downloadTask.taskIdentifier
+        let fileManager = FileManager.default
+        let tempDir = fileManager.temporaryDirectory.appendingPathComponent("SuperResDownloads", isDirectory: true)
+        
+        do {
+            // 确保父目录一定存在
+            try fileManager.createDirectory(at: tempDir, withIntermediateDirectories: true)
+            
+            // 先用 UUID 作为临时文件名，避免在非隔离上下文访问 actor 属性
+            let tempFileName = UUID().uuidString + ".zip"
+            let tempURL = tempDir.appendingPathComponent(tempFileName)
+            
+            if fileManager.fileExists(atPath: tempURL.path) {
+                try fileManager.removeItem(at: tempURL)
+            }
+            
+            // 用 copyItem 比 moveItem 更安全（防止跨卷/跨域权限问题）
+            try fileManager.copyItem(at: location, to: tempURL)
+            
+            Task {
+                await self.handleDownloadFinished(taskID: taskID, tempURL: tempURL)
+            }
+        } catch {
+            Task {
+                await self.handleDownloadError(taskID: taskID, error: error)
+            }
         }
     }
 
@@ -296,25 +292,26 @@ extension ModelDownloader: URLSessionDownloadDelegate {
         }
     }
 
-    private func handleDownloadFinished(task: URLSessionDownloadTask, location: URL) async {
-        guard let modelID = taskModelMap[task.taskIdentifier] else { return }
-        taskModelMap.removeValue(forKey: task.taskIdentifier)
+    private func handleDownloadFinished(taskID: Int, tempURL: URL) async {
+        guard let modelID = taskModelMap[taskID] else {
+            try? FileManager.default.removeItem(at: tempURL)
+            return
+        }
+        taskModelMap.removeValue(forKey: taskID)
 
-        // 移动到临时目录
         let destination = tempDirectory.appendingPathComponent("\(modelID).zip")
         do {
             if FileManager.default.fileExists(atPath: destination.path) {
                 try FileManager.default.removeItem(at: destination)
             }
-            try FileManager.default.moveItem(at: location, to: destination)
+            try FileManager.default.moveItem(at: tempURL, to: destination)
         } catch {
-            await manifestLoader.markFailed(id: modelID, reason: "文件保存失败：\(error.localizedDescription)")
+            await manifestLoader.markFailed(id: modelID, reason: "文件移动失败：\(error.localizedDescription)")
             await failureHandler?(modelID, error)
             await finishDownload(modelID: modelID)
             return
         }
 
-        // SHA256 校验
         if let manifest = await manifestLoader.manifestItem(for: modelID) {
             if !verifySHA256(fileURL: destination, expected: manifest.sha256) {
                 try? FileManager.default.removeItem(at: destination)
@@ -325,14 +322,28 @@ extension ModelDownloader: URLSessionDownloadDelegate {
             }
         }
 
+        let receivedBytes = (try? FileManager.default.attributesOfItem(atPath: destination.path)[.size] as? Int64) ?? 0
+
         activeTask = nil
         activeModelID = nil
         queue.removeAll { $0.id == modelID }
         saveQueue()
 
-        await manifestLoader.updateProgress(1.0, downloadedBytes: task.countOfBytesReceived, for: modelID)
+        await manifestLoader.updateProgress(1.0, downloadedBytes: receivedBytes, for: modelID)
         await completionHandler?(modelID, destination)
         await startNext()
+    }
+
+    private func handleDownloadError(taskID: Int, error: Error) async {
+        guard let modelID = taskModelMap[taskID] else { return }
+        taskModelMap.removeValue(forKey: taskID)
+        
+        activeTask = nil
+        activeModelID = nil
+        
+        await manifestLoader.markFailed(id: modelID, reason: "保存文件失败：\(error.localizedDescription)")
+        await failureHandler?(modelID, error)
+        await finishDownload(modelID: modelID)
     }
 
     private func handleDownloadProgress(task: URLSessionDownloadTask, bytesWritten: Int64,
@@ -342,7 +353,6 @@ extension ModelDownloader: URLSessionDownloadDelegate {
         await manifestLoader.updateProgress(progress, downloadedBytes: totalBytesWritten, for: modelID)
         await progressHandler?(modelID, totalBytesWritten, totalBytesExpected, progress)
 
-        // 更新队列中的已下载字节
         if let index = queue.firstIndex(where: { $0.id == modelID }) {
             queue[index].downloadedBytes = totalBytesWritten
         }
@@ -352,13 +362,11 @@ extension ModelDownloader: URLSessionDownloadDelegate {
         guard let modelID = taskModelMap[task.taskIdentifier] else { return }
 
         if let error = error as NSError? {
-            // 用户取消不算失败
             if error.code == NSURLErrorCancelled {
                 taskModelMap.removeValue(forKey: task.taskIdentifier)
                 return
             }
 
-            // 尝试获取 resumeData 用于断点续传
             let resumeData = (error.userInfo[NSURLSessionDownloadTaskResumeData] as? Data)
             taskModelMap.removeValue(forKey: task.taskIdentifier)
 
