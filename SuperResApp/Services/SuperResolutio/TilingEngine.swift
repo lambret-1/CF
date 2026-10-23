@@ -11,7 +11,7 @@ struct TilingEngine: SuperResolutionEngine {
 
     func upscale(
         image: CGImage,
-        modelID: String, // ⭐️ 新增参数
+        modelID: String, // ⭐️ 确保有这行
         model: MLModel,
         inputInfo: ModelInputInfo,
         scaleFactor: Int,
@@ -39,7 +39,6 @@ struct TilingEngine: SuperResolutionEngine {
 
         let ciImage = CIImage(cgImage: image)
         
-        // 串行切块推理
         for (index, tile) in tiles.enumerated() {
             let cropRect = CGRect(x: tile.x, y: tile.y, width: tileSize, height: tileSize)
             let croppedCIImage = ciImage.cropped(to: cropRect)
@@ -61,7 +60,6 @@ struct TilingEngine: SuperResolutionEngine {
         return finalOutput
     }
 
-    // MARK: - 私有工具
     private struct TileInfo { let x: Int; let y: Int; let width: Int; let height: Int }
 
     private func calculateTiles(width: Int, height: Int, tileSize: Int, overlap: Int) -> [TileInfo] {
@@ -73,7 +71,7 @@ struct TilingEngine: SuperResolutionEngine {
             while x < width {
                 let startX = min(x, max(0, width - tileSize))
                 let startY = min(y, max(0, height - tileSize))
-                tiles.append(TileInfo(x: startX, y: startY, width: min(tileSize, width), height:)))
+                tiles.append(TileInfo(x: startX, y: startY, width: min(tileSize, width), height: min(tileSize, height)))
                 if x + tileSize >= width { break }
                 x += step
             }
