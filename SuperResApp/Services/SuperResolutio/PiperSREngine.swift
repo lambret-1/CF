@@ -6,7 +6,6 @@ import UIKit
 import CoreVideo
 import CoreImage
 
-/// 专为 PiperSR 2x 打造的引擎，彻底隔离！
 struct PiperSREngine: SuperResolutionEngine {
     private let ciContext = CIContext(options: [.workingColorSpace: NSNull()])
 
@@ -30,6 +29,7 @@ struct PiperSREngine: SuperResolutionEngine {
         let outputWidth = image.width * scaleFactor
         let outputHeight = image.height * scaleFactor
 
+        // ⭐️ 原生 CGContext，默认左下角原点
         guard let outputContext = CGContext(
             data: nil, width: outputWidth, height: outputHeight,
             bitsPerComponent: 8, bytesPerRow: 0,
@@ -42,7 +42,7 @@ struct PiperSREngine: SuperResolutionEngine {
                 let cropRect = CGRect(x: tile.x, y: tile.y, width: tile.width, height: tile.height)
                 guard let croppedCG = image.cropping(to: cropRect) else { return }
                 
-                // 1. 纯正推理
+                // 推理（不走任何翻转）
                 let outputTile = try self.processTile(image: croppedCG, model: model, inputInfo: inputInfo)
                 
                 let drawWidth = CGFloat(tile.width) * CGFloat(scaleFactor)
@@ -50,14 +50,14 @@ struct PiperSREngine: SuperResolutionEngine {
                 let destX = CGFloat(tile.x) * CGFloat(scaleFactor)
                 let destY = CGFloat(tile.y) * CGFloat(scaleFactor)
                 
-                // 2. 纯数学 Y 轴映射
+                // 纯数学映射
                 let cgY = CGFloat(outputHeight) - destY - drawHeight
                 
                 let safeWidth = min(Int(drawWidth), outputTile.width)
                 let safeHeight = min(Int(drawHeight), outputTile.height)
                 
                 if let validTile = outputTile.cropping(to: CGRect(x: 0, y: 0, width: safeWidth, height: safeHeight)) {
-                    // 3. 直接画，绝不翻转
+                    // 直接画
                     outputContext.draw(validTile, in: CGRect(x: destX, y: cgY, width: drawWidth, height: drawHeight))
                 }
             }
@@ -114,7 +114,6 @@ struct PiperSREngine: SuperResolutionEngine {
             let ciOut = CIImage(cvPixelBuffer: outputBuffer)
             return ciContext.createCGImage(ciOut, from: ciOut.extent)!
         } else if let outputArray = outputFeature.multiArrayValue {
-            // ⭐️ 这里我们假设它输出的是数组，但我们信任它不需要额外翻转
             let outIsNCHW = outputArray.shape[1].intValue == 3
             return try ImageTensorConverter.multiArrayToImage(outputArray, isNCHW: outIsNCHW)
         }
