@@ -1,5 +1,5 @@
 // SuperResApp/Services/ModelDownloader.swift
-// 模型下载器：纯前台下载（兼容全能签）、队列管理、SHA256 校验
+// 模型下载器：纯前台下载（兼容全能签）、智能断点续传、队列管理
 
 import Foundation
 import CryptoKit
@@ -33,7 +33,6 @@ actor ModelDownloader: NSObject {
         let supportDir = paths[0]
         queueFileURL = supportDir.appendingPathComponent("download_queue.json")
         
-        // 放弃 tmp 和 App Group，统一放在沙盒内的 Application Support/Models/Temp
         let modelsDir = supportDir.appendingPathComponent("Models", isDirectory: true)
         tempDirectory = modelsDir.appendingPathComponent("Temp", isDirectory: true)
         
@@ -41,9 +40,8 @@ actor ModelDownloader: NSObject {
 
         super.init()
 
-        // 全能签环境下后台下载极易出权限问题，改为普通前台下载
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 30
+        config.timeoutIntervalForRequest = 60 // ⭐️ 放宽超时时间
         config.timeoutIntervalForResource = 60 * 60 * 24
         session = URLSession(configuration: config, delegate: self, delegateQueue: nil)
 
@@ -70,8 +68,19 @@ actor ModelDownloader: NSObject {
         }
     }
 
+    // MARK: - 公共接口
+
     func download(modelID: String) async {
-        if queue.contains(where: { $0.id == modelID }) || activeModelID == modelID { return }
+        // ⭐️ 核心修复：如果已经在队列中，说明是用户点击了“重试”，直接恢复下载
+        if let index = queue.firstIndex(where: { $0.id == modelID }) {
+            queue[index].isPaused = false
+            saveQueue()
+            await manifestLoader.updateStatus(.queued, for: modelID)
+            if activeTask == nil { await startNext() }
+            return
+        }
+
+        if activeModelID == modelID { return }
 
         guard let item = await manifestLoader.manifestItem(for: modelID) else {
             await manifestLoader.markFailed(id: modelID, reason: "模型不存在")
@@ -155,6 +164,7 @@ actor ModelDownloader: NSObject {
 
     private func startNext() async {
         guard activeTask == nil else { return }
+        // 只会挑选没有被暂停的任务
         guard let index = queue.firstIndex(where: { !$0.isPaused }) else { return }
 
         let item = queue[index]
@@ -183,6 +193,7 @@ actor ModelDownloader: NSObject {
 
         let task: URLSessionDownloadTask
         if let resumeData = item.resumeData {
+            // ⭐️ 有断点数据，从断点继续
             task = session.downloadTask(withResumeData: resumeData)
         } else {
             task = session.downloadTask(with: url)
@@ -231,7 +242,6 @@ extension ModelDownloader: URLSessionDownloadDelegate {
                 try fileManager.removeItem(at: tempURL)
             }
             
-            // 在纯沙盒内移动，拥有绝对权限
             try fileManager.moveItem(at: location, to: tempURL)
             
             Task { await self.handleDownloadFinished(taskID: taskID, tempURL: tempURL) }
@@ -268,7 +278,7 @@ extension ModelDownloader: URLSessionDownloadDelegate {
             try FileManager.default.moveItem(at: tempURL, to: destination)
         } catch {
             await manifestLoader.markFailed(id: modelID, reason: "文件重命名失败：\(error.localizedDescription)")
-            failureHandler?(modelID, error) // 去掉了多余的 await
+            failureHandler?(modelID, error)
             await finishDownload(modelID: modelID)
             return
         }
@@ -277,13 +287,12 @@ extension ModelDownloader: URLSessionDownloadDelegate {
             if !verifySHA256(fileURL: destination, expected: manifest.sha256) {
                 try? FileManager.default.removeItem(at: destination)
                 await manifestLoader.markFailed(id: modelID, reason: "SHA256 校验失败，文件可能已损坏")
-                failureHandler?(modelID, DownloadError.sha256Mismatch) // 去掉了多余的 await
+                failureHandler?(modelID, DownloadError.sha256Mismatch)
                 await finishDownload(modelID: modelID)
                 return
             }
         }
 
-        // ⭐️ 修复了这里被弄乱的语法：destination.path
         let receivedBytes = (try? FileManager.default.attributesOfItem(atPath: destination.path)[.size] as? Int64) ?? 0
 
         activeTask = nil
@@ -292,19 +301,18 @@ extension ModelDownloader: URLSessionDownloadDelegate {
         saveQueue()
 
         await manifestLoader.updateProgress(1.0, downloadedBytes: receivedBytes, for: modelID)
-        completionHandler?(modelID, destination) // 去掉了多余的 await
+        completionHandler?(modelID, destination)
         await startNext()
     }
 
     func handleDownloadError(taskID: Int, error: Error) async {
-        // ⭐️ 修复了这里被弄乱的语法：guard let modelID = taskModelMap[taskID]
         guard let modelID = taskModelMap[taskID] else { return }
         taskModelMap.removeValue(forKey: taskID)
         activeTask = nil
         activeModelID = nil
         
         await manifestLoader.markFailed(id: modelID, reason: "保存失败：\(error.localizedDescription)")
-        failureHandler?(modelID, error) // 去掉了多余的 await
+        failureHandler?(modelID, error)
         await finishDownload(modelID: modelID)
     }
 
@@ -312,7 +320,7 @@ extension ModelDownloader: URLSessionDownloadDelegate {
         guard let modelID = taskModelMap[task.taskIdentifier] else { return }
         let progress = totalBytesExpected > 0 ? Double(totalBytesWritten) / Double(totalBytesExpected) : 0
         await manifestLoader.updateProgress(progress, downloadedBytes: totalBytesWritten, for: modelID)
-        progressHandler?(modelID, totalBytesWritten, totalBytesExpected, progress) // 去掉了多余的 await
+        progressHandler?(modelID, totalBytesWritten, totalBytesExpected, progress)
 
         if let index = queue.firstIndex(where: { $0.id == modelID }) {
             queue[index].downloadedBytes = totalBytesWritten
@@ -336,12 +344,14 @@ extension ModelDownloader: URLSessionDownloadDelegate {
 
             if let index = queue.firstIndex(where: { $0.id == modelID }) {
                 queue[index].resumeData = resumeData
+                queue[index].isPaused = true // ⭐️ 核心修复：暂停它，防止无限循环重试
             }
             saveQueue()
 
-            await manifestLoader.markFailed(id: modelID, reason: "下载失败：\(error.localizedDescription)")
-            failureHandler?(modelID, error) // 去掉了多余的 await
-            await startNext()
+            await manifestLoader.markFailed(id: modelID, reason: "网络中断，请点击继续")
+            failureHandler?(modelID, error)
+            
+            // ⭐️ 不再自动 startNext()，等待用户主动点击重试
         }
     }
 
