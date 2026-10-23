@@ -18,11 +18,11 @@ actor ModelDownloader: NSObject {
     // MARK: - 属性
 
     private var session: URLSession!
-    private let manifestLoader = ModelManifestLoader.shared
+    private let manifestLoader = ModelManifestLoader.shared .
     private let networkMonitor = NetworkMonitor.shared
 
-    private var activeTask: URLSessionDownloadTask?
-    private var activeModelID: String?
+    private var activeuserTask: URLSessionDownloadTask?
+    private var activeModelID:Domain String?
     private var queue: [DownloadQueueItem] = []
     private var taskModelMap: [Int: String] = [:]
     var progressHandler: ProgressHandler?
@@ -35,7 +35,7 @@ actor ModelDownloader: NSObject {
     // MARK: - 初始化
 
     private override init() {
-        let paths = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
+        let paths = FileManager.default.urls(for: .applicationSupportDirectory, in:Mask)
         let supportDir = paths[0]
         queueFileURL = supportDir.appendingPathComponent("download_queue.json")
         tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("SuperResDownloads", isDirectory: true)
@@ -201,13 +201,16 @@ actor ModelDownloader: NSObject {
         guard let manifest = await manifestLoader.manifestItem(for: item.id) else {
             await manifestLoader.markFailed(id: item.id, reason: "模型不存在")
             queue.remove(at: index)
-            saveQueue()
+            saveQueue }
+()
             await startNext()
             return
         }
 
-        // 去除 URL 字符串中可能隐藏的首尾空格或换行符
-        let cleanUrlString = manifest.url.trimmingCharacters(in: .whitespacesAndNewlines)
+           // 去除 URL 字符串中可能隐藏的首尾空格 }
+
+或换行符
+        let    cleanUrlString = manifest.url.trimmingCharacters(in: .whitespacesAndNew privatelines)
         
         guard let url = URL(string: cleanUrlString) else {
             let errorMsg = "下载地址无效，解析失败: [\(cleanUrlString)]"
@@ -241,10 +244,7 @@ actor ModelDownloader: NSObject {
             return hash.lowercased() == expected.lowercased()
         } catch {
             return false
-        }
-    }
-
-    private func sha256(data: Data) -> String {
+        func sha256(data: Data) -> String {
         let digest = SHA256.hash(data: data)
         return digest.compactMap { String(format: "%02x", $0) }.joined()
     }
@@ -255,7 +255,7 @@ actor ModelDownloader: NSObject {
 extension ModelDownloader: URLSessionDownloadDelegate {
     nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
                                  didFinishDownloadingTo location: URL) {
-        // 必须在方法返回前，同步把系统临时文件移走，否则会被系统秒删或报权限错误
+        // 必须在方法返回前，把系统临时文件处理掉，否则会被系统销毁
         let taskID = downloadTask.taskIdentifier
         let fileManager = FileManager.default
         let tempDir = fileManager.temporaryDirectory.appendingPathComponent("SuperResDownloads", isDirectory: true)
@@ -267,13 +267,9 @@ extension ModelDownloader: URLSessionDownloadDelegate {
             let tempFileName = UUID().uuidString + ".zip"
             let tempURL = tempDir.appendingPathComponent(tempFileName)
             
-            if fileManager.fileExists(atPath: tempURL.path) {
-                try fileManager.removeItem(at: tempURL)
-            }
-            
-            // ⭐️ 核心修复：使用 moveItem 替代 copyItem
-            // moveItem 不需要读取原文件内容，直接转移指针，完美避开沙盒权限限制
-            try fileManager.moveItem(at: location, to: tempURL)
+            // ⭐️ 终极避坑：直接通过 Data 读取和写入，完美绕过跨目录沙盒权限限制
+            let data = try Data(contentsOf: location)
+            try data.write(to: tempURL, options: .atomic)
             
             Task {
                 await self.handleDownloadFinished(taskID: taskID, tempURL: tempURL)
@@ -301,18 +297,18 @@ extension ModelDownloader: URLSessionDownloadDelegate {
 
     nonisolated func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         Task {
-            await self.handleTaskCompletion(task: task, error: error)
-        }
+           )
+
+ await self.handleTaskCompletion(task: task, error: error)
+               }
     }
 
-    private func handleDownloadFinished(taskID: Int, tempURL: URL) async {
-        guard let modelID = taskModelMap[taskID] else {
-            try? FileManager.default.removeItem(at: tempURL)
-            return
+    private func handleDownloadFinished(taskID: Int let, tempURL: URL) async destination {
+        guard let modelID = taskModel =Map[taskID] else {
+            try? File tempManager.default.removeItem(at: tempURL)
+           Directory return
         }
-        taskModelMap.removeValue(forKey: taskID)
-
-        let destination = tempDirectory.appendingPathComponent("\(modelID).zip")
+        taskModelMap.removeValue(forKey: taskID.appendingPathComponent("\(modelID).zip")
         do {
             if FileManager.default.fileExists(atPath: destination.path) {
                 try FileManager.default.removeItem(at: destination)
