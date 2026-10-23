@@ -36,7 +36,7 @@ struct ZoomableImageView: UIViewRepresentable {
         scrollView.bouncesZoom = true
         scrollView.bounces = true
         scrollView.contentInsetAdjustmentBehavior = .never
-        scrollView.backgroundColor = .black
+        scrollView.backgroundColor = .black // 如果图片不可见，这里是黑色的
 
         // 图片视图
         let imageView = UIImageView(image: image)
@@ -64,6 +64,7 @@ struct ZoomableImageView: UIViewRepresentable {
         if imageView.image != image {
             imageView.image = image
         }
+        // 每次状态更新（如尺寸变化、图片更换）时重新计算布局
         context.coordinator.updateLayout()
     }
 
@@ -88,7 +89,8 @@ struct ZoomableImageView: UIViewRepresentable {
 
         func scrollViewDidZoom(_ scrollView: UIScrollView) {
             parent.zoomScale = scrollView.zoomScale
-            updateLayout()
+            // 缩放时只需要重新居中即可，不需要重算 size
+            centerImage()
         }
 
         func updateLayout() {
@@ -96,30 +98,41 @@ struct ZoomableImageView: UIViewRepresentable {
             let imageSize = imageView.image?.size ?? .zero
             guard imageSize.width > 0 && imageSize.height > 0 else { return }
 
-            // 计算 aspectFit 的尺寸
             let scrollSize = scrollView.bounds.size
+
+            // 修复 1：如果 bounds 还没计算出来(为0)，推迟到下一帧执行
+            if scrollSize.width == 0 || scrollSize.height == 0 {
+                DispatchQueue.main.async { [weak self] in
+                    self?.updateLayout()
+                }
+                return
+            }
+
+            // 计算 aspectFit 的基础尺寸
             let scale = min(scrollSize.width / imageSize.width, scrollSize.height / imageSize.height)
             let baseWidth = imageSize.width * scale
             let baseHeight = imageSize.height * scale
 
+            // 修复 2：不要乘以 zoomScale。UIScrollView 自己会处理缩放变换。
             imageView.frame = CGRect(x: 0, y: 0, width: baseWidth, height: baseHeight)
-            scrollView.contentSize = CGSize(width: baseWidth * scrollView.zoomScale,
-                                             height: baseHeight * scrollView.zoomScale)
+            scrollView.contentSize = CGSize(width: baseWidth, height: baseHeight)
 
-            // 居中
-            let offsetX = max((scrollSize.width - scrollView.contentSize.width) / 2, 0)
-            let offsetY = max((scrollSize.height - scrollView.contentSize.height) / 2, 0)
-            imageView.center = CGPoint(x: scrollView.contentSize.width / 2 + offsetX,
-                                       y: scrollView.contentSize.height / 2 + offsetY)
+            // 修复 3：使用 contentInset 居中，放弃手动修改 center
+            centerImage()
+        }
+
+        private func centerImage() {
+            guard let scrollView = scrollView else { return }
+            let offsetX = max((scrollView.bounds.width - scrollView.contentSize.width) * 0.5, 0)
+            let offsetY = max((scrollView.bounds.height - scrollView.contentSize.height) * 0.5, 0)
+            scrollView.contentInset = UIEdgeInsets(top: offsetY, left: offsetX, bottom: offsetY, right: offsetX)
         }
 
         @objc func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
             guard let scrollView = scrollView else { return }
             if scrollView.zoomScale > parent.minZoom {
                 // 缩放到 1x
-                UIView.animate(withDuration: DesignTokens.animationDoubleTapZoom) {
-                    scrollView.zoomScale = self.parent.minZoom
-                }
+                scrollView.setZoomScale(parent.minZoom, animated: true)
             } else {
                 // 缩放到 doubleTapZoom，以点击点为中心
                 let point = gesture.location(in: gesture.view)
@@ -131,8 +144,8 @@ struct ZoomableImageView: UIViewRepresentable {
         private func zoomRectForScale(scale: CGFloat, center: CGPoint) -> CGRect {
             guard let scrollView = scrollView else { return .zero }
             var zoomRect = CGRect.zero
-            zoomRect.size.height = scrollView.frame.size.height / scale
-            zoomRect.size.width = scrollView.frame.size.width / scale
+            zoomRect.size.height = scrollView.bounds.size.height / scale
+            zoomRect.size.width = scrollView.bounds.size.width / scale
             zoomRect.origin.x = center.x - zoomRect.size.width / 2
             zoomRect.origin.y = center.y - zoomRect.size.height / 2
             return zoomRect
