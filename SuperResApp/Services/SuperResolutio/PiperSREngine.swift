@@ -7,8 +7,7 @@ import CoreVideo
 import CoreImage
 
 struct PiperSREngine: SuperResolutionEngine {
-    private let ciContext = CIContext(options: [.workingColorSpace: NSNull()])
-
+    // 128瓦片模型，不需要频繁用CIContext转换，直接走原生CGContext最快最稳
     func upscale(
         image: CGImage,
         modelID: String,
@@ -21,52 +20,48 @@ struct PiperSREngine: SuperResolutionEngine {
         let startTime = Date()
         progressHandler?(InferenceProgress(currentTile: 0, totalTiles: 1, fraction: 0.01, elapsedSeconds: 0, estimatedRemainingSeconds: nil))
 
-        let tileSize = inputInfo.width
+        let tileSize = inputInfo.width // PiperSR 是 128
         let overlap = tileSize / 16 
         let tiles = calculateTiles(width: image.width, height: image.height, tileSize: tileSize, overlap: overlap)
         let totalTiles = tiles.count
         
         let outputWidth = image.width * scaleFactor
         let outputHeight = image.height * scaleFactor
-        let canvasRect = CGRect(x: 0, y: 0, width: outputWidth, height: outputHeight)
 
-        // ⭐️ 核心改变：直接创建一个透明的 CIImage 画布，绝对不碰 CGContext
-        var finalCIImage = CIImage(color: CIColor.clear).cropped(to: canvasRect)
-        let sourceCIImage = CIImage(cgImage: image)
+        // 1. 创建画布，并执行【全局翻转】（让坐标系变成左上角原点）
+        guard let outputContext = CGContext(
+            data: nil, width: outputWidth, height: outputHeight,
+            bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { throw InferenceError.outputCreationFailed }
+        
+        outputContext.translateBy(x: 0, y: CGFloat(outputHeight))
+        outputContext.scaleBy(x: 1.0, y: -1.0)
 
         for (index, tile) in tiles.enumerated() {
             try autoreleasepool {
-                // 1. CIImage 原生裁剪（左上角坐标系转换）
-                let ciY = CGFloat(image.height) - CGFloat(tile.y) - CGFloat(tile.height)
-                let ciCropRect = CGRect(x: tile.x, y: Int(ciY), width: tile.width, height: tile.height)
+                // 2. 原生裁剪
+                let cropRect = CGRect(x: tile.x, y: tile.y, width: tile.width, height: tile.height)
+                guard let croppedCG = image.cropping(to: cropRect) else { return }
                 
-                let croppedCIImage = sourceCIImage.cropped(to: ciCropRect)
-                let movedCIImage = croppedCIImage.transformed(by: CGAffineTransform(translationX: -ciCropRect.origin.x, y: -ciCropRect.origin.y))
-                
-                guard let croppedCG = self.ciContext.createCGImage(movedCIImage, from: CGRect(x: 0, y: 0, width: tile.width, height: tile.height)) else { return }
-                
-                // 2. 模型推理
+                // 3. 模型推理（128x128 输入的输出是 256x256）
                 let outputTile = try self.processTile(image: croppedCG, model: model, inputInfo: inputInfo)
                 
-                // 3. 转回 CIImage 并放缩到目标尺寸
-                var ciTile = CIImage(cgImage: outputTile)
-                let scaleX = CGFloat(tile.width * scaleFactor) / ciTile.extent.width
-                let scaleY = CGFloat(tile.height * scaleFactor) / ciTile.extent.height
-                ciTile = ciTile.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
+                let drawWidth = CGFloat(tile.width * scaleFactor)
+                let drawHeight = CGFloat(tile.height * scaleFactor)
+                let destX = CGFloat(tile.x * scaleFactor)
+                let destY = CGFloat(tile.y * scaleFactor)
                 
-                // 4. 计算目标位置（CIImage 左下角原点）
-                let destX = CGFloat(tile.x) * CGFloat(scaleFactor)
-                let destY = CGFloat(outputHeight) - CGFloat(tile.y + tile.height) * CGFloat(scaleFactor)
+                let cropRect2 = CGRect(x: 0, y: 0, width: drawWidth, height: drawHeight)
+                guard let validTile = outputTile.cropping(to: cropRect2) else { return }
                 
-                // 5. 移动并叠加（绝对精准，无插值撕裂）
-                let positionedTile = ciTile.transformed(by: CGAffineTransform(translationX: destX, y: destY))
-                
-                // ⭐️ 如果你发现 PiperSR 拼出来是倒的，就在这里翻转单块图。如果是正的，就保持原样。
-                // 如果之前是倒的，说明模型本身输出是反的。
-                // let flippedTile = positionedTile.transformed(by: CGAffineTransform(scaleX: 1, y: -1).translatedBy(x: 0, y: -positionedTile.extent.height))
-                // finalCIImage = flippedTile.composited(over: finalCIImage)
-                
-                finalCIImage = positionedTile.composited(over: finalCIImage)
+                // 4. ⭐️ 核心修复：回归历史代码的【局部翻转拼接法】
+                outputContext.saveGState()
+                outputContext.translateBy(x: destX, y: destY + drawHeight)
+                outputContext.scaleBy(x: 1.0, y: -1.0)
+                outputContext.draw(validTile, in: CGRect(x: 0, y: 0, width: drawWidth, height: drawHeight))
+                outputContext.restoreGState()
             }
             
             let elapsed = Date().timeIntervalSince(startTime)
@@ -76,15 +71,13 @@ struct PiperSREngine: SuperResolutionEngine {
             ))
         }
 
-        guard let finalOutput = ciContext.createCGImage(finalCIImage, from: canvasRect) else {
-            throw InferenceError.outputCreationFailed
-        }
+        guard let finalOutput = outputContext.makeImage() else { throw InferenceError.outputCreationFailed }
         return finalOutput
     }
 
-    private struct TileInfo { let x: Int; let y: Int; let width: Int; let height:看着 Int }
+    private struct TileInfo { let x: Int; let y: Int; let width: Int; let height: Int }
 
-    private func calculateTiles(width: Int, height:， Int, tileSize: Int, overlap: Int) -> [TileInfo] {
+    private func calculateTiles(width: Int, height: Int, tileSize: Int, overlap: Int) -> [TileInfo] {
         var tiles: [TileInfo] = []
         let step = max(1, tileSize - overlap)
         var y = 0
@@ -120,8 +113,8 @@ struct PiperSREngine: SuperResolutionEngine {
         guard let outputName = output.featureNames.first, let outputFeature = output.featureValue(for: outputName) else { throw InferenceError.tileProcessingFailed("模型输出无效") }
 
         if let outputBuffer = outputFeature.imageBufferValue {
-            let ciOut = CIImage(cvPixelBuffer: outputBuffer)
-            return ciContext.createCGImage(ciOut, from: ciOut.extent)!
+            // ⭐️ 只要这里原样转出来，配合上面的局部翻转拼接，就能完美对
+            return try ImageTensorConverter.createCGImage(from: outputBuffer)
         } else if let outputArray = outputFeature.multiArrayValue {
             let outIsNCHW = outputArray.shape[1].intValue == 3
             return try ImageTensorConverter.multiArrayToImage(outputArray, isNCHW: outIsNCHW)
