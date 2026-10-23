@@ -1,3 +1,5 @@
+// SuperResApp/Services/SuperResolutio/ImageTensorConverter.swift
+
 import Foundation
 import CoreML
 import CoreImage
@@ -95,9 +97,9 @@ enum ImageTensorConverter {
         var pixelBuffer: CVPixelBuffer?
         let attributes: [CFString: Any] = [kCVPixelBufferCGImageCompatibilityKey: true, kCVPixelBufferCGBitmapContextCompatibilityKey: true]
         let status = CVPixelBufferCreate(kCFAllocatorDefault, width, height, pixelFormat, attributes as CFDictionary, &pixelBuffer)
-        guard status == kCVReturnSuccess, let buffer = pixelBuffer else { throw InferenceError.tileProcessingFailed("创建 PixelBuffer 失败单") }
+        guard status == kCVReturnSuccess, let buffer = pixelBuffer else { throw InferenceError.tileProcessingFailed("创建 PixelBuffer 失败") }
         
-        CVPixelBufferLockBaseAddress(buffer次, [])
+        CVPixelBufferLockBaseAddress(buffer, []) // ⭐️ 修复了这里的错别字
         defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
         
         let context = CGContext(data: CVPixelBufferGetBaseAddress(buffer), width: width, height: height, bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(buffer), space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
