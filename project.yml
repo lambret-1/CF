@@ -49,6 +49,12 @@ targets:
   SuperResApp:
     type: application
     platform: iOS
+    # ⭐️ 新增：配置 App Groups
+    entitlements:
+      path: SuperResApp/SuperResApp.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.superres.app
     sources:
       - path: SuperResApp
         excludes:
