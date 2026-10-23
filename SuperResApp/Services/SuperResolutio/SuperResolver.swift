@@ -4,6 +4,7 @@ import Foundation
 import CoreML
 import CoreImage
 import UIKit
+import CoreVideo
 
 actor SuperResolver {
     static let shared = SuperResolver()
@@ -36,11 +37,23 @@ actor SuperResolver {
         let model = try await modelStore.load(modelID: modelID, computeUnits: config.computeUnits)
         let inputInfo = try ModelInputInfo.parse(from: model)
         
+        // ⭐️ 硬核测速开始 (测试单块 256 推理耗时)
+        if let inputName = model.modelDescription.inputDescriptionsByName.first?.key {
+            let testW = min(256, inputInfo.width)
+            let testH = min(256, inputInfo.height)
+            if let testBuffer = makeBGRAPixelBuffer(from: image, width: testW, height: testH) {
+                let provider = try MLDictionaryFeatureProvider(dictionary: [inputName: MLFeatureValue(pixelBuffer: testBuffer)])
+                let start = Date()
+                _ = try? await model.prediction(from: provider)
+                let cost = Date().timeIntervalSince(start) * 1000
+                await AppLogger.shared.log("⏱️ 单块 \(testW)x\(testH) 推理耗时: \(String(format: "%.1f", cost)) 毫秒")
+            }
+        }
+        // ⭐️ 硬核测速结束
+
         await AppLogger.shared.log("🚀 路由启动: \(modelID)")
 
-        // ⭐️ 核心修改：根据模型的输入瓦片尺寸来决定策略
-        // 如果模型支持的瓦片 >= 512（如 x4, x4plus），直接拉伸，极速且清晰
-        // 如果瓦片较小（如 256），必须切块，否则会糊成马赛克
+        // 核心路由逻辑：如果模型支持的瓦片 >= 512（如 x4），直接拉伸；如果较小（如 256），必须切块
         let isLargeTile = inputInfo.width >= 512
         let engine: SuperResolutionEngine = isLargeTile ? DirectStretchEngine() : TilingEngine()
         
@@ -87,5 +100,30 @@ actor SuperResolver {
         // 实时预览一律用极速拉伸
         let engine = DirectStretchEngine()
         return try await engine.upscale(image: image, model: model, inputInfo: inputInfo, scaleFactor: descriptor.scaleFactor, progressHandler: nil)
+    }
+
+    // MARK: - 私有工具 (用于测速)
+    private func makeBGRAPixelBuffer(from image: CGImage, width: Int, height: Int) -> CVPixelBuffer? {
+        let attrs: [CFString: Any] = [
+            kCVPixelBufferCGImageCompatibilityKey: true,
+            kCVPixelBufferCGBitmapContextCompatibilityKey: true
+        ]
+        var pb: CVPixelBuffer?
+        CVPixelBufferCreate(kCFAllocatorDefault, width, height, kCVPixelFormatType_32BGRA, attrs as CFDictionary, &pb)
+        guard let buffer = pb else { return nil }
+        
+        CVPixelBufferLockBaseAddress(buffer, [])
+        defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
+        
+        guard let ctx = CGContext(
+            data: CVPixelBufferGetBaseAddress(buffer),
+            width: width, height: height, bitsPerComponent: 8,
+            bytesPerRow: CVPixelBufferGetBytesPerRow(buffer),
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+        ) else { return nil }
+        
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return buffer
     }
 }
