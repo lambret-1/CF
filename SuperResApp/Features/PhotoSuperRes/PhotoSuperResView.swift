@@ -238,26 +238,32 @@ struct PhotoSuperResView: View {
                 .foregroundColor(AppTheme.tertiaryText)
             }
             
+            // 判断是否显示极速模式
             let components = viewModel.inputSizeText.components(separatedBy: "×")
             let width = Int(components.first ?? "0") ?? 0
             let height = Int(components.last ?? "0") ?? 0
-            let isLargeImage = (width * height) > 4000000 // 约 400 万像素
+            let isLargeImage = (width * height) > 4000000
             
-            Toggle(isOn: $viewModel.isFastMode) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("极速模式")
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .foregroundColor(isLargeImage ? AppTheme.tertiaryText : AppTheme.primaryText)
-                    
-                    Text(isLargeImage ? "当前图片过大，已禁用极速模式" : "跳过分块直接拉伸，速度快但可能失真")
-                        .font(.caption)
-                        .foregroundColor(isLargeImage ? .red.opacity(0.8) : AppTheme.tertiaryText)
+            // 支持极速模式的模型 ID 列表
+            let fastModeSupportedModels = ["realesrgan-x4v3", "realesrgan-x4"]
+            
+            if fastModeSupportedModels.contains(viewModel.selectedModelID) {
+                Toggle(isOn: $viewModel.isFastMode) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("极速模式")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundColor(isLargeImage ? AppTheme.tertiaryText : AppTheme.primaryText)
+                        
+                        Text(isLargeImage ? "当前图片过大，已禁用极速模式" : "跳过分块直接拉伸，速度快但可能失真")
+                            .font(.caption)
+                            .foregroundColor(isLargeImage ? .red.opacity(0.8) : AppTheme.tertiaryText)
+                    }
                 }
+                .toggleStyle(SwitchToggleStyle(tint: AppTheme.accent))
+                .disabled(isLargeImage)
+                .padding(.top, 4)
             }
-            .toggleStyle(SwitchToggleStyle(tint: AppTheme.accent))
-            .disabled(isLargeImage)
-            .padding(.top, 4)
         }
         .padding(.horizontal, DesignTokens.pageMargin)
         .padding(.vertical, DesignTokens.spacingXS)
