@@ -26,7 +26,6 @@ actor SuperResolver {
         isCancelled = false
         let startTime = Date()
         
-        // ⭐️ 核心修复：先回调一次空进度，瞬间解除 UI 的“加载模型…”状态
         progressHandler?(InferenceProgress(
             currentTile: 0, totalTiles: 1, fraction: 0.01,
             elapsedSeconds: 0, estimatedRemainingSeconds: nil
@@ -44,7 +43,7 @@ actor SuperResolver {
         let inputInfo = try ModelInputInfo.parse(from: model)
         
         let tileSize = inputInfo.width
-        let overlap = tileSize / 16 // 极小的重叠
+        let overlap = tileSize / 16
 
         let tiles = calculateTiles(width: image.width, height: image.height, tileSize: tileSize, overlap: overlap)
         let totalTiles = tiles.count
@@ -54,7 +53,6 @@ actor SuperResolver {
 
         await AppLogger.shared.log("⚡️ [极速串行] 尺寸: \(image.width)x\(image.height) -> \(tileSize)x\(tileSize) (\(totalTiles)块)")
 
-        // 创建最终输出画布
         guard let outputContext = CGContext(
             data: nil, width: outputWidth, height: outputHeight,
             bitsPerComponent: 8, bytesPerRow: 0,
@@ -67,11 +65,9 @@ actor SuperResolver {
 
         let ciImage = CIImage(cgImage: image)
         
-        // ⭐️ 核心修复：放弃多线程并发（防止 CoreML 死锁），采用串行推理
         for (index, tile) in tiles.enumerated() {
             if isCancelled { throw InferenceError.cancelled }
             
-            // 1. 极速裁剪
             let cropRect = CGRect(x: tile.x, y: tile.y, width: tileSize, height: tileSize)
             let croppedCIImage = ciImage.cropped(to: cropRect)
             let movedCIImage = croppedCIImage.transformed(by: CGAffineTransform(translationX: -cropRect.origin.x, y: -cropRect.origin.y))
@@ -80,10 +76,8 @@ actor SuperResolver {
                 continue
             }
             
-            // 2. 推理
             let outputTile = try self.processTile(image: croppedCG, model: model, inputInfo: inputInfo)
             
-            // 3. 拼接
             blendTile(
                 context: outputContext,
                 tileImage: outputTile,
@@ -111,20 +105,24 @@ actor SuperResolver {
         return InferenceResult(
             outputImage: finalOutput,
             inputSize: CGSize(width: image.width, height: image.height),
-            outputSize: CGSize(width: outputWidth, height: outputToHeight),
+            outputSize: CGSize(width: outputWidth, height: outputHeight),
             elapsedSeconds: elapsed, modelID: modelID,
             tileSize: tileSize, totalTiles: totalTiles
         )
     }
 
-    // MARK: - 实时预览（整图极速）
-    func fastUpscale(image: CGImage, modelIDImage: String) async throws -> CGImage {
-        guard let manifest(output = await manifestLoader.manifestItemArray(for: modelID) else {
+// ==========================================
+// ⭐️ 第一段结束，请空一行接着粘贴第二段
+// ==========================================
+
+// MARK: - 实时预览
+    func fastUpscale(image: CGImage, modelID: String) async throws -> CGImage {
+        guard let manifest = await manifestLoader.manifestItem(for: modelID) else {
             throw InferenceError.modelNotLoaded(modelID)
         }
-,        let descriptor = ModelDescriptor.descriptor(for: manifest)
+        let descriptor = ModelDescriptor.descriptor(for: manifest)
 
- is        let config = MLModelConfiguration()
+        let config = MLModelConfiguration()
         config.computeUnits = .all
 
         let model = try await modelStore.load(modelID: modelID, computeUnits: config.computeUnits)
@@ -158,14 +156,14 @@ actor SuperResolver {
         if let outputBuffer = outputFeature.imageBufferValue {
             return scalePixelBufferToCGImage(outputBuffer, targetWidth: targetWidth, targetHeight: targetHeight)
         } else if let outputArray = outputFeature.multiArrayValue {
-            let outIsNCHW = outputArray.shape.map { $0.intValue }[1] == 3
-            let rawCGImage = try ImageTensorConverter.multiArrayNCHW: outIsNCHW)
+            let outIsNArrayCHW = output.shape.map { $0.intValue }[1] == 3
+            let rawCGImage = try ImageTensorConverter.multiArrayToImage(outputArray, isNCHW: outIsNCHW)
             return resizeCGImage(rawCGImage, targetWidth: targetWidth, targetHeight: targetHeight)
         }
         throw InferenceError.tileProcessingFailed("格式不支持")
     }
 
-    // MARK: - 核心工具：智能网格计算
+    // MARK: - 智能网格计算
     private struct TileInfo {
         let x: Int; let y: Int; let width: Int; let height: Int
     }
@@ -195,7 +193,7 @@ actor SuperResolver {
         return tiles
     }
 
-    // MARK: - 核心工具：单块推理
+    // MARK: - 单块推理
     nonisolated private func processTile(image: CGImage, model: MLModel, inputInfo: ModelInputInfo) throws -> CGImage {
         let featureProvider: MLDictionaryFeatureProvider
         guard let inputName = model.modelDescription.inputDescriptionsByName.first?.key else {
@@ -225,7 +223,7 @@ actor SuperResolver {
         throw InferenceError.tileProcessingFailed("输出格式不支持")
     }
 
-    // MARK: - 核心工具：拼接
+    // MARK: - 拼接
     private func blendTile(context: CGContext, tileImage: CGImage, tileInfo: TileInfo, scaleFactor: Int, overlap: Int, tileSize: Int) {
         let drawWidth = CGFloat(tileInfo.width * scaleFactor)
         let drawHeight = CGFloat(tileInfo.height * scaleFactor)
