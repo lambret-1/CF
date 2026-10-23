@@ -17,7 +17,7 @@ actor SuperResolver {
 
     func cancel() { isCancelled = true }
 
-    // MARK: - 照片超分（整图缩放极速版，告别切块）
+    // MARK: - 照片超分（等比例极速版）
     func upscale(
         image: CGImage,
         modelID: String,
@@ -30,9 +30,8 @@ actor SuperResolver {
         }
         let descriptor = ModelDescriptor.descriptor(for: manifest)
 
-        // ⭐️ 改为 let config
         let config = MLModelConfiguration()
-        config.computeUnits = .all // 满血硬件加速
+        config.computeUnits = .all
         
         let model = try await modelStore.load(
             modelID: modelID,
@@ -41,22 +40,19 @@ actor SuperResolver {
 
         let inputInfo = try ModelInputInfo.parse(from: model)
         
-        await AppLogger.shared.log("⚡️ [极速整图] 尺寸: \(image.width)x\(image.height) -> 模型输入: \(inputInfo.width)x\(inputInfo.height)")
+        await AppLogger.shared.log("⚡️ [等比例极速] 尺寸: \(image.width)x\(image.height) -> 模型: \(inputInfo.width)x\(inputInfo.height)")
 
-        // 模拟进度条起步（因为秒出，其实很快就跑完了）
         progressHandler?(InferenceProgress(
             currentTile: 1, totalTiles: 1, fraction: 0.1,
             elapsedSeconds: 0, estimatedRemainingSeconds: 0
         ))
 
-        let scaleFactor = descriptor.scaleFactor
-        let targetWidth = image.width * scaleFactor
-        let targetHeight = image.height * scaleFactor
-
-        // 1. 将 CGImage 转换为 CVPixelBuffer 并进行第一次缩放（到模型输入尺寸）
-        guard let inputBuffer = resizeCGImageToPixelBuffer(image, targetWidth: inputInfo.width, targetHeight: inputInfo.height) else {
-            throw InferenceError.tileProcessingFailed("图片预处理失败")
-        }
+        // 1. 等比例缩放并填充黑边 (Letterboxing)
+        let (inputBuffer, validRect) = try createLetterboxedPixelBuffer(
+            from: image,
+            targetWidth: inputInfo.width,
+            targetHeight: inputInfo.height
+        )
 
         // 2. 构建模型输入
         let featureProvider: MLDictionaryFeatureProvider
@@ -67,9 +63,7 @@ actor SuperResolver {
         if inputInfo.isImageInput {
             featureProvider = try MLDictionaryFeatureProvider(dictionary: [inputName: MLFeatureValue(pixelBuffer: inputBuffer)])
         } else {
-            // 如果模型要求 MultiArray，依然用之前的转换器（已经重写为指针极速版）
             let constraint = model.modelDescription.inputDescriptionsByName[inputName]!.multiArrayConstraint!
-            // 这里为了速度，直接通过 CIImage 转换出 CGImage 再做 MultiArray
             guard let scaledCG = ciContext.createCGImage(CIImage(cvPixelBuffer: inputBuffer), from: CGRect(x: 0, y: 0, width: inputInfo.width, height: inputInfo.height)) else {
                 throw InferenceError.tileProcessingFailed("转换失败")
             }
@@ -80,7 +74,6 @@ actor SuperResolver {
         if isCancelled { throw InferenceError.cancelled }
 
         // 3. 执行单次推理
-        // ⭐️ 核心修复：加上 await
         let output = try await model.prediction(from: featureProvider)
         
         guard let outputName = output.featureNames.first,
@@ -88,18 +81,30 @@ actor SuperResolver {
             throw InferenceError.tileProcessingFailed("模型输出无效")
         }
 
-        // 4. 获取推理结果并进行最终缩放（到目标分辨率）
+        // 4. 提取输出，裁掉黑边，并放大回目标尺寸
         let finalCGImage: CGImage
+        let scaleFactor = descriptor.scaleFactor
+        let targetWidth = image.width * scaleFactor
+        let targetHeight = image.height * scaleFactor
         
         if let outputBuffer = outputFeature.imageBufferValue {
-            // 模型输出是 Image
-            finalCGImage = scalePixelBufferToCGImage(outputBuffer, targetWidth: targetWidth, targetHeight: targetHeight)
+            finalCGImage = try processOutput(
+                ciImage: CIImage(cvPixelBuffer: outputBuffer),
+                validRect: validRect,
+                scaleFactor: scaleFactor,
+                targetWidth: targetWidth,
+                targetHeight: targetHeight
+            )
         } else if let outputArray = outputFeature.multiArrayValue {
-            // 模型输出是 MultiArray
             let outIsNCHW = outputArray.shape.map { $0.intValue }[1] == 3
             let rawCGImage = try ImageTensorConverter.multiArrayToImage(outputArray, isNCHW: outIsNCHW)
-            // 放大到目标尺寸
-            finalCGImage = resizeCGImage(rawCGImage, targetWidth: targetWidth, targetHeight: targetHeight)
+            finalCGImage = try processOutput(
+                ciImage: CIImage(cgImage: rawCGImage),
+                validRect: validRect,
+                scaleFactor: scaleFactor,
+                targetWidth: targetWidth,
+                targetHeight: targetHeight
+            )
         } else {
             throw InferenceError.tileProcessingFailed("输出格式不支持")
         }
@@ -123,26 +128,25 @@ actor SuperResolver {
 // ==========================================
 // ⭐️ 第一段结束，请空一行接着粘贴第二段
 // ==========================================
-// MARK: - 实时预览（极速版）
+
+// MARK: - 实时预览（等比例极速版）
     func fastUpscale(image: CGImage, modelID: String) async throws -> CGImage {
         guard let manifest = await manifestLoader.manifestItem(for: modelID) else {
             throw InferenceError.modelNotLoaded(modelID)
         }
         let descriptor = ModelDescriptor.descriptor(for: manifest)
 
-        // ⭐️ 改为 let config
         let config = MLModelConfiguration()
         config.computeUnits = .all
 
         let model = try await modelStore.load(modelID: modelID, computeUnits: config.computeUnits)
         let inputInfo = try ModelInputInfo.parse(from: model)
 
-        let targetWidth = image.width * descriptor.scaleFactor
-        let targetHeight = image.height * descriptor.scaleFactor
-
-        guard let inputBuffer = resizeCGImageToPixelBuffer(image, targetWidth: inputInfo.width, targetHeight: inputInfo.height) else {
-            throw InferenceError.tileProcessingFailed("预处理失败")
-        }
+        let (inputBuffer, validRect) = try createLetterboxedPixelBuffer(
+            from: image,
+            targetWidth: inputInfo.width,
+            targetHeight: inputInfo.height
+        )
 
         guard let inputName = model.modelDescription.inputDescriptionsByName.first?.key else { throw InferenceError.tileProcessingFailed("无输入") }
 
@@ -158,27 +162,40 @@ actor SuperResolver {
             featureProvider = try MLDictionaryFeatureProvider(dictionary: [inputName: MLFeatureValue(multiArray: array)])
         }
 
-        // ⭐️ 核心修复：加上 await
         let output = try await model.prediction(from: featureProvider)
         
         guard let outputName = output.featureNames.first, let outputFeature = output.featureValue(for: outputName) else {
             throw InferenceError.tileProcessingFailed("无输出")
         }
+        
+        let targetWidth = image.width * descriptor.scaleFactor
+        let targetHeight = image.height * descriptor.scaleFactor
 
         if let outputBuffer = outputFeature.imageBufferValue {
-            return scalePixelBufferToCGImage(outputBuffer, targetWidth: targetWidth, targetHeight: targetHeight)
+            return try processOutput(
+                ciImage: CIImage(cvPixelBuffer: outputBuffer),
+                validRect: validRect,
+                scaleFactor: descriptor.scaleFactor,
+                targetWidth: targetWidth,
+                targetHeight: targetHeight
+            )
         } else if let outputArray = outputFeature.multiArrayValue {
             let outIsNCHW = outputArray.shape.map { $0.intValue }[1] == 3
             let rawCGImage = try ImageTensorConverter.multiArrayToImage(outputArray, isNCHW: outIsNCHW)
-            return resizeCGImage(rawCGImage, targetWidth: targetWidth, targetHeight: targetHeight)
+            return try processOutput(
+                ciImage: CIImage(cgImage: rawCGImage),
+                validRect: validRect,
+                scaleFactor: descriptor.scaleFactor,
+                targetWidth: targetWidth,
+                targetHeight: targetHeight
+            )
         }
         
         throw InferenceError.tileProcessingFailed("格式不支持")
     }
 
-    // MARK: - 核心极速缩放工具 (CIContext 硬件加速)
-    
-    private func resizeCGImageToPixelBuffer(_ image: CGImage, targetWidth: Int, targetHeight: Int) -> CVPixelBuffer? {
+    // MARK: - 核心工具：等比例填充黑边 (Aspect Fit)
+    private func createLetterboxedPixelBuffer(from image: CGImage, targetWidth: Int, targetHeight: Int) throws -> (CVPixelBuffer, CGRect) {
         var pixelBuffer: CVPixelBuffer?
         let attrs = [
             kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA,
@@ -188,33 +205,61 @@ actor SuperResolver {
         ] as CFDictionary
         
         guard CVPixelBufferCreate(kCFAllocatorDefault, targetWidth, targetHeight, kCVPixelFormatType_32BGRA, attrs, &pixelBuffer) == kCVReturnSuccess,
-              let buffer = pixelBuffer else { return nil }
-              
-        let ciImage = CIImage(cgImage: image)
-        let scaleX = CGFloat(targetWidth) / CGFloat(image.width)
-        let scaleY = CGFloat(targetHeight) / CGFloat(image.height)
+              let buffer = pixelBuffer else {
+            throw InferenceError.tileProcessingFailed("创建 Buffer 失败")
+        }
         
-        // 直接拉伸，极速
-        let scaledImage = ciImage.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
-        ciContext.render(scaledImage, to: buffer)
-        return buffer
+        // 填充黑底
+        CVPixelBufferLockBaseAddress(buffer, [])
+        memset(CVPixelBufferGetBaseAddress(buffer), 0, CVPixelBufferGetDataSize(buffer))
+        CVPixelBufferUnlockBaseAddress(buffer, [])
+        
+        let ciImage = CIImage(cgImage: image)
+        let scale = min(CGFloat(targetWidth) / ciImage.extent.width, CGFloat(targetHeight) / ciImage.extent.height)
+        
+        let scaledWidth = ciImage.extent.width * scale
+        let scaledHeight = ciImage.extent.height * scale
+        let xOffset = (CGFloat(targetWidth) - scaledWidth) / 2.0
+        let yOffset = (CGFloat(targetHeight) - scaledHeight) / 2.0
+        
+        // ⭐️ 核心修复：在 CoreImage 坐标系中缩放，并注意 Y 轴翻转问题
+        // CIImage 渲染到 CVPixelBuffer 时，如果没有指定原点，默认是从左上角开始。
+        // 为保证正向，我们使用 CGAffineTransform 同时处理缩放和居中。
+        let scaledImage = ciImage.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        let translatedImage = scaledImage.transformed(by: CGAffineTransform(translationX: xOffset, y: yOffset))
+        
+        ciContext.render(translatedImage, to: buffer)
+        
+        // 记录有效区域，以便后续从输出中裁掉黑边
+        let validRect = CGRect(x: xOffset, y: yOffset, width: scaledWidth, height: scaledHeight)
+        return (buffer, validRect)
     }
 
-    private func scalePixelBufferToCGImage(_ buffer: CVPixelBuffer, targetWidth: Int, targetHeight: Int) -> CGImage {
-        let ciImage = CIImage(cvPixelBuffer: buffer)
-        let scaleX = CGFloat(targetWidth) / CGFloat(CVPixelBufferGetWidth(buffer))
-        let scaleY = CGFloat(targetHeight) / CGFloat(CVPixelBufferGetHeight(buffer))
+    // MARK: - 核心工具：从模型输出中裁掉黑边，并拉伸到目标尺寸
+    private func processOutput(ciImage: CIImage, validRect: CGRect, scaleFactor: Int, targetWidth: Int, targetHeight: Int) throws -> CGImage {
+        // 根据放大倍数，计算出在模型输出图中的有效区域
+        let outRect = CGRect(
+            x: validRect.origin.x * CGFloat(scaleFactor),
+            y: validRect.origin.y * CGFloat(scaleFactor),
+            width: validRect.width * CGFloat(scaleFactor),
+            height: validRect.height * CGFloat(scaleFactor)
+        )
         
-        let scaledImage = ciImage.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
-        return ciContext.createCGImage(scaledImage, from: scaledImage.extent)!
-    }
-
-    private func resizeCGImage(_ image: CGImage, targetWidth: Int, targetHeight: Int) -> CGImage {
-        let ciImage = CIImage(cgImage: image)
-        let scaleX = CGFloat(targetWidth) / CGFloat(image.width)
-        let scaleY = CGFloat(targetHeight) / CGFloat(image.height)
+        // 裁剪出有效区域
+        let croppedImage = ciImage.cropped(to: outRect)
         
-        let scaledImage = ciImage.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
-        return ciContext.createCGImage(scaledImage, from: scaledImage.extent)!
+        // 将原点移回 (0,0)
+        let finalImage = croppedImage.transformed(by: CGAffineTransform(translationX: -outRect.origin.x, y: -outRect.origin.y))
+        
+        // 缩放到最终尺寸
+        let scaleX = CGFloat(targetWidth) / outRect.width
+        let scaleY = CGFloat(targetHeight) / outRect.height
+        let resizedImage = finalImage.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
+        
+        guard let cgImage = ciContext.createCGImage(resizedImage, from: CGRect(x: 0, y: 0, width: targetWidth, height: targetHeight)) else {
+            throw InferenceError.outputCreationFailed
+        }
+        
+        return cgImage
     }
 }
