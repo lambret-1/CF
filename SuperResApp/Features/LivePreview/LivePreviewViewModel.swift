@@ -24,8 +24,13 @@ final class LivePreviewViewModel: ObservableObject {
     private let superResolver = SuperResolver.shared
     private let modelStore = ModelStore.shared
     
-    // ⭐️ 用于高效、安全地将 CVPixelBuffer 转为图片，兼容 YUV 格式
+    // 用于高效、安全地将 CVPixelBuffer 转为图片，兼容 YUV/BGRA
     private let ciContext = CIContext(options: [.useSoftwareRenderer: false])
+
+    // MARK: - 调试开关
+    // ⭐️ 打开这个开关，会直接显示原图，跳过 AI 超分。
+    // 如果用原图能显示画面，说明相机配置没问题，是 AI 推理模块报错或太慢。
+    private let isDebugBypassAI = false 
 
     // MARK: - FPS 计算
 
@@ -80,6 +85,7 @@ final class LivePreviewViewModel: ObservableObject {
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
+            print("❌ 相机启动失败: \(error)")
         }
     }
 
@@ -88,6 +94,7 @@ final class LivePreviewViewModel: ObservableObject {
         isRunning = false
     }
 
+    /// 请求相机权限
     func requestPermission() async {
         let status = await cameraSession.requestAuthorization()
         permissionStatus = status
@@ -96,6 +103,7 @@ final class LivePreviewViewModel: ObservableObject {
         }
     }
 
+    /// 切换摄像头
     func switchCamera() {
         Task {
             try? await cameraSession.switchCamera()
@@ -120,13 +128,22 @@ final class LivePreviewViewModel: ObservableObject {
         guard !isProcessingFrame else { return }
         isProcessingFrame = true
         
-        // 确保处理完后释放标志位
         defer { isProcessingFrame = false }
 
-        // 3. 安全转换：使用 CIContext 代替手写的 CGContext
-        // CIContext 能自动处理 YUV、BGRA 等各种相机原生格式
-        let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
-        guard let cgImage = ciContext.createCGImage(ciImage, from: ciImage.extent) else {
+        // 3. 安全转换：将转换操作放到后台线程，避免卡顿主线程
+        let cgImage: CGImage? = await Task.detached(priority: .userInitiated) { [ciContext] in
+            let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+            return ciContext.createCGImage(ciImage, from: ciImage.extent)
+        }.value
+
+        guard let cgImage = cgImage else {
+            print("❌ CGImage 转换失败")
+            return
+        }
+
+        // ⭐️ 调试：直接显示原图，绕过 AI 推理
+        if isDebugBypassAI {
+            self.previewImage = UIImage(cgImage: cgImage)
             return
         }
 
@@ -141,8 +158,8 @@ final class LivePreviewViewModel: ObservableObject {
             // 因为类是 @MainActor，这里直接更新 UI
             self.previewImage = UIImage(cgImage: result.outputImage)
         } catch {
-            // 实时预览中忽略单帧错误
-            print("实时超分推理失败: \(error)")
+            // ⭐️ 千万不要静默忽略错误！如果推理失败，打印出来看看是什么原因
+            print("❌ 实时超分推理失败: \(error)")
         }
     }
 
