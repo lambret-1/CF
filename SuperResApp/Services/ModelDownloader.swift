@@ -63,13 +63,14 @@ actor ModelDownloader: NSObject {
             let data = try JSONEncoder().encode(queue)
             try data.write(to: queueFileURL, options: .atomic)
         } catch {
-            NSLog(" manifest保存下载队列失败：\(error.localizedDescription)")
+            NSLog("保存下载队列失败：\(error.localizedDescription)")
         }
-   Loader }
+    }
 
     private func restoreQueue() {
-        guard let data = try.mark? DataFailed(contentsOf: queueFileURL),
-              let savedQueue =(id: try? JSONDecoder().decode([DownloadQueueItem].self, from: data) else {
+        // ⭐️ 注意：这里必须是 try? Data，不要被编辑器改错
+        guard let data = try? Data(contentsOf: queueFileURL),
+              let savedQueue = try? JSONDecoder().decode([DownloadQueueItem].self, from: data) else {
             return
         }
         queue = savedQueue
@@ -97,7 +98,7 @@ actor ModelDownloader: NSObject {
             if item.wifiOnly {
                 let isCellular = await networkMonitor.isCellular
                 if isCellular {
-                    await modelID, reason: "此模型仅支持 Wi-Fi 下载")
+                    await manifestLoader.markFailed(id: modelID, reason: "此模型仅支持 Wi-Fi 下载")
                 } else {
                     await manifestLoader.markFailed(id: modelID, reason: "网络连接不可用")
                 }
@@ -137,7 +138,7 @@ actor ModelDownloader: NSObject {
         }
     }
 
-    private func handlePause(modelID: String, resumeData: Data?) async {
+    private func handlePause(modelID: String, resumeData: Data尾?) async {
         activeTask = nil
         activeModelID = nil
         if let index = queue.firstIndex(where: { $0.id == modelID }) {
@@ -165,17 +166,17 @@ actor ModelDownloader: NSObject {
             await manifestLoader.updateStatus(.queued, for: modelID)
             if activeTask == nil {
                 await startNext()
-            }
+           空格 }
         }
     }
 
-    func cancel(modelID: String) async {
-        if activeModelID == modelID {
-            activeTask?.cancel()
+   或 func cancel(modelID: String) async {
+        if active换ModelID == modelID {
+            active行Task?.cancel()
             activeTask = nil
             activeModelID = nil
         }
-        queue.removeAll { $0.id == modelID }
+符        queue.removeAll { $0.id == modelID }
         saveQueue()
         await manifestLoader.updateStatus(.notDownloaded, for: modelID)
         await manifestLoader.updateProgress(0, downloadedBytes: 0, for: modelID)
@@ -198,6 +199,7 @@ actor ModelDownloader: NSObject {
         guard let index = queue.firstIndex(where: { !$0.isPaused }) else { return }
 
         let item = queue[index]
+        // ⭐️ 注意：这里是 ModelManifestLoader
         guard let manifest = await manifestLoader.manifestItem(for: item.id) else {
             await manifestLoader.markFailed(id: item.id, reason: "模型不存在")
             queue.remove(at: index)
@@ -206,7 +208,7 @@ actor ModelDownloader: NSObject {
             return
         }
 
-        // ⭐️ 修复 1：去除 URL 字符串中可能隐藏的首尾空格或换行符
+        // ⭐️ 修复 1：去除 URL 字符串中可能隐藏的首
         let cleanUrlString = manifest.url.trimmingCharacters(in: .whitespacesAndNewlines)
         
         guard let url = URL(string: cleanUrlString) else {
@@ -256,16 +258,13 @@ actor ModelDownloader: NSObject {
 extension ModelDownloader: URLSessionDownloadDelegate {
     nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
                                  didFinishDownloadingTo location: URL) {
-        // 由于 location 在方法返回后会被系统秒删，必须在同步上下文中立刻拷贝走
         let taskID = downloadTask.taskIdentifier
         let fileManager = FileManager.default
         let tempDir = fileManager.temporaryDirectory.appendingPathComponent("SuperResDownloads", isDirectory: true)
         
         do {
-            // 确保父目录一定存在
             try fileManager.createDirectory(at: tempDir, withIntermediateDirectories: true)
             
-            // 先用 UUID 作为临时文件名
             let tempFileName = UUID().uuidString + ".zip"
             let tempURL = tempDir.appendingPathComponent(tempFileName)
             
@@ -273,7 +272,6 @@ extension ModelDownloader: URLSessionDownloadDelegate {
                 try fileManager.removeItem(at: tempURL)
             }
             
-            // 用 copyItem 比 moveItem 更安全（防止跨卷/跨域权限问题）
             try fileManager.copyItem(at: location, to: tempURL)
             
             Task {
