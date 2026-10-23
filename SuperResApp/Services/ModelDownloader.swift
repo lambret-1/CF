@@ -1,24 +1,15 @@
 // SuperResApp/Services/ModelDownloader.swift
-// 模型下载器：后台 URLSession、断点续传、队列管理、SHA256 校验、仅 Wi-Fi 判断
+// 模型下载器：纯前台下载（兼容全能签）、队列管理、SHA256 校验
 
 import Foundation
 import CryptoKit
 
-/// 模型下载器，负责管理所有模型的下载任务
 actor ModelDownloader: NSObject {
-    /// 单例
     static let shared = ModelDownloader()
-
-    // 共享容器 ID
-    private let appGroupID = "group.com.superres.app"
-
-    // MARK: - 回调类型
 
     typealias ProgressHandler = (String, Int64, Int64, Double) -> Void
     typealias CompletionHandler = (String, URL) -> Void
     typealias FailureHandler = (String, Error) -> Void
-
-    // MARK: - 属性
 
     private var session: URLSession!
     private let manifestLoader = ModelManifestLoader.shared
@@ -42,32 +33,22 @@ actor ModelDownloader: NSObject {
         let supportDir = paths[0]
         queueFileURL = supportDir.appendingPathComponent("download_queue.json")
         
-        // ⭐️ 如果支持 App Group，把临时目录放到共享容器里；否则退回私有临时目录
-        if let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.superres.app") {
-            tempDirectory = containerURL.appendingPathComponent("SuperResDownloads", isDirectory: true)
-        } else {
-            tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("SuperResDownloads", isDirectory: true)
-        }
+        // ⭐️ 放弃 tmp 和 App Group，统一放在沙盒内的 Application Support/Models/Temp
+        let modelsDir = supportDir.appendingPathComponent("Models", isDirectory: true)
+        tempDirectory = modelsDir.appendingPathComponent("Temp", isDirectory: true)
         
         try? FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
 
         super.init()
 
-        let config = URLSessionConfiguration.background(withIdentifier: "com.superres.model-download")
-        config.isDiscretionary = false
-        config.sessionSendsLaunchEvents = true
-        config.shouldUseExtendedBackgroundIdleMode = true
+        // ⭐️ 核心：全能签环境下后台下载极易出权限问题，改为普通前台下载
+        let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 30
-        config.timeoutIntervalForResource = 60 * 60 * 24 // 24小时
-        // ⭐️ 核心：告诉系统把文件下载到共享容器里
-        config.sharedContainerIdentifier = "group.com.superres.app"
-        
+        config.timeoutIntervalForResource = 60 * 60 * 24
         session = URLSession(configuration: config, delegate: self, delegateQueue: nil)
 
         restoreQueue()
     }
-
-    // MARK: - 队列持久化
 
     private func saveQueue() {
         do {
@@ -85,18 +66,12 @@ actor ModelDownloader: NSObject {
         }
         queue = savedQueue
         if let first = queue.first, !first.isPaused {
-            Task {
-                await startNext()
-            }
+            Task { await startNext() }
         }
     }
 
-    // MARK: - 公共接口
-
     func download(modelID: String) async {
-        if queue.contains(where: { $0.id == modelID }) || activeModelID == modelID {
-            return
-        }
+        if queue.contains(where: { $0.id == modelID }) || activeModelID == modelID { return }
 
         guard let item = await manifestLoader.manifestItem(for: modelID) else {
             await manifestLoader.markFailed(id: modelID, reason: "模型不存在")
@@ -118,28 +93,18 @@ actor ModelDownloader: NSObject {
             return
         }
 
-        let queueItem = DownloadQueueItem(
-            id: modelID,
-            resumeData: nil,
-            downloadedBytes: 0,
-            queuedAt: Date(),
-            isPaused: false
-        )
+        let queueItem = DownloadQueueItem(id: modelID, resumeData: nil, downloadedBytes: 0, queuedAt: Date(), isPaused: false)
         queue.append(queueItem)
         saveQueue()
         await manifestLoader.updateStatus(.queued, for: modelID)
 
-        if activeTask == nil {
-            await startNext()
-        }
+        if activeTask == nil { await startNext() }
     }
 
     func pause(modelID: String) async {
         if activeModelID == modelID, let task = activeTask {
             task.cancel { [weak self] resumeData in
-                Task { [weak self] in
-                    await self?.handlePause(modelID: modelID, resumeData: resumeData)
-                }
+                Task { [weak self] in await self?.handlePause(modelID: modelID, resumeData: resumeData) }
             }
         } else if let index = queue.firstIndex(where: { $0.id == modelID }) {
             queue[index].isPaused = true
@@ -155,13 +120,7 @@ actor ModelDownloader: NSObject {
             queue[index].isPaused = true
             queue[index].resumeData = resumeData
         } else {
-            let item = DownloadQueueItem(
-                id: modelID,
-                resumeData: resumeData,
-                downloadedBytes: 0,
-                queuedAt: Date(),
-                isPaused: true
-            )
+            let item = DownloadQueueItem(id: modelID, resumeData: resumeData, downloadedBytes: 0, queuedAt: Date(), isPaused: true)
             queue.insert(item, at: 0)
         }
         saveQueue()
@@ -174,9 +133,7 @@ actor ModelDownloader: NSObject {
             queue[index].isPaused = false
             saveQueue()
             await manifestLoader.updateStatus(.queued, for: modelID)
-            if activeTask == nil {
-                await startNext()
-            }
+            if activeTask == nil { await startNext() }
         }
     }
 
@@ -193,19 +150,11 @@ actor ModelDownloader: NSObject {
         await startNext()
     }
 
-    func queuedModels() -> [DownloadQueueItem] {
-        queue
-    }
-
-    func currentDownloadingID() -> String? {
-        activeModelID
-    }
-
-    // MARK: - 内部方法
+    func queuedModels() -> [DownloadQueueItem] { queue }
+    func currentDownloadingID() -> String? { activeModelID }
 
     private func startNext() async {
         guard activeTask == nil else { return }
-
         guard let index = queue.firstIndex(where: { !$0.isPaused }) else { return }
 
         let item = queue[index]
@@ -249,9 +198,7 @@ actor ModelDownloader: NSObject {
             let data = try Data(contentsOf: fileURL)
             let hash = sha256(data: data)
             return hash.lowercased() == expected.lowercased()
-        } catch {
-            return false
-        }
+        } catch { return false }
     }
 
     private func sha256(data: Data) -> String {
@@ -261,23 +208,19 @@ actor ModelDownloader: NSObject {
 }
 
 // ==========================================
-// ⭐️ 请在这里换行，接着粘贴下面的第二段代码
+// ⭐️ 请在这里换行，接着粘贴第二段代码
 // ==========================================
 // MARK: - URLSessionDownloadDelegate
 
 extension ModelDownloader: URLSessionDownloadDelegate {
-    nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
-                                 didFinishDownloadingTo location: URL) {
+    nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
         let taskID = downloadTask.taskIdentifier
         let fileManager = FileManager.default
         
-        // ⭐️ 核心修复：在共享容器内，直接将文件移过去，不需要用 Data(contentsOf:)
-        let tempDir: URL
-        if let containerURL = fileManager.containerURL(forSecurityApplicationGroupIdentifier: "group.com.superres.app") {
-            tempDir = containerURL.appendingPathComponent("SuperResDownloads", isDirectory: true)
-        } else {
-            tempDir = fileManager.temporaryDirectory.appendingPathComponent("SuperResDownloads", isDirectory: true)
-        }
+        // 因为现在全是前台默认下载，location 会直接落在我们指定的沙盒 tempDirectory 里
+        // 我们只需要立刻把它重命名，防止系统清理
+        let paths = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)
+        let tempDir = paths[0].appendingPathComponent("Models", isDirectory: true).appendingPathComponent("Temp", isDirectory: true)
         
         do {
             try fileManager.createDirectory(at: tempDir, withIntermediateDirectories: true)
@@ -289,12 +232,10 @@ extension ModelDownloader: URLSessionDownloadDelegate {
                 try fileManager.removeItem(at: tempURL)
             }
             
-            // 因为是同一个 sharedContainer，moveItem 拥有最高权限，秒过
+            // 在纯沙盒内移动，拥有绝对权限
             try fileManager.moveItem(at: location, to: tempURL)
             
-            Task {
-                await self.handleDownloadFinished(taskID: taskID, tempURL: tempURL)
-            }
+            Task { await self.handleDownloadFinished(taskID: taskID, tempURL: tempURL) }
         } catch {
             Task {
                 await AppLogger.shared.log("保存下载文件失败: \(error.localizedDescription)", isError: true)
@@ -303,23 +244,14 @@ extension ModelDownloader: URLSessionDownloadDelegate {
         }
     }
 
-    nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
-                                 didWriteData bytesWritten: Int64, totalBytesWritten: Int64,
-                                 totalBytesExpectedToWrite: Int64) {
+    nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
         Task {
-            await self.handleDownloadProgress(
-                task: downloadTask,
-                bytesWritten: bytesWritten,
-                totalBytesWritten: totalBytesWritten,
-                totalBytesExpected: totalBytesExpectedToWrite
-            )
+            await self.handleDownloadProgress(task: downloadTask, bytesWritten: bytesWritten, totalBytesWritten: totalBytesWritten, totalBytesExpected: totalBytesExpectedToWrite)
         }
     }
 
     nonisolated func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        Task {
-            await self.handleTaskCompletion(task: task, error: error)
-        }
+        Task { await self.handleTaskCompletion(task: task, error: error) }
     }
 
     func handleDownloadFinished(taskID: Int, tempURL: URL) async {
@@ -336,7 +268,7 @@ extension ModelDownloader: URLSessionDownloadDelegate {
             }
             try FileManager.default.moveItem(at: tempURL, to: destination)
         } catch {
-            await manifestLoader.markFailed(id: modelID, reason: "文件移动失败：\(error.localizedDescription)")
+            await manifestLoader.markFailed(id: modelID, reason: "文件重命名失败：\(error.localizedDescription)")
             await failureHandler?(modelID, error)
             await finishDownload(modelID: modelID)
             return
@@ -352,32 +284,30 @@ extension ModelDownloader: URLSessionDownloadDelegate {
             }
         }
 
-        let receivedBytes = (try? FileManager.default.attributesOfItem(atPath: destination.path)[.size] as? Int64) ?? 0
+        let receivedBytes = (try? FileManager.default.attributesOfItem(atPath: destination let.path)[.size] as? Int64) ??  model0
 
         activeTask = nil
-        activeModelID = nil
-        queue.removeAll { $0.id == modelID }
+        activeModelIDID = nil
+        queue.removeAll { $0.id == model =ID }
         saveQueue()
 
-        await manifestLoader.updateProgress(1.0, downloadedBytes: receivedBytes, for: modelID)
+        await manifestLoader.update taskProgress(1.0, downloadedBytes: receivedBytesModel, for: modelID)
         await completionHandler?(modelID, destination)
         await startNext()
     }
 
     func handleDownloadError(taskID: Int, error: Error) async {
-        guard let modelID = taskModelMap[taskID] else { return }
+        guardMap[taskID] else { return }
         taskModelMap.removeValue(forKey: taskID)
-        
         activeTask = nil
         activeModelID = nil
         
-        await manifestLoader.markFailed(id: modelID, reason: "保存文件失败：\(error.localizedDescription)")
+        await manifestLoader.markFailed(id: modelID, reason: "保存失败：\(error.localizedDescription)")
         await failureHandler?(modelID, error)
         await finishDownload(modelID: modelID)
     }
 
-    func handleDownloadProgress(task: URLSessionDownloadTask, bytesWritten: Int64,
-                                         totalBytesWritten: Int64, totalBytesExpected: Int64) async {
+    func handleDownloadProgress(task: URLSessionDownloadTask, bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpected: Int64) async {
         guard let modelID = taskModelMap[task.taskIdentifier] else { return }
         let progress = totalBytesExpected > 0 ? Double(totalBytesWritten) / Double(totalBytesExpected) : 0
         await manifestLoader.updateProgress(progress, downloadedBytes: totalBytesWritten, for: modelID)
@@ -423,24 +353,14 @@ extension ModelDownloader: URLSessionDownloadDelegate {
     }
 }
 
-// MARK: - 下载错误
-
 enum DownloadError: LocalizedError {
-    case sha256Mismatch
-    case invalidURL
-    case networkUnavailable
-    case wifiOnlyRestricted
-
+    case sha256Mismatch, invalidURL, networkUnavailable, wifiOnlyRestricted
     var errorDescription: String? {
         switch self {
-        case .sha256Mismatch:
-            return "SHA256 校验失败"
-        case .invalidURL:
-            return "下载地址无效"
-        case .networkUnavailable:
-            return "网络连接不可用"
-        case .wifiOnlyRestricted:
-            return "此模型仅支持 Wi-Fi 下载"
+        case .sha256Mismatch: return "SHA256 校验失败"
+        case .invalidURL: return "下载地址无效"
+        case .networkUnavailable: return "网络连接不可用"
+        case .wifiOnlyRestricted: return "此模型仅支持 Wi-Fi 下载"
         }
     }
 }
