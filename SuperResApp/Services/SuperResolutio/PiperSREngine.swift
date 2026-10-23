@@ -28,16 +28,13 @@ struct PiperSREngine: SuperResolutionEngine {
         let outputWidth = image.width * scaleFactor
         let outputHeight = image.height * scaleFactor
 
-        // 1. 创建画布，并执行【全局翻转】（让坐标系变成左上角原点）
+        // 1. 创建标准画布（左下角为原点，不使用全局翻转）
         guard let outputContext = CGContext(
             data: nil, width: outputWidth, height: outputHeight,
             bitsPerComponent: 8, bytesPerRow: 0,
             space: CGColorSpaceCreateDeviceRGB(),
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ) else { throw InferenceError.outputCreationFailed }
-        
-        outputContext.translateBy(x: 0, y: CGFloat(outputHeight))
-        outputContext.scaleBy(x: 1.0, y: -1.0)
 
         for (index, tile) in tiles.enumerated() {
             try autoreleasepool {
@@ -45,23 +42,27 @@ struct PiperSREngine: SuperResolutionEngine {
                 let cropRect = CGRect(x: tile.x, y: tile.y, width: tile.width, height: tile.height)
                 guard let croppedCG = image.cropping(to: cropRect) else { return }
                 
-                // 3. 模型推理（128x128 输入的输出是 256x256）
-                let outputTile = try self.processTile(image: croppedCG, model: model, inputInfo: inputInfo)
+                // 3. 模型推理
+                var outputTile = try self.processTile(image: croppedCG, model: model, inputInfo: inputInfo)
+                
+                // ⭐️ 核心修复：手动将输出的 Tile 垂直翻转（因为 CoreML 输出的 Buffer 通常是倒的）
+                if let flipped = flipImageVertically(outputTile) {
+                    outputTile = flipped
+                }
                 
                 let drawWidth = CGFloat(tile.width * scaleFactor)
                 let drawHeight = CGFloat(tile.height * scaleFactor)
                 let destX = CGFloat(tile.x * scaleFactor)
                 let destY = CGFloat(tile.y * scaleFactor)
                 
+                // ⭐️ 核心修复：使用标准 CGContext（左下角原点）的 Y 坐标计算公式
+                let cgY = CGFloat(outputHeight) - destY - drawHeight
+                
                 let cropRect2 = CGRect(x: 0, y: 0, width: drawWidth, height: drawHeight)
                 guard let validTile = outputTile.cropping(to: cropRect2) else { return }
                 
-                // 4. ⭐️ 核心修复：回归历史代码的【局部翻转拼接法】
-                outputContext.saveGState()
-                outputContext.translateBy(x: destX, y: destY + drawHeight)
-                outputContext.scaleBy(x: 1.0, y: -1.0)
-                outputContext.draw(validTile, in: CGRect(x: 0, y: 0, width: drawWidth, height: drawHeight))
-                outputContext.restoreGState()
+                // 4. 正常绘制（此时图像和坐标系都已正确匹配）
+                outputContext.draw(validTile, in: CGRect(x: destX, y: cgY, width: drawWidth, height: drawHeight))
             }
             
             let elapsed = Date().timeIntervalSince(startTime)
@@ -96,6 +97,23 @@ struct PiperSREngine: SuperResolutionEngine {
         return tiles
     }
 
+    // ⭐️ 新增：使用原生 CGContext 进行垂直翻转的辅助函数，避免引入 CIContext 造成性能损耗
+    private func flipImageVertically(_ image: CGImage) -> CGImage? {
+        let width = image.width
+        let height = image.height
+        guard let context = CGContext(
+            data: nil, width: width, height: height,
+            bitsPerComponent: image.bitsPerComponent, bytesPerRow: image.bytesPerRow,
+            space: image.colorSpace ?? CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: image.bitmapInfo.rawValue
+        ) else { return nil }
+        
+        context.translateBy(x: 0, y: CGFloat(height))
+        context.scaleBy(x: 1.0, y: -1.0)
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return context.makeImage()
+    }
+
     private func processTile(image: CGImage, model: MLModel, inputInfo: ModelInputInfo) throws -> CGImage {
         let featureProvider: MLDictionaryFeatureProvider
         guard let inputName = model.modelDescription.inputDescriptionsByName.first?.key else { throw InferenceError.tileProcessingFailed("无输入节点") }
@@ -113,7 +131,7 @@ struct PiperSREngine: SuperResolutionEngine {
         guard let outputName = output.featureNames.first, let outputFeature = output.featureValue(for: outputName) else { throw InferenceError.tileProcessingFailed("模型输出无效") }
 
         if let outputBuffer = outputFeature.imageBufferValue {
-            // ⭐️ 只要这里原样转出来，配合上面的局部翻转拼接，就能完美对
+            // 原样转出来，交给外面的 flipImageVertically 处
             return try ImageTensorConverter.createCGImage(from: outputBuffer)
         } else if let outputArray = outputFeature.multiArrayValue {
             let outIsNCHW = outputArray.shape[1].intValue == 3
