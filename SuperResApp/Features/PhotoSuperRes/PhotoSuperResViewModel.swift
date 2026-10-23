@@ -26,13 +26,10 @@ final class PhotoSuperResViewModel: ObservableObject {
     @Published var isSaving = false
     @Published var canSave = false
     
-    // ⭐️ 新增：用于在 UI 上展示保存成功的反馈
     @Published var saveSuccessMessage: String? = nil
-    
     @Published var selectedModelID: String = "realesrgan-x4v3" 
     @Published var isFastMode: Bool = false
     
-    // 用于保存原图的原始数据（包含 EXIF）
     private var originalImageData: Data?
     
     // MARK: - 依赖
@@ -55,10 +52,16 @@ final class PhotoSuperResViewModel: ObservableObject {
         self.canSave = false
         self.saveSuccessMessage = nil
         
+        // 使用 UIImage 的尺寸（包含旋转方向）
         let pixelWidth = Int(image.size.width * image.scale)
         let pixelHeight = Int(image.size.height * image.scale)
         self.inputSizeText = "\(pixelWidth)×\(pixelHeight)"
-        self.outputSizeText = ""
+        
+        // 预测输出尺寸
+        if let manifest = await manifestLoader.manifestItem(for: selectedModelID) {
+            let descriptor = ModelDescriptor.descriptor(for: manifest)
+            self.outputSizeText = "\(pixelWidth * descriptor.scaleFactor)×\(pixelHeight * descriptor.scaleFactor)"
+        }
         
         self.state = .imageSelected
     }
@@ -79,8 +82,6 @@ final class PhotoSuperResViewModel: ObservableObject {
                     image: cgImage,
                     modelID: selectedModelID
                 )
-                let scaleFactor = 4 
-                self.outputSizeText = "\(cgImage.width * scaleFactor)×\(cgImage.height * scaleFactor)"
                 
             } else {
                 let result = try await superResolver.upscale(
@@ -93,10 +94,23 @@ final class PhotoSuperResViewModel: ObservableObject {
                     }
                 )
                 finalResultImage = result.outputImage
-                self.outputSizeText = "\(Int(result.outputSize.width))×\(Int(result.outputSize.height))"
             }
             
-            self.resultImage = UIImage(cgImage: finalResultImage)
+            // ⭐️ 核心修复 1：给输出结果加上原图的旋转方向（Orientation）
+            // 这样 UI 上显示的就是竖图，而不是被放倒的图
+            self.resultImage = UIImage(cgImage: finalResultImage, scale: 1.0, orientation: image.imageOrientation)
+            
+            // ⭐️ 核心修复 2：修正显示尺寸，确保宽高方向一致
+            if let manifest = await manifestLoader.manifestItem(for: selectedModelID) {
+                let descriptor = ModelDescriptor.descriptor(for: manifest)
+                let pixelWidth = Int(image.size.width * image.scale) * descriptor.scaleFactor
+                let pixelHeight = Int(image.size.height * image.scale) * descriptor.scaleFactor
+                self.outputSizeText = "\(pixelWidth)×\(pixelHeight)"
+            } else {
+                // 兜底
+                self.outputSizeText = "\(finalResultImage.width)×\(finalResultImage.height)"
+            }
+            
             self.state = .completed
             self.canSave = true
             
@@ -117,7 +131,7 @@ final class PhotoSuperResViewModel: ObservableObject {
         }
     }
     
-    // MARK: - 保存到相册（彻底修复相册看不见的问题）
+    // MARK: - 保存到相册（修复旋转与不可见问题）
     func saveToAlbum() async {
         guard let result = resultImage, let cgResult = result.cgImage else { return }
         isSaving = true
@@ -130,11 +144,9 @@ final class PhotoSuperResViewModel: ObservableObject {
                     return
                 }
                 
-                // 1. 准备临时文件路径（用 URL 存相册是解决“看不见”的最优解）
                 let tempDirectory = FileManager.default.temporaryDirectory
                 let tempURL = tempDirectory.appendingPathComponent("SuperRes_\(Int(Date().timeIntervalSince1970)).jpg")
                 
-                // 2. 准备 EXIF 属性
                 var properties: [CFString: Any] = [:]
                 if let originalData = self.originalImageData,
                    let source = CGImageSourceCreateWithData(originalData as CFData, nil),
@@ -142,7 +154,6 @@ final class PhotoSuperResViewModel: ObservableObject {
                     
                     properties = originalProps
                     
-                    // 清理可能导致相册解析失败的冲突属性
                     if var tiff = properties[kCGImagePropertyTIFFDictionary] as? [CFString: Any] {
                         tiff.removeValue(forKey: kCGImagePropertyTIFFOrientation)
                         properties[kCGImagePropertyTIFFDictionary] = tiff
@@ -152,26 +163,36 @@ final class PhotoSuperResViewModel: ObservableObject {
                         exif.removeValue(forKey: kCGImagePropertyExifPixelYDimension)
                         properties[kCGImagePropertyExifDictionary] = exif
                     }
-                    // 强制设置正确的方向
-                    properties[kCGImagePropertyOrientation] = 1
                 }
                 
-                // 3. 写入临时文件
+                // ⭐️ 核心修复 3：保存时写入正确的 EXIF 方向标记
+                let exifOrientation: Int32
+                switch result.imageOrientation {
+                case .up: exifOrientation = 1
+                case .down: exifOrientation = 3
+                case .left: exifOrientation = 8
+                case .right: exifOrientation = 6
+                case .upMirrored: exifOrientation = 2
+                case .downMirrored: exifOrientation = 4
+                case .leftMirrored: exifOrientation = 5
+                case .rightMirrored: exifOrientation = 7
+                @unknown default: exifOrientation = 1
+                }
+                properties[kCGImagePropertyOrientation] = exifOrientation
+                
+                // 写入临时文件
                 if let destination = CGImageDestinationCreateWithURL(tempURL as CFURL, "public.jpeg" as CFString, 1, nil) {
                     let options: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: 0.95]
                     CGImageDestinationAddImage(destination, cgResult, properties as CFDictionary)
                     
                     if CGImageDestinationFinalize(destination) {
-                        // 4. 文件生成成功，调用相册保存（使用 fileURL 方式）
                         PHPhotoLibrary.shared().performChanges({
                             let creationRequest = PHAssetCreationRequest.forAsset()
                             let options = PHAssetResourceCreationOptions()
                             options.originalFilename = tempURL.lastPathComponent
                             creationRequest.addResource(with: .photo, fileURL: tempURL, options: options)
                         }) { saved, error in
-                            // 保存完毕后，删掉临时文件
                             try? FileManager.default.removeItem(at: tempURL)
-                            
                             if let error = error {
                                 print("保存失败: \(error)")
                             }
@@ -181,7 +202,7 @@ final class PhotoSuperResViewModel: ObservableObject {
                     }
                 }
                 
-                // 如果上面生成文件失败了，走最原始的降级方案
+                // 降级方案
                 PHPhotoLibrary.shared().performChanges({
                     PHAssetChangeRequest.creationRequestForAsset(from: result)
                 }) { saved, error in
@@ -228,6 +249,17 @@ final class PhotoSuperResViewModel: ObservableObject {
         let fastModeSupportedModels = ["realesrgan-x4v3", "realesrgan-x4"]
         if !fastModeSupportedModels.contains(id) {
             isFastMode = false
+        }
+        
+        if let image = selectedImage {
+            Task {
+                if let manifest = await manifestLoader.manifestItem(for: id) {
+                    let descriptor = ModelDescriptor.descriptor(for: manifest)
+                    let pixelWidth = Int(image.size.width * image.scale) * descriptor.scaleFactor
+                    let pixelHeight = Int(image.size.height * image.scale) * descriptor.scaleFactor
+                    self.outputSizeText = "\(pixelWidth)×\(pixelHeight)"
+                }
+            }
         }
     }
 }
