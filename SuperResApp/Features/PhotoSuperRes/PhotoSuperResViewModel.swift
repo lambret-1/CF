@@ -27,6 +27,9 @@ final class PhotoSuperResViewModel: ObservableObject {
     
     @Published var selectedModelID: String = "realesrgan-x4v3" 
     
+    // ⭐️ 极速模式开关状态，供 View 双向绑定
+    @Published var isFastMode: Bool = false
+    
     // MARK: - 依赖
     private let superResolver = SuperResolver.shared
     private let modelStore = ModelStore.shared
@@ -45,7 +48,9 @@ final class PhotoSuperResViewModel: ObservableObject {
         self.inferenceProgress = nil
         self.canSave = false
         
-        self.inputSizeText = "\(Int(image.size.width * image.scale))×\(Int(image.size.height * image.scale))"
+        let pixelWidth = Int(image.size.width * image.scale)
+        let pixelHeight = Int(image.size.height * image.scale)
+        self.inputSizeText = "\(pixelWidth)×\(pixelHeight)"
         self.outputSizeText = ""
         
         self.state = .imageSelected
@@ -59,18 +64,34 @@ final class PhotoSuperResViewModel: ObservableObject {
         inferenceProgress = nil
         
         do {
-            let result = try await superResolver.upscale(
-                image: cgImage,
-                modelID: selectedModelID,
-                progressHandler: { [weak self] progress in
-                    Task { @MainActor in
-                        self?.inferenceProgress = progress
-                    }
-                }
-            )
+            let finalResultImage: CGImage
             
-            self.resultImage = UIImage(cgImage: result.outputImage)
-            self.outputSizeText = "\(Int(result.outputSize.width))×\(Int(result.outputSize.height))"
+            if isFastMode {
+                // 极速模式
+                finalResultImage = try await superResolver.fastUpscale(
+                    image: cgImage,
+                    modelID: selectedModelID
+                )
+                // 粗略计算一下输出尺寸
+                let scaleFactor = 4 
+                self.outputSizeText = "\(cgImage.width * scaleFactor)×\(cgImage.height * scaleFactor)"
+                
+            } else {
+                // 高质量模式
+                let result = try await superResolver.upscale(
+                    image: cgImage,
+                    modelID: selectedModelID,
+                    progressHandler: { [weak self] progress in
+                        Task { @MainActor in
+                            self?.inferenceProgress = progress
+                        }
+                    }
+                )
+                finalResultImage = result.outputImage
+                self.outputSizeText = "\(Int(result.outputSize.width))×\(Int(result.outputSize.height))"
+            }
+            
+            self.resultImage = UIImage(cgImage: finalResultImage)
             self.state = .completed
             self.canSave = true
             
@@ -134,15 +155,11 @@ final class PhotoSuperResViewModel: ObservableObject {
     
     // MARK: - 模型管理
     func availableModels() async -> [ModelRuntimeInfo] {
-        // ⭐️ 修复：使用正确的 allRuntimeInfo()，并加上保底加载逻辑
         var models = await manifestLoader.allRuntimeInfo()
-        
-        // 如果列表为空，说明清单还没加载，立刻加载一次
         if models.isEmpty {
             try? await manifestLoader.loadFromBundle()
             models = await manifestLoader.allRuntimeInfo()
         }
-        
         return models
     }
     
