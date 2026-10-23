@@ -4,7 +4,6 @@ import SwiftUI
 
 struct DebugConsoleView: View {
     @ObservedObject var logger = AppLogger.shared
-    @Environment(\.dismiss) var dismiss
     
     var body: some View {
         NavigationStack {
@@ -36,13 +35,10 @@ struct DebugConsoleView: View {
                     Button("清空") { logger.clear() }
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    HStack {
-                        Button {
-                            logger.copyToClipboard()
-                        } label: {
-                            Image(systemName: "doc.on.doc")
-                        }
-                        Button("完成") { dismiss() }
+                    Button {
+                        logger.copyToClipboard()
+                    } label: {
+                        Image(systemName: "doc.on.doc")
                     }
                 }
             }
