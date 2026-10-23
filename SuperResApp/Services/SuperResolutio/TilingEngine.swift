@@ -22,50 +22,52 @@ struct TilingEngine: SuperResolutionEngine {
         progressHandler?(InferenceProgress(currentTile: 0, totalTiles: 1, fraction: 0.01, elapsedSeconds: 0, estimatedRemainingSeconds: nil))
 
         let tileSize = inputInfo.width
-        let overlap = tileSize / 16 
+        let overlap = tileSize / 16 // 小小的重叠，防止接缝
         let tiles = calculateTiles(width: image.width, height: image.height, tileSize: tileSize, overlap: overlap)
         let totalTiles = tiles.count
         
         let outputWidth = image.width * scaleFactor
         let outputHeight = image.height * scaleFactor
+        let canvasRect = CGRect(x: 0, y: 0, width: outputWidth, height: outputHeight)
 
-        // ⭐️ 纯净画布：不预先翻转，保持系统默认（左下角原点）
-        guard let outputContext = CGContext(
-            data: nil, width: outputWidth, height: outputHeight,
-            bitsPerComponent: 8, bytesPerRow: 0,
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else { throw InferenceError.outputCreationFailed }
-        
+        // 1. 创建一个完全透明的画布
+        var finalCIImage = CIImage(color: .clear).cropped(to: canvasRect)
+        let sourceCIImage = CIImage(cgImage: image)
+
         for (index, tile) in tiles.enumerated() {
             try autoreleasepool {
-                let cropRect = CGRect(x: tile.x, y: tile.y, width: tile.width, height: tile.height)
-                // 原生裁剪，保证切出来的块绝对是正向的
-                guard let croppedCG = image.cropping(to: cropRect) else { return }
+                // 2. CIImage 的坐标系原点在左下角，所以 Y 轴要换算一下
+                let ciY = CGFloat(image.height) - CGFloat(tile.y) - CGFloat(tile.height)
+                let ciCropRect = CGRect(x: tile.x, y: Int(ciY), width: tile.width, height: tile.height)
                 
+                // 3. 极简裁剪，绝不越界
+                let croppedCIImage = sourceCIImage.cropped(to: ciCropRect)
+                let movedCIImage = croppedCIImage.transformed(by: CGAffineTransform(translationX: -ciCropRect.origin.x, y: -ciCropRect.origin.y))
+                
+                guard let croppedCG = self.ciContext.createCGImage(movedCIImage, from: CGRect(x: 0, y: 0, width: tile.width, height: tile.height)) else { return }
+                
+                // 4. 推理
                 let outputTile = try self.processTile(image: croppedCG, model: model, inputInfo: inputInfo)
                 
-                let drawWidth = CGFloat(tile.width) * CGFloat(scaleFactor)
-                let drawHeight = CGFloat(tile.height) * CGFloat(scaleFactor)
+                // 5. 缩放并对齐到画布
+                var tileCIImage = CIImage(cgImage: outputTile)
+                
+                // 因为模型输出尺寸可能跟 tile 尺寸有细微区别，我们需要先把它缩放成切块尺寸
+                let scaleX = CGFloat(tile.width) / tileCIImage.extent.width
+                let scaleY = CGFloat(tile.height) / tileCIImage.extent.height
+                tileCIImage = tileCIImage.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
+                
+                // 6. 计算在画布上的目标位置 (CIImage 坐标系左下角)
                 let destX = CGFloat(tile.x) * CGFloat(scaleFactor)
-                let destY = CGFloat(tile.y) * CGFloat(scaleFactor)
+                let destY = CGFloat(outputHeight) - (CGFloat(tile.y) + CGFloat(tile.height)) * CGFloat(scaleFactor)
                 
-                let safeWidth = min(Int(drawWidth), outputTile.width)
-                let safeHeight = min(Int(drawHeight), outputTile.height)
+                // 7. 移动并放大到最终位置
+                let transformedTile = tileCIImage
+                    .transformed(by: CGAffineTransform(scaleX: CGFloat(scaleFactor), y: CGFloat(scaleFactor)))
+                    .transformed(by: CGAffineTransform(translationX: destX, y: destY))
                 
-                if let validTile = outputTile.cropping(to: CGRect(x: 0, y: 0, width: safeWidth, height: safeHeight)) {
-                    outputContext.saveGState()
-                    
-                    // ⭐️ 终极拼接法：局部坐标翻转
-                    // 把画笔移到目标位置的左下角（系统坐标系），然后翻转 Y 轴，使得原点变成左上角（与图像视觉一致）
-                    outputContext.translateBy(x: destX, y: CGFloat(outputHeight) - destY - drawHeight)
-                    outputContext.scaleBy(x: 1.0, y: -1.0)
-                    
-                    // 在局部坐标系的正向位置绘制
-                    outputContext.draw(validTile, in: CGRect(x: 0, y: 0, width: drawWidth, height: drawHeight))
-                    
-                    outputContext.restoreGState()
-                }
+                // 8. 叠加到总画布上
+                finalCIImage = transformedTile.composited(over: finalCIImage)
             }
             
             let elapsed = Date().timeIntervalSince(startTime)
@@ -75,7 +77,9 @@ struct TilingEngine: SuperResolutionEngine {
             ))
         }
 
-        guard let finalOutput = outputContext.makeImage() else { throw InferenceError.outputCreationFailed }
+        guard let finalOutput = ciContext.createCGImage(finalCIImage, from: canvasRect) else {
+            throw InferenceError.outputCreationFailed
+        }
         return finalOutput
     }
 
@@ -105,6 +109,7 @@ struct TilingEngine: SuperResolutionEngine {
         guard let inputName = model.modelDescription.inputDescriptionsByName.first?.key else { throw InferenceError.tileProcessingFailed("无输入节点") }
 
         if inputInfo.isImageInput {
+            // ⭐️ 这里直接用官方标准方法，绝不乱搞翻转
             let pixelBuffer = try ImageTensorConverter.createPixelBuffer(from: image, width: inputInfo.width, height: inputInfo.height, pixelFormat: kCVPixelFormatType_32BGRA)
             featureProvider = try MLDictionaryFeatureProvider(dictionary: [inputName: MLFeatureValue(pixelBuffer: pixelBuffer)])
         } else {
@@ -117,7 +122,6 @@ struct TilingEngine: SuperResolutionEngine {
         guard let outputName = output.featureNames.first, let outputFeature = output.featureValue(for: outputName) else { throw InferenceError.tileProcessingFailed("模型输出无效") }
 
         if let outputBuffer = outputFeature.imageBufferValue {
-            // ⭐️ 核心修复：直接使用 CIImage(cvPixelBuffer:)，它会自动修正底层方向，避免 makeImage 导致的颠倒
             let ciOut = CIImage(cvPixelBuffer: outputBuffer)
             return ciContext.createCGImage(ciOut, from: ciOut.extent)!
         } else if let outputArray = outputFeature.multiArrayValue {
