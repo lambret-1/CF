@@ -26,22 +26,10 @@ struct TilingEngine: SuperResolutionEngine {
         let tiles = calculateTiles(width: image.width, height: image.height, tileSize: tileSize, overlap: overlap)
         let totalTiles = tiles.count
         
-        // 内存保护
-        let maxPixels = 8000 * 8000
-        let originalWidth = image.width * scaleFactor
-        let originalHeight = image.height * scaleFactor
-        
-        let actualScaleFactor: Double
-        if originalWidth * originalHeight > maxPixels {
-            actualScaleFactor = sqrt(Double(maxPixels) / Double(image.width * image.height))
-            await AppLogger.shared.log("⚠️ 图像过大，触发内存保护，自动限制尺寸")
-        } else {
-            actualScaleFactor = Double(scaleFactor)
-        }
-        
-        let outputWidth = Int(Double(image.width) * actualScaleFactor)
-        let outputHeight = Int(Double(image.height) * actualScaleFactor)
+        let outputWidth = image.width * scaleFactor
+        let outputHeight = image.height * scaleFactor
 
+        // ⭐️ 纯净版画布：去掉所有内存限制和缩放，老老实实按 4 倍出图
         guard let outputContext = CGContext(
             data: nil, width: outputWidth, height: outputHeight,
             bitsPerComponent: 8, bytesPerRow: 0,
@@ -52,24 +40,34 @@ struct TilingEngine: SuperResolutionEngine {
         outputContext.translateBy(x: 0, y: CGFloat(outputHeight))
         outputContext.scaleBy(x: 1.0, y: -1.0)
 
+        let ciImage = CIImage(cgImage: image)
+        
         for (index, tile) in tiles.enumerated() {
-            
             try autoreleasepool {
-                // ⭐️ 核心修复：放弃 CIImage 裁剪，直接使用 CGImage 裁剪（避免左下角坐标系颠倒）
-                let cropRect = CGRect(x: tile.x, y: tile.y, width: tile.width, height: tile.height)
-                guard let croppedCG = image.cropping(to: cropRect) else { return }
+                // ⭐️ 修复：使用 CoreImage 的坐标系裁剪，但要把 Y 轴翻过来
+                // CIImage 原点在左下角，我们的 tile.y 是左上角，所以要换算一下
+                let ciY = CGFloat(image.height) - CGFloat(tile.y) - CGFloat(tile.height)
+                let ciCropRect = CGRect(x: tile.x, y: Int(ciY), width: tile.width, height: tile.height)
+                
+                let croppedCIImage = ciImage.cropped(to: ciCropRect)
+                let movedCIImage = croppedCIImage.transformed(by: CGAffineTransform(translationX: -ciCropRect.origin.x, y: -ciCropRect.origin.y))
+                
+                guard let croppedCG = self.ciContext.createCGImage(movedCIImage, from: CGRect(x: 0, y: 0, width: tile.width, height: tile.height)) else { return }
                 
                 let outputTile = try self.processTile(image: croppedCG, model: model, inputInfo: inputInfo)
                 
-                let drawWidth = CGFloat(tile.width) * CGFloat(actualScaleFactor)
-                let drawHeight = CGFloat(tile.height) * CGFloat(actualScaleFactor)
-                let destX = CGFloat(tile.x) * CGFloat(actualScaleFactor)
-                let destY = CGFloat(tile.y) * CGFloat(actualScaleFactor)
+                // 计算绘制尺寸
+                let drawWidth = CGFloat(tile.width) * CGFloat(scaleFactor)
+                let drawHeight = CGFloat(tile.height) * CGFloat(scaleFactor)
+                let destX = CGFloat(tile.x) * CGFloat(scaleFactor)
+                let destY = CGFloat(tile.y) * CGFloat(scaleFactor)
                 
                 let safeWidth = min(Int(drawWidth), outputTile.width)
                 let safeHeight = min(Int(drawHeight), outputTile.height)
+                
                 if let validTile = outputTile.cropping(to: CGRect(x: 0, y: 0, width: safeWidth, height: safeHeight)) {
                     outputContext.saveGState()
+                    // ⭐️ 极简精准拼接
                     outputContext.translateBy(x: destX, y: destY + drawHeight)
                     outputContext.scaleBy(x: 1.0, y: -1.0)
                     outputContext.draw(validTile, in: CGRect(x: 0, y: 0, width: drawWidth, height: drawHeight))
