@@ -45,15 +45,6 @@ struct TilingEngine: SuperResolutionEngine {
                 
                 var outputTile = try self.processTile(image: croppedCG, model: model, inputInfo: inputInfo)
                 
-                // ⭐️ 核心修复：判断是否需要给该模型额外翻转一次
-                if modelID.contains("x4plus") {
-                    // 针对 x4plus 输出数组导致的颠倒问题，在拼接前翻转单块
-                    let ci = CIImage(cgImage: outputTile)
-                    let flipped = ci.transformed(by: CGAffineTransform(scaleX: 1, y: -1).translatedBy(x: 0, y: -ci.extent.height))
-                    if let flippedCG = self.ciContext.createCGImage(flipped, from: flipped.extent) {
-                        outputTile = flippedCG
-                    }
-                }
                 
                 let drawWidth = CGFloat(tile.width) * CGFloat(scaleFactor)
                 let drawHeight = CGFloat(tile.height) * CGFloat(scaleFactor)
