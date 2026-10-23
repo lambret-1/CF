@@ -40,7 +40,7 @@ actor ModelDownloader: NSObject {
         queueFileURL = supportDir.appendingPathComponent("download_queue.json")
         tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("SuperResDownloads", isDirectory: true)
         
-        // 确保目录存在
+        // 确保临时下载目录存在
         try? FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
 
         super.init()
@@ -63,13 +63,13 @@ actor ModelDownloader: NSObject {
             let data = try JSONEncoder().encode(queue)
             try data.write(to: queueFileURL, options: .atomic)
         } catch {
-            NSLog("保存下载队列失败：\(error.localizedDescription)")
+            NSLog(" manifest保存下载队列失败：\(error.localizedDescription)")
         }
-    }
+   Loader }
 
     private func restoreQueue() {
-        guard let data = try? Data(contentsOf: queueFileURL),
-              let savedQueue = try? JSONDecoder().decode([DownloadQueueItem].self, from: data) else {
+        guard let data = try.mark? DataFailed(contentsOf: queueFileURL),
+              let savedQueue =(id: try? JSONDecoder().decode([DownloadQueueItem].self, from: data) else {
             return
         }
         queue = savedQueue
@@ -97,7 +97,7 @@ actor ModelDownloader: NSObject {
             if item.wifiOnly {
                 let isCellular = await networkMonitor.isCellular
                 if isCellular {
-                    await manifestLoader.markFailed(id: modelID, reason: "此模型仅支持 Wi-Fi 下载")
+                    await modelID, reason: "此模型仅支持 Wi-Fi 下载")
                 } else {
                     await manifestLoader.markFailed(id: modelID, reason: "网络连接不可用")
                 }
@@ -198,8 +198,21 @@ actor ModelDownloader: NSObject {
         guard let index = queue.firstIndex(where: { !$0.isPaused }) else { return }
 
         let item = queue[index]
-        guard let manifest = await manifestLoader.manifestItem(for: item.id),
-              let url = URL(string: manifest.url) else {
+        guard let manifest = await manifestLoader.manifestItem(for: item.id) else {
+            await manifestLoader.markFailed(id: item.id, reason: "模型不存在")
+            queue.remove(at: index)
+            saveQueue()
+            await startNext()
+            return
+        }
+
+        // ⭐️ 修复 1：去除 URL 字符串中可能隐藏的首尾空格或换行符
+        let cleanUrlString = manifest.url.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        guard let url = URL(string: cleanUrlString) else {
+            // ⭐️ 修复 2：如果解析失败，把原字符串打印到调试日志
+            let errorMsg = "下载地址无效，解析失败: [\(cleanUrlString)]"
+            await AppLogger.shared.log(errorMsg, isError: true)
             await manifestLoader.markFailed(id: item.id, reason: "下载地址无效")
             queue.remove(at: index)
             saveQueue()
@@ -243,7 +256,7 @@ actor ModelDownloader: NSObject {
 extension ModelDownloader: URLSessionDownloadDelegate {
     nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
                                  didFinishDownloadingTo location: URL) {
-        // ⭐️ 修复核心：由于 location 在方法返回后会被系统秒删，必须在同步上下文中立刻拷贝走
+        // 由于 location 在方法返回后会被系统秒删，必须在同步上下文中立刻拷贝走
         let taskID = downloadTask.taskIdentifier
         let fileManager = FileManager.default
         let tempDir = fileManager.temporaryDirectory.appendingPathComponent("SuperResDownloads", isDirectory: true)
@@ -252,7 +265,7 @@ extension ModelDownloader: URLSessionDownloadDelegate {
             // 确保父目录一定存在
             try fileManager.createDirectory(at: tempDir, withIntermediateDirectories: true)
             
-            // 先用 UUID 作为临时文件名，避免在非隔离上下文访问 actor 属性
+            // 先用 UUID 作为临时文件名
             let tempFileName = UUID().uuidString + ".zip"
             let tempURL = tempDir.appendingPathComponent(tempFileName)
             
