@@ -11,7 +11,7 @@ struct PhotoRestoreView: View {
     @State private var isShowingOriginal = false
     @State private var alertMessage: String?
     
-    // ⭐️ 核心对齐：实例化 PhotoColorRestorer
+    // ⭐️ 核心对齐：实例化 PhotoColorRestorer（因为 init?() 是可选类型）
     private let colorEngine = PhotoColorRestorer()
     
     var body: some View {
@@ -137,11 +137,32 @@ struct PhotoRestoreView: View {
     private func performAutoRestore() {
         guard let original = originalImage else { return }
         isProcessing = true
+        AppLogger.shared.log("[PhotoRestoreView] 开始处理图片，尺寸: \(Int(original.size.width))x\(Int(original.size.height))", isError: false)
         
         DispatchQueue.global(qos: .userInitiated).async {
-            // 调用对齐后的方法
-            let result = colorEngine.autoRestoreColor(image: original)
+            // ✅ 修复：安全解包 colorEngine，防止 init?() 返回 nil
+            guard let engine = self.colorEngine else {
+                DispatchQueue.main.async {
+                    AppLogger.shared.log("[PhotoRestoreView] ❌ PhotoColorRestorer 初始化失败（色彩空间不可用）", isError: true)
+                    self.alertMessage = "色彩引擎初始化失败"
+                    self.isProcessing = false
+                }
+                return
+            }
+            
+            // ✅ 修复：安全解包返回结果
+            guard let result = engine.autoRestoreColor(image: original) else {
+                DispatchQueue.main.async {
+                    AppLogger.shared.log("[PhotoRestoreView] ❌ 色彩还原返回 nil（可能是尺寸太小或计算异常）", isError: true)
+                    self.alertMessage = "色彩还原失败，请尝试更换图片"
+                    self.isProcessing = false
+                }
+                return
+            }
+            
+            // 成功拿到结果，切回主线程更新 UI
             DispatchQueue.main.async {
+                AppLogger.shared.log("[PhotoRestoreView] ✅ 色彩还原成功，准备更新 UI", isError: false)
                 self.restoredImage = result
                 self.isProcessing = false
             }
