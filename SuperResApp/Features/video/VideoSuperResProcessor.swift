@@ -42,6 +42,22 @@ final class VideoSuperResProcessor: @unchecked Sendable {
         }
     }
 
+    // MARK: - Duration Formatting
+    private static func formatDuration(_ d: Duration) -> String {
+        let c = d.components
+        let total = Double(c.seconds) + Double(c.attoseconds) / 1e18
+        if total >= 3600 {
+            return String(format: "%d小时%02d分%05.2f秒",
+                          Int(total) / 3600, (Int(total) % 3600) / 60,
+                          total.truncatingRemainder(dividingBy: 60))
+        }
+        if total >= 60 {
+            return String(format: "%d分%.2f秒",
+                          Int(total) / 60, total.truncatingRemainder(dividingBy: 60))
+        }
+        return String(format: "%.2f秒", total)
+    }
+
     // MARK: - Sendable Containers
     private final class PipelineState: @unchecked Sendable {
         let condition = NSCondition()
@@ -139,6 +155,14 @@ final class VideoSuperResProcessor: @unchecked Sendable {
         scaleFactor: Int,
         progressHandler: @escaping @MainActor @Sendable (Double) -> Void
     ) async throws {
+
+        // ⭐ 新增：记录单调时钟起点，defer 兜底覆盖所有出口（成功 / 取消 / 抛错）
+        let clock = ContinuousClock()
+        let startInstant = clock.now
+        defer {
+            let elapsed = clock.now - startInstant
+            logInfo("==== 任务结束 总用时 \(Self.formatDuration(elapsed)) ====")
+        }
 
         isCancelRequested = false
         logInfo("==== 开始超分任务 ====")
