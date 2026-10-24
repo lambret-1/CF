@@ -18,30 +18,33 @@ jobs:
           pip install --upgrade pip
           pip install torch torchvision coremltools numpy
 
-      - name: 下载官方预训练权重（含自动重试与 CDN 兜底）
+      - name: 克隆官方仓库并拉取 Git LFS 权重
         run: |
-          URL_RAW="https://raw.githubusercontent.com/SamsungLabs/time-aware-awb/main/models/model-awb-pref.pt"
-          URL_CDN="https://cdn.jsdelivr.net/gh/SamsungLabs/time-aware-awb@main/models/model-awb-pref.pt"
+          # 克隆完整仓库
+          git clone https://github.com/SamsungLabs/time-aware-awb.git
+          cd time-aware-awb
+          # 拉取真实的大文件（.pt 权重）
+          git lfs pull
           
-          echo "尝试从官方源下载..."
-          if wget -q --tries=3 --timeout=15 -O model-awb-pref.pt "$URL_RAW" && [ $(stat -c%s model-awb-pref.pt 2>/dev/null || echo 0) -gt 100000 ]; then
-            echo "✅ 官方源下载成功"
-          else
-            echo "⚠️ 官方源失败，切换到 jsDelivr CDN 下载..."
-            rm -f model-awb-pref.pt
-            wget -q --tries=3 --timeout=15 -O model-awb-pref.pt "$URL_CDN"
-          fi
-          
-          # 检查最终是否成功
-          FILE_SIZE=$(stat -c%s model-awb-pref.pt 2>/dev/null || echo 0)
-          if [ "$FILE_SIZE" -lt 100000 ]; then
-            echo "❌ 权重文件下载失败或文件过小 (大小: $FILE_SIZE 字节)"
+          # 检查权重文件是否真实存在且大小正常
+          WEIGHT_PATH="models/model-awb-pref.pt"
+          if [ ! -f "$WEIGHT_PATH" ]; then
+            echo "❌ 权重文件不存在"
             exit 1
           fi
-          ls -lh model-awb-pref.pt
+          
+          FILE_SIZE=$(stat -c%s "$WEIGHT_PATH")
+          echo "权重文件大小: $FILE_SIZE 字节"
+          
+          # 如果文件仍然很小（比如只有几十KB），说明 LFS 拉取失败
+          if [ "$FILE_SIZE" -lt 1000000 ]; then
+            echo "❌ 权重文件过小，可能是 LFS 指针文件而非真实模型"
+            exit 1
+          fi
 
       - name: 执行转换脚本
         run: |
+          # 将官方代码路径和权重路径传递给转换脚本
           python convert_awb.py
 
       - name: 上传 CoreML 模型
@@ -49,4 +52,4 @@ jobs:
         with:
           name: TimeAwareAWB-CoreML
           path: TimeAwareAWB.mlpackage
-          retention-days: 30
+          retention-days: 7
