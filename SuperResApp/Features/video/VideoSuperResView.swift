@@ -10,12 +10,13 @@ struct VideoSuperResView: View {
     // 弹出保存成功提示
     @State private var showSaveSuccessAlert = false
     
-    // ⭐️ 开放多个适合视频处理的模型（已剔除会爆内存的 x4plus 等大模型）
+    // ⭐️ 加回了 x4plus，你可以随时在菜单里挑选了
     private let supportedModels = [
         ("realesrgan-x4v3", "Real-ESRGAN x4v3 (轻量 4x)"),
-        ("piper-sr-2x", "PiperSR 2x (极速 2x)"),
+        ("realesrgan-x4plus", "Real-ESRGAN x4plus (高画质 4x)"), // 👈 加回来了
+        ("realesrgan-ultrasharp", "Real-ESRGAN UltraSharp (锐化 4x)"),
         ("realesrgan-x4", "Real-ESRGAN x4 (通用 4x)"),
-        ("realesrgan-ultrasharp", "Real-ESRGAN UltraSharp (锐化 4x)")
+        ("piper-sr-2x", "PiperSR 2x (极速 2x)")
     ]
     
     var body: some View {
@@ -99,7 +100,7 @@ struct VideoSuperResView: View {
                     .background(Color(uiColor: .secondarySystemBackground))
                     .cornerRadius(10)
                 }
-                .disabled(viewModel.state == .completed) // 已经处理完时不建议切换
+                .disabled(viewModel.state == .completed)
             }
             
             // 4. 底部操作按钮
