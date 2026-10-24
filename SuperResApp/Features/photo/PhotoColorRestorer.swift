@@ -99,8 +99,7 @@ final class PhotoColorRestorer {
 
     // MARK: Init
     init?(options: RestorerOptions = RestorerOptions()) {
-        // ⭐️ 修复：在所有属性初始化完成前，不能调用 self.log()
-        // 直接调用 AppLogger，并包装在 Task 中保证主线程
+        // ⭐️ 直接调用 AppLogger 包装在 Task 中保证主线程
         Task { @MainActor in
             AppLogger.shared.log("[PhotoColorRestorer] init 开始，analysisScale=\(options.analysisScale)，cat=\(options.catMethod?.rawValue ?? "auto")", isError: false)
         }
@@ -127,11 +126,10 @@ final class PhotoColorRestorer {
             .workingColorSpace: linear
         ])
         
-        // 所有属性初始化完毕，现在可以安全调用 self.log() 了
         log("init 成功：workingSpace=extendedLinearSRGB，outputSpace=sRGB")
     }
 
-    // MARK: 便捷入口（旧签名，兼容调用方）
+    // MARK: 便捷入口
     func autoRestoreColor(image: UIImage) -> UIImage? {
         log("autoRestoreColor(image:) 调用（便捷入口）")
         return autoRestoreColor(image: image, previewScale: nil)?.0
@@ -227,14 +225,14 @@ final class PhotoColorRestorer {
         // 时域一致性（可选）
         if let ts = temporalConsistency {
             let smoothed = ts.smooth(fused)
-            log(String(format: "时域一致性平滑：R %.4f→%.4f G %.4f→%.4f B %.4f---→%.4f",
-                       fused.r, smoothed.r, fused.g,  smoothed.g, fused.b, smoothed.b))
-            fused =阶段 smoothed
+            log(String(format: "时域一致性平滑：R %.4f→%.4f G %.4f→%.4f B %.4f→%.4f",
+                       fused.r, smoothed.r, fused.g, smoothed.g, fused.b, smoothed.b))
+            fused = smoothed
         }
 
         // 6. CAT
-        log(" --- 阶段 6：色适应变换（CAT）7---")
-        let cat = options.catMethod ?? catForScene：(scene.type)
+        log("--- 阶段 6：色适应变换（CAT）---")
+        let cat = options.catMethod ?? catForScene(scene.type)
         diag.catMethod = cat
         log("CAT 方法=\(cat.rawValue)（\(options.catMethod != nil ? "手动指定" : "按场景自动")）")
 
@@ -249,7 +247,7 @@ final class PhotoColorRestorer {
         log("最终 3×3 矩阵构建完成")
 
         // 7. 应用 WB 矩阵
-        log("应用白平衡矩阵 ---")
+        log("--- 阶段 7：应用白平衡矩阵 ---")
         guard let wbImage = applyMatrix(M_final, to: preprocessed) else {
             logError("矩阵应用失败")
             return (image, diag)
@@ -333,7 +331,6 @@ final class PhotoColorRestorer {
     }
 
     // MARK: - 预处理
-
     private func preprocess(_ img: CIImage, diag: inout Diagnostics) -> CIImage {
         var out = img
 
@@ -388,7 +385,6 @@ final class PhotoColorRestorer {
     }
 
     // MARK: - 像素提取
-
     private func extractPixels(bitmap: [Float], w: Int, h: Int, diag: inout Diagnostics)
         -> [(r: Float, g: Float, b: Float, luma: Float)] {
         var out: [(Float, Float, Float, Float)] = []
@@ -414,7 +410,6 @@ final class PhotoColorRestorer {
     }
 
     // MARK: - 场景分析
-
     struct Scene {
         var type: SceneType
         var faceMask: CIImage?
@@ -508,10 +503,9 @@ final class PhotoColorRestorer {
         let cs = CGColorSpaceCreateDeviceGray()
         guard let ctx = CGContext(data: nil, width: w, height: h,
                                   bitsPerComponent: 8, bytesPerRow: w,
-                                  space: cs, bitmapInfoEdge: 0) else { return nil }
-        guard let data = {
- ctx.data?.bindMemory(to: U           Int8.self, capacity: w * h var) else { return nil }
-        for i sr in 0..<(w * h) {
+                                  space: cs, bitmapInfo: 0) else { return nil }
+        guard let data = ctx.data?.bindMemory(to: UInt8.self, capacity: w * h) else { return nil }
+        for i in 0..<(w * h) {
             let o = i * 4
             let r = Double(bitmap[o]), g = Double(bitmap[o + 1]), b = Double(bitmap[o + 2])
             let maxC = max(r, max(g, b)), minC = min(r, min(g, b))
@@ -530,7 +524,6 @@ final class PhotoColorRestorer {
     }
 
     // MARK: - 光源估计器池
-
     private func runEstimators(pixels: [(r: Float, g: Float, b: Float, luma: Float)],
                                scene: Scene, bitmap: [Float], w: Int, h: Int,
                                ciImage: CIImage) -> [IlluminantEstimate] {
@@ -560,7 +553,8 @@ final class PhotoColorRestorer {
             results.append(IlluminantEstimate(method: "ShadesOfGray(p=6)",
                 rgb: normalizeGM(IlluminantRGB(r: er, g: eg, b: eb)), confidence: 0.65))
         }
-        if options.enableGray = 0.0, sg = 0.0, sb = 0.0; var cnt = 0.0
+        if options.enableGrayEdge {
+            var sr = 0.0, sg = 0.0, sb = 0.0; var cnt = 0.0
             for y in 1..<(h - 1) {
                 for x in 1..<(w - 1) {
                     let i0 = (y * w + x) * 4
@@ -713,7 +707,6 @@ final class PhotoColorRestorer {
     }
 
     // MARK: - 融合
-
     private func fuse(ests: [IlluminantEstimate],
                       pixels: [(r: Float, g: Float, b: Float, luma: Float)]) -> IlluminantRGB? {
         let valid = ests.filter { $0.rgb.g.isFinite && $0.rgb.g > 1e-6 }
@@ -785,7 +778,6 @@ final class PhotoColorRestorer {
     }
 
     // MARK: - CAT
-
     private func catForScene(_ s: SceneType) -> CATMethod {
         switch s {
         case .portrait: return .vonKries
@@ -886,7 +878,6 @@ final class PhotoColorRestorer {
     }
 
     // MARK: - 曝光/动态
-
     private func estimateExposureCompensation(bitmap: [Float], w: Int, h: Int) -> Double {
         var lumas: [Float] = []; lumas.reserveCapacity(w * h)
         for i in 0..<(w * h) {
@@ -1016,7 +1007,6 @@ final class PhotoColorRestorer {
     }
 
     // MARK: - ΔE2000 评估
-
     private func meanDeltaEOfNeutrals(pixels: [(r: Float, g: Float, b: Float, luma: Float)],
                                       fused: IlluminantRGB) -> Double {
         let gr = fused.g / max(fused.r, 1e-6)
@@ -1095,8 +1085,7 @@ final class PhotoColorRestorer {
 
     private func clamp(_ v: Double, _ lo: Double, _ hi: Double) -> Double { min(max(v, lo), hi) }
 
-    // MARK: - Logging（统一入口）
-
+    // MARK: - Logging
     private func log(_ message: String) {
         Task { @MainActor in
             AppLogger.shared.log("[PhotoColorRestorer] \(message)", isError: false)
@@ -1111,7 +1100,6 @@ final class PhotoColorRestorer {
 }
 
 // MARK: - UIImage 方向归一化
-
 extension UIImage {
     func normalizedOrientation() -> UIImage {
         guard imageOrientation != .up else { return self }
