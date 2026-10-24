@@ -11,7 +11,7 @@ struct PhotoRestoreView: View {
     @State private var isShowingOriginal = false
     @State private var alertMessage: String?
     
-    // ⭐️ 核心对齐：实例化 PhotoColorRestorer（因为 init?() 是可选类型）
+    // ⭐️ 实例化 PhotoColorRestorer（因为 init?() 是可选类型）
     private let colorEngine = PhotoColorRestorer()
     
     var body: some View {
@@ -134,9 +134,13 @@ struct PhotoRestoreView: View {
         }
     }
     
+    // ⭐️ 修复：添加 @MainActor 确保日志和状态更新在主线程环境被调用
+    @MainActor
     private func performAutoRestore() {
         guard let original = originalImage else { return }
         isProcessing = true
+        
+        // 现在这里调用 AppLogger 不会再报错，因为方法被标记为 @MainActor 了
         AppLogger.shared.log("[PhotoRestoreView] 开始处理图片，尺寸: \(Int(original.size.width))x\(Int(original.size.height))", isError: false)
         
         DispatchQueue.global(qos: .userInitiated).async {
