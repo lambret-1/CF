@@ -7,6 +7,7 @@ import UIKit
 
 final class VideoSuperResProcessor: @unchecked Sendable {
 
+    // MARK: - 核心配置
     private let ciContext = CIContext(options: [
         .workingColorSpace: NSNull(),
         .useSoftwareRenderer: false
@@ -21,6 +22,7 @@ final class VideoSuperResProcessor: @unchecked Sendable {
 
     func cancel() { isCancelRequested = true }
 
+    // MARK: - 日志（线程安全）
     private func logInfo(_ msg: String) {
         Task { @MainActor in AppLogger.shared.log("[视频管道] \(msg)", isError: false) }
     }
@@ -31,7 +33,7 @@ final class VideoSuperResProcessor: @unchecked Sendable {
         await MainActor.run { AppLogger.shared.log("[视频管道] \(msg)", isError: false) }
     }
 
-    // MARK: - Sendable 容器
+    // MARK: - Sendable 容器（解决 Swift 6 并发捕获）
     private final class PipelineState: @unchecked Sendable {
         let condition = NSCondition()
         var readFrameIndex = 0
@@ -71,11 +73,15 @@ final class VideoSuperResProcessor: @unchecked Sendable {
              targetWidth: Int, targetHeight: Int,
              preferredTransform: CGAffineTransform, skipInterval: Int,
              totalOutputFrames: Int, modelID: String) {
-            self.reader = reader; self.writer = writer
-            self.videoInput = videoInput; self.audioInput = audioInput
+            self.reader = reader
+            self.writer = writer
+            self.videoInput = videoInput
+            self.audioInput = audioInput
             self.adaptor = adaptor
-            self.videoOutput = videoOutput; self.audioOutput = audioOutput
-            self.targetWidth = targetWidth; self.targetHeight = targetHeight
+            self.videoOutput = videoOutput
+            self.audioOutput = audioOutput
+            self.targetWidth = targetWidth
+            self.targetHeight = targetHeight
             self.preferredTransform = preferredTransform
             self.skipInterval = skipInterval
             self.totalOutputFrames = totalOutputFrames
@@ -149,7 +155,7 @@ final class VideoSuperResProcessor: @unchecked Sendable {
         }
         logInfo("🎬 目标尺寸=\(targetWidth)x\(targetHeight) 抽帧间隔=\(skipInterval)")
 
-        // ---------- Reader ----------
+        // 1. 配置 Reader
         let reader = try AVAssetReader(asset: asset)
         let readerVideoOutput = AVAssetReaderTrackOutput(track: videoTrack, outputSettings: [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
@@ -172,7 +178,7 @@ final class VideoSuperResProcessor: @unchecked Sendable {
             logInfo("🔇 无音频轨道")
         }
 
-        // ---------- Writer ----------
+        // 2. 配置 Writer
         let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mov)
 
         let writerVideoInput = AVAssetWriterInput(mediaType: .video, outputSettings: [
@@ -236,15 +242,15 @@ final class VideoSuperResProcessor: @unchecked Sendable {
             totalOutputFrames: totalOutputFrames,
             modelID: modelID
         )
+        
         let state = PipelineState()
         let processor = self
-        // ⭐️ 从 8 降到 4：1920x3416 BGRA ≈ 26MB/帧，4 帧峰值约 104MB
-        let inFlightLimit = 4
+        let inFlightLimit = 4 // 允许同时在途超分的帧数（背压控制内存）
 
-        // ---------- Producer（并行超分） ----------
+        // 3. Producer（并行读取与提交超分）
         let producerQueue = DispatchQueue(label: "video.producer", qos: .userInitiated)
         producerQueue.async {
-            processor.logInfo("▶️ Producer 启动（并行超分，inFlightLimit=\(inFlightLimit)）")
+            processor.logInfo("▶️ Producer 启动（并行超分，在途上限=\(inFlightLimit)）")
             var framesToSkip = 0
 
             while true {
@@ -253,7 +259,7 @@ final class VideoSuperResProcessor: @unchecked Sendable {
                     break
                 }
 
-                // 背压：在途帧数（read - write）= 正在超分 + 待写入的帧数
+                // 背压：当在途帧数（读取 - 写入）超过限制时，等待 Writer 消费
                 state.condition.lock()
                 while state.readFrameIndex - state.writeFrameIndex >= inFlightLimit
                         && !processor.isCancelRequested {
@@ -272,6 +278,7 @@ final class VideoSuperResProcessor: @unchecked Sendable {
                 }
                 framesToSkip = io.skipInterval - 1
 
+                // 读取下一帧
                 guard let sb = io.videoOutput.copyNextSampleBuffer() else {
                     processor.logInfo("📭 Reader 读取结束 reader.status=\(io.reader.status.rawValue) error=\(String(describing: io.reader.error))")
                     state.condition.lock()
@@ -293,8 +300,7 @@ final class VideoSuperResProcessor: @unchecked Sendable {
                 }
                 state.condition.unlock()
 
-                // 快速预处理（CIImage transform + CGImage）在主线程完成，
-                // 避免 CMSampleBuffer 跨 Task 传递
+                // 预处理 (CIImage 旋转裁切) 并在后台提交超分
                 autoreleasepool {
                     guard let imageBuffer = CMSampleBufferGetImageBuffer(sb) else {
                         processor.logError("[#\(idx)] CMSampleBufferGetImageBuffer 返回 nil")
@@ -307,45 +313,42 @@ final class VideoSuperResProcessor: @unchecked Sendable {
                     if origin.x != 0 || origin.y != 0 {
                         ciImage = ciImage.transformed(by: CGAffineTransform(translationX: -origin.x, y: -origin.y))
                     }
-                    guard let cgImage = processor.ciContext.createCGImage(ciImage, from: ciImage.extent) else {
+                    guard let cgImage = processor.ciContext.createCGImage(ciImage, from: ciImageBuffer.extent) else {
                         processor.logError("[#\(idx)] createCGImage 返回 nil")
                         state.condition.lock(); state.bufferFailedCount += 1; state.condition.unlock()
                         return
                     }
 
-                    // ⭐️ 关键改动：不 sem.wait()，直接异步提交
                     let imageBox = LockedBox<CGImage>(cgImage)
+                    
+                    // ⭐️ 关键：异步提交超分任务，不阻塞 Producer 循环
                     Task.detached(priority: .userInitiated) { [weak state] in
                         guard let state else { return }
+                        
+                        if processor.isCancelRequested { return }
+
+                        // 1. 异步超分
+                        var resImage: CGImage?
+                        do {
+                            resImage = try await SuperResolver.shared.fastUpscale(
+                                image: imageBox.get(), modelID: io.modelID)
+                        } catch {
+                            let desc = error.localizedDescription
+                            Task { @MainActor in
+                                AppLogger.shared.log("[视频管道] ❌ [#\(idx)] 超分失败: \(desc)", isError: true)
+                            }
+                        }
+                        
+                        guard let resImage else {
+                            state.condition.lock()
+                            state.srFailedCount += 1
+                            state.condition.broadcast()
+                            state.condition.unlock()
+                            return
+                        }
+
+                        // 2. 同步转换 Pixel（使用 autoreleasepool 控制内存峰值）
                         autoreleasepool {
-                            // 取消检查
-                            if processor.isCancelRequested {
-                                state.condition.lock()
-                                state.condition.broadcast()
-                                state.condition.unlock()
-                                return
-                            }
-
-                            // 超分
-                            var resImage: CGImage?
-                            do {
-                                resImage = try await SuperResolver.shared.fastUpscale(
-                                    image: imageBox.get(), modelID: io.modelID)
-                            } catch {
-                                let desc = error.localizedDescription
-                                Task { @MainActor in
-                                    AppLogger.shared.log("[视频管道] ❌ [#\(idx)] 超分失败: \(desc)", isError: true)
-                                }
-                            }
-                            guard let resImage else {
-                                state.condition.lock()
-                                state.srFailedCount += 1
-                                state.condition.broadcast()
-                                state.condition.unlock()
-                                return
-                            }
-
-                            // 转换 pixel buffer
                             guard let buffer = processor.makePixelBuffer(
                                 pool: io.adaptor.pixelBufferPool,
                                 image: resImage,
@@ -358,7 +361,7 @@ final class VideoSuperResProcessor: @unchecked Sendable {
                                 return
                             }
 
-                            // 写入完成缓存
+                            // 3. 存入完成队列，通知 Writer
                             state.condition.lock()
                             state.completedBuffers[idx]    = buffer
                             state.completedTimestamps[idx] = ts
@@ -375,19 +378,19 @@ final class VideoSuperResProcessor: @unchecked Sendable {
             processor.logInfo(summary)
         }
 
-        // ---------- Writer（唯一一次 requestMediaDataWhenReady） ----------
+        // 4. Consumer / Writer（唯一一次 requestMediaDataWhenReady）
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
-            let resume = ResumeconditionBox()
+            let resume = ResumeBox()
 
-            let writerQueue = DispatchQueue(label: ".unvideo.writer", qos: .userInitiated)
-           lock io.videoInput.requestMediaDataWhenReady(on: writer()
-Queue) {
-                var last                       LoggedPercent = -100
-                var lastWaitLog       = Date let.distantPast
+            let writerQueue = DispatchQueue(label: "video.writer", qos: .userInitiated)
+            io.videoInput.requestMediaDataWhenReady(on: writerQueue) {
+                var lastLoggedPercent = -100
+                var lastWaitLog       = Date.distantPast
 
                 while io.videoInput.isReadyForMoreMediaData {
                     state.condition.lock()
 
+                    // 取消
                     if processor.isCancelRequested {
                         state.condition.unlock()
                         processor.logInfo("🛑 Writer 检测到取消, writer.status=\(io.writer.status.rawValue)")
@@ -400,14 +403,17 @@ Queue) {
                         return
                     }
 
+                    // 编码器失败
                     if io.writer.status == .failed {
-                        state. err = io.writer.error ?? NSError(domain: "VideoSR", code: 500)
+                        state.condition.unlock()
+                        let err = io.writer.error ?? NSError(domain: "VideoSR", code: 500)
                         processor.logError("writer.status=.failed error=\(String(describing: err))")
                         io.reader.cancelReading()
                         resume.once { cont.resume(throwing: err) }
                         return
                     }
 
+                    // 有就绪的帧，按顺序消费
                     if let buffer = state.completedBuffers.removeValue(forKey: state.writeFrameIndex) {
                         let ts  = state.completedTimestamps.removeValue(forKey: state.writeFrameIndex) ?? .zero
                         let idx = state.writeFrameIndex
@@ -430,6 +436,7 @@ Queue) {
                         let cacheSize = state.completedBuffers.count
                         state.condition.unlock()
 
+                        // 进度回调
                         let progress = min(1.0, Double(done) / Double(io.totalOutputFrames))
                         let pct = Int(progress * 100)
                         if pct / 10 != lastLoggedPercent / 10 {
@@ -439,6 +446,7 @@ Queue) {
                         let p = progress
                         Task { @MainActor in progressHandler(p) }
 
+                    // 全部完成
                     } else if state.isReadingFinished && state.readFrameIndex == state.writeFrameIndex {
                         let finalCount = state.appendedCount
                         state.condition.unlock()
@@ -456,8 +464,8 @@ Queue) {
                         }
                         return
 
+                    // 暂无数据就绪，挂起等待异步超分结果
                     } else {
-                        // 等待异步超分结果；日志节流 5s
                         let now = Date()
                         if now.timeIntervalSince(lastWaitLog) >= 5.0 {
                             lastWaitLog = now
@@ -470,7 +478,7 @@ Queue) {
                 }
             }
 
-            // Audio：独立队列
+            // Audio（独立队列，避免被 Video 阻塞）
             if let audioInput = io.audioInput, let audioOutput = io.audioOutput {
                 let audioQueue = DispatchQueue(label: "audio.writer", qos: .userInitiated)
                 audioInput.requestMediaDataWhenReady(on: audioQueue) {
@@ -493,13 +501,14 @@ Queue) {
             }
         }
 
-        // 用 await 版本打印最终统计，保证日志顺序
+        // 5. 打印最终统计
         state.condition.lock()
         let finalMsg = "✅ 完成: 读取=\(state.readCount) 跳过=\(state.skippedCount) 超分失败=\(state.srFailedCount) buffer失败=\(state.bufferFailedCount) 视频append=\(state.appendedCount) 音频=\(state.audioCount)"
         state.condition.unlock()
         await logInfoAsync(finalMsg)
     }
 
+    // MARK: - 像素缓冲区生成 (同步方法)
     private func makePixelBuffer(pool: CVPixelBufferPool?,
                                  image: CGImage,
                                  width: Int, height: Int) -> CVPixelBuffer? {
@@ -531,6 +540,7 @@ Queue) {
     }
 }
 
+// MARK: - NSLock 便捷扩展
 extension NSLock {
     @discardableResult
     func withLock<T>(_ body: () throws -> T) rethrows -> T {
