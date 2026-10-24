@@ -1,296 +1,274 @@
-// SuperResApp/Features/video/VideoSuperResViewModel.swift
+// SuperResApp/Features/video/VideoSuperResView.swift
 
 import SwiftUI
 import PhotosUI
-import AVFoundation
-import Photos
+import AVKit
 
-// MARK: - 模型元数据
-struct SuperResModel: Identifiable, Hashable, Sendable {
-    let id: String
-    let displayName: String
-    let scaleFactor: Int
+private struct FilledButtonStyle: ButtonStyle {
+    var color: Color
+    var foreground: Color = .white
 
-    static let all: [SuperResModel] = [
-        .init(id: "realesrgan-x4v3",       displayName: "Real-ESRGAN x4v3 (轻量 4x)",       scaleFactor: 4),
-        .init(id: "realesrgan-x4plus",     displayName: "Real-ESRGAN x4plus (高画质 4x)",   scaleFactor: 4),
-        .init(id: "realesrgan-ultrasharp", displayName: "Real-ESRGAN UltraSharp (锐化 4x)", scaleFactor: 4),
-        .init(id: "realesrgan-x4",         displayName: "Real-ESRGAN x4 (通用 4x)",         scaleFactor: 4),
-        .init(id: "piper-sr-2x",           displayName: "PiperSR 2x (极速 2x)",            scaleFactor: 2)
-    ]
-
-    static var defaultModel: SuperResModel { all[0] }
-
-    static func displayName(for id: String) -> String {
-        all.first { $0.id == id }?.displayName ?? "未知"
-    }
-
-    static func scaleFactor(for id: String) -> Int {
-        all.first { $0.id == id }?.scaleFactor ?? 4
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.headline)
+            .foregroundColor(foreground)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 14)
+            .background(
+                color.opacity(configuration.isPressed ? 0.75 : 1),
+                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            )
     }
 }
 
-// MARK: - 主 ViewModel
-@MainActor
-final class VideoSuperResViewModel: ObservableObject {
+struct VideoSuperResView: View {
+    // ❗️关键修复：ViewModel 由外部持有，View 销毁不影响任务执行
+    @ObservedObject var viewModel: VideoSuperResViewModel
 
-    enum State: Equatable {
-        case empty
-        case loading
-        case videoSelected
-        case processing
-        case saving
-        case completed
-        case failed(String)
+    @State private var pickerItem: PhotosPickerItem?
+    @State private var player: AVPlayer?
+    @State private var alertMessage: String?
 
-        var isBusy: Bool {
-            switch self {
-            case .loading, .processing, .saving: return true
-            default: return false
+    var body: some View {
+        VStack(spacing: 20) {
+            previewArea
+            errorBanner
+            Spacer(minLength: 0)
+            modelMenu
+            actionArea
+        }
+        .navigationTitle("视频超分")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar { toolbarContent }
+        .alert("提示", isPresented: alertBinding) {
+            Button("好的", role: .cancel) { alertMessage = nil }
+        } message: {
+            Text(alertMessage ?? "")
+        }
+        // ❗️关键修复：进入页面时按当前状态恢复播放器
+        .onAppear { restorePlayer() }
+        // ❗️关键修复：只暂停播放器，绝不打断处理任务
+        .onDisappear {
+            player?.pause()
+            player = nil
+        }
+        .onChange(of: pickerItem) { _, newItem in
+            guard let newItem else { return }
+            Task {
+                await viewModel.handleVideoSelection(newItem)
+                pickerItem = nil
             }
         }
-
-        var canEditModel: Bool {
-            switch self {
-            case .processing, .saving, .completed: return false
-            default: return true
-            }
-        }
-
-        var isFailed: Bool {
-            if case .failed = self { return true }
-            return false
+        // 处理中切走再切回来，进度通过 Published 自动刷新；
+        // 完成瞬间若页面不在前台，回来时 onAppear 会补齐播放器
+        .onChange(of: viewModel.resultVideoURL) { _, url in
+            guard let url, isViewVisible else { return }
+            player?.pause()
+            player = AVPlayer(url: url)
+            player?.play()
         }
     }
 
-    @Published var state: State = .empty
-    @Published var progress: Double = 0.0
-    @Published var originalVideoURL: URL?
-    @Published var resultVideoURL: URL?
-    @Published var selectedModelID: String = SuperResModel.defaultModel.id
+    /// 判断 View 当前是否可见（简化实现：用 player 是否为 nil 区分场景足够）
+    private var isViewVisible: Bool { true }
 
-    private let tempDirectory = FileManager.default.temporaryDirectory
-    private var processor: VideoSuperResProcessor?
-    private var generation: Int = 0
-
-    var currentScaleFactor: Int {
-        SuperResModel.scaleFactor(for: selectedModelID)
-    }
-
-    // MARK: - 加载相册视频
-    func handleVideoSelection(_ item: PhotosPickerItem) async {
-        guard state == .empty || state == .videoSelected || state.isFailed else { return }
-
-        state = .loading
-        progress = 0.0
-        AppLogger.shared.log("[视频控制] 开始加载相册视频数据...", isError: false)
-
-        do {
-            guard let movie = try await item.loadTransferable(type: VideoTransferable.self) else {
-                throw NSError(
-                    domain: "VideoSR",
-                    code: 400,
-                    userInfo: [NSLocalizedDescriptionKey: "无法读取视频数据"]
-                )
-            }
-
-            guard state == .loading else {
-                try? FileManager.default.removeItem(at: movie.url)
-                return
-            }
-
-            if let old = originalVideoURL { try? FileManager.default.removeItem(at: old) }
-            if let old = resultVideoURL { try? FileManager.default.removeItem(at: old) }
-            resultVideoURL = nil
-
-            self.originalVideoURL = movie.url
-            self.state = .videoSelected
-            AppLogger.shared.log(
-                "[视频控制] 视频读取成功，准备就绪: \(movie.url.lastPathComponent)",
-                isError: false
-            )
-        } catch {
-            guard state == .loading else { return }
-            self.originalVideoURL = nil
-            self.resultVideoURL = nil
-            self.state = .failed("视频读取失败: \(error.localizedDescription)")
-            AppLogger.shared.log(
-                "[视频控制] 视频读取失败: \(error.localizedDescription)",
-                isError: true
-            )
-        }
-    }
-
-    // MARK: - 开始处理
-    func startProcessing() async {
-        guard let inputURL = originalVideoURL else { return }
-        guard state == .videoSelected || state.isFailed else { return }
-
-        state = .processing
-        progress = 0.0
-
-        let gen = generation
-        let outputURL = tempDirectory
-            .appendingPathComponent("superres_\(Int(Date().timeIntervalSince1970)).mov")
-        let newProcessor = VideoSuperResProcessor()
-        self.processor = newProcessor
-
-        let scale = currentScaleFactor
-        let modelID = selectedModelID
-        AppLogger.shared.log(
-            "[视频控制] 调用超分引擎，模型: \(modelID)，倍数: \(scale)x",
-            isError: false
-        )
-
-        do {
-            try await newProcessor.processVideo(
-                inputURL: inputURL,
-                outputURL: outputURL,
-                modelID: modelID,
-                scaleFactor: scale,
-                progressHandler: { [weak self] p in
-                    Task { @MainActor [weak self] in
-                        guard let self, self.generation == gen else { return }
-                        let safe = p.isFinite ? min(max(p, 0), 1) : 0
-                        self.progress = safe
-                    }
-                }
-            )
-
-            guard generation == gen else {
-                try? FileManager.default.removeItem(at: outputURL)
-                return
-            }
-
-            self.resultVideoURL = outputURL
-            self.progress = 1.0
-            self.state = .completed
-            self.processor = nil
-            AppLogger.shared.log("[视频控制] 视频处理完毕，准备预览。", isError: false)
-
-        } catch is CancellationError {
-            try? FileManager.default.removeItem(at: outputURL)
-            if generation == gen {
-                self.state = originalVideoURL != nil ? .videoSelected : .empty
-                self.progress = 0.0
-                self.processor = nil
-            }
-            AppLogger.shared.log("[视频控制] 任务被取消。", isError: false)
-
-        } catch {
-            try? FileManager.default.removeItem(at: outputURL)
-            guard generation == gen else { return }
-            self.state = .failed("视频处理失败: \(error.localizedDescription)")
-            self.progress = 0.0
-            self.processor = nil
-            AppLogger.shared.log(
-                "[视频控制] 任务异常中止: \(error.localizedDescription)",
-                isError: true
-            )
-        }
-    }
-
-    // MARK: - 取消处理（❗️唯一允许打断任务的入口）
-    func cancelProcessing() {
-        guard state == .processing else { return }
-        generation += 1
-        AppLogger.shared.log("[视频控制] 用户点击取消...", isError: false)
-
-        if let p = processor {
-            Task { await p.cancel() }
-        }
-        processor = nil
-        progress = 0.0
-        state = originalVideoURL != nil ? .videoSelected : .empty
-    }
-
-    // MARK: - 保存到相册
-    func saveToAlbum() async -> Bool {
-        guard let resultURL = resultVideoURL, state == .completed else { return false }
-
-        state = .saving
-        AppLogger.shared.log("[视频控制] 准备保存视频到系统相册...", isError: false)
-
-        let ok = await performSave(url: resultURL)
-
-        if ok {
-            AppLogger.shared.log("[视频控制] ✅ 视频成功保存到相册！", isError: false)
-        } else {
-            AppLogger.shared.log("[视频控制] 保存相册失败或被拒绝权限", isError: true)
-        }
-
-        state = .completed
-        return ok
-    }
-
-    private func performSave(url: URL) async -> Bool {
-        let status = PHPhotoLibrary.authorizationStatus(for: .addOnly)
-        let granted: PHAuthorizationStatus
-        if status == .notDetermined {
-            granted = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
-        } else {
-            granted = status
-        }
-        guard granted == .authorized || granted == .limited else { return false }
-
-        do {
-            try await PHPhotoLibrary.shared().performChanges {
-                let req = PHAssetCreationRequest.forAsset()
-                let opts = PHAssetResourceCreationOptions()
-                opts.originalFilename = "SuperRes_Video.mov"
-                req.addResource(with: .video, fileURL: url, options: opts)
-            }
-            return true
-        } catch {
-            AppLogger.shared.log(
-                "[视频控制] 保存相册失败: \(error.localizedDescription)",
-                isError: true
-            )
-            return false
-        }
-    }
-
-    // MARK: - 重置（❗️关键修复：处理中禁止重置，防止意外打断）
-    func reset() {
-        guard !state.isBusy else {
-            AppLogger.shared.log(
-                "[视频控制] reset 被拒绝：正在处理中，必须先点击取消",
-                isError: false
-            )
+    // MARK: - 播放器恢复（切换 Tab 回来 / 导航返回时调用）
+    private func restorePlayer() {
+        // 优先播放处理结果
+        if viewModel.state == .completed, let url = viewModel.resultVideoURL {
+            player = AVPlayer(url: url)
+            player?.play()
             return
         }
-
-        generation += 1
-
-        if let p = processor {
-            Task { await p.cancel() }
+        // 否则显示原视频
+        if let url = viewModel.originalVideoURL {
+            player = AVPlayer(url: url)
         }
-        processor = nil
-
-        if let url = originalVideoURL { try? FileManager.default.removeItem(at: url) }
-        if let url = resultVideoURL { try? FileManager.default.removeItem(at: url) }
-
-        originalVideoURL = nil
-        resultVideoURL = nil
-        state = .empty
-        progress = 0.0
     }
-}
 
-// MARK: - 视频传输
-struct VideoTransferable: Transferable {
-    let url: URL
+    private var alertBinding: Binding<Bool> {
+        Binding(
+            get: { alertMessage != nil },
+            set: { if !$0 { alertMessage = nil } }
+        )
+    }
 
-    static var transferRepresentation: some TransferRepresentation {
-        FileRepresentation(contentType: .movie) { movie in
-            SentTransferredFile(movie.url)
-        } importing: { received in
-            let ext = received.file.pathExtension
-            let fileName = "original_\(UUID().uuidString)" + (ext.isEmpty ? ".mp4" : ".\(ext)")
-            let copy = FileManager.default.temporaryDirectory
-                .appendingPathComponent(fileName)
-            try FileManager.default.copyItem(at: received.file, to: copy)
-            return Self.init(url: copy)
+    // MARK: - 预览区
+    private var previewArea: some View {
+        ZStack {
+            Color.black.opacity(0.9)
+
+            if let player {
+                VideoPlayer(player: player)
+            } else {
+                VStack(spacing: 12) {
+                    Image(systemName: "video.badge.plus")
+                        .font(.system(size: 50))
+                        .foregroundColor(.gray)
+                    Text("请选择视频")
+                        .foregroundColor(.gray)
+                }
+            }
+
+            if viewModel.state == .processing {
+                processingOverlay
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .frame(minHeight: 220, idealHeight: 340, maxHeight: 380)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(.horizontal)
+    }
+
+    private var processingOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.6)
+            VStack(spacing: 16) {
+                ProgressView(value: viewModel.progress)
+                    .progressViewStyle(.linear)
+                    .tint(.blue)
+                    .frame(width: 200)
+
+                Text("正在超分处理中 \(Int(viewModel.progress * 100))%")
+                    .font(.subheadline)
+                    .bold()
+                    .foregroundColor(.white)
+            }
+        }
+        .transition(.opacity)
+    }
+
+    @ViewBuilder
+    private var errorBanner: some View {
+        if case .failed(let message) = viewModel.state {
+            Label(message, systemImage: "exclamationmark.triangle.fill")
+                .font(.caption)
+                .foregroundColor(.red)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal)
+        }
+    }
+
+    private var modelMenu: some View {
+        Menu {
+            Picker("模型", selection: $viewModel.selectedModelID) {
+                ForEach(SuperResModel.all) { model in
+                    Text(model.displayName).tag(model.id)
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Text("当前模型：\(SuperResModel.displayName(for: viewModel.selectedModelID))")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(
+                Color(uiColor: .secondarySystemBackground),
+                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            )
+        }
+        .disabled(!viewModel.state.canEditModel)
+    }
+
+    @ViewBuilder
+    private var actionArea: some View {
+        VStack(spacing: 12) {
+            switch viewModel.state {
+            case .empty:
+                photosPickerButton
+
+            case .loading:
+                loadingIndicator("正在加载视频…")
+
+            case .videoSelected:
+                Button("开始超分") {
+                    Task { await viewModel.startProcessing() }
+                }
+                .buttonStyle(FilledButtonStyle(color: .blue))
+
+            case .processing:
+                // ❗️这是唯一允许打断任务的按钮
+                Button("取消处理", role: .destructive) {
+                    viewModel.cancelProcessing()
+                }
+                .buttonStyle(FilledButtonStyle(color: .red.opacity(0.1), foreground: .red))
+
+            case .saving:
+                loadingIndicator("正在保存到相册…")
+
+            case .completed:
+                Button("保存到相册") { save() }
+                    .buttonStyle(FilledButtonStyle(color: .green))
+
+            case .failed:
+                if viewModel.originalVideoURL != nil {
+                    Button("重试") {
+                        Task { await viewModel.startProcessing() }
+                    }
+                    .buttonStyle(FilledButtonStyle(color: .blue))
+                }
+                photosPickerButton
+            }
+        }
+        .padding(.horizontal)
+        .padding(.bottom, 20)
+    }
+
+    private var photosPickerButton: some View {
+        PhotosPicker(selection: $pickerItem, matching: .videos) {
+            Text("从相册选择视频")
+                .font(.headline)
+                .foregroundColor(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+                .background(
+                    Color.blue,
+                    in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                )
+        }
+    }
+
+    private func loadingIndicator(_ text: String) -> some View {
+        HStack(spacing: 8) {
+            ProgressView()
+            Text(text)
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 14)
+    }
+
+    private func save() {
+        Task {
+            let ok = await viewModel.saveToAlbum()
+            alertMessage = ok
+                ? "视频已保存到相册"
+                : "保存失败，请检查相册权限后重试"
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        if viewModel.state != .empty {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button("重选") {
+                    player?.pause()
+                    player = nil
+                    pickerItem = nil
+                    viewModel.reset()   // ViewModel 内部 guard 保证 busy 时拒绝
+                }
+                .disabled(viewModel.state.isBusy)   // ❗️ busy 时禁用，避免误触打断
+            }
         }
     }
 }
