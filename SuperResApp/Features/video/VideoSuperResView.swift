@@ -10,6 +10,12 @@ struct VideoSuperResView: View {
     // 弹出保存成功提示
     @State private var showSaveSuccessAlert = false
     
+    // ⭐️ 支持的视频超分模型列表（只能放轻量模型，否则跑视频必闪退）
+    private let supportedModels = [
+        ("realesrgan-x4v3", "Real-ESRGAN x4v3 (轻量 4x)")
+        // ("piper-sr-2x", "PiperSR 2x (极速 2x)") // 如果要用，需要去 ViewModel 里把 scaleFactor 改成 2
+    ]
+    
     var body: some View {
         VStack(spacing: 20) {
             
@@ -60,7 +66,41 @@ struct VideoSuperResView: View {
             
             Spacer()
             
-            // 3. 底部操作按钮
+            // ⭐️ 3. 模型切换菜单
+            if viewModel.state != .processing {
+                Menu {
+                    ForEach(supportedModels, id: \.0) { model in
+                        Button {
+                            viewModel.selectedModelID = model.0
+                        } label: {
+                            HStack {
+                                Text(model.1)
+                                if viewModel.selectedModelID == model.0 {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    HStack {
+                        Text("当前模型：\(supportedModels.first(where: { $0.0 == viewModel.selectedModelID })?.1 ?? "未知")")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundColor(.primary)
+                        
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(Color(uiColor: .secondarySystemBackground))
+                    .cornerRadius(10)
+                }
+                .disabled(viewModel.state == .completed) // 已经处理完时不建议切换
+            }
+            
+            // 4. 底部操作按钮
             VStack(spacing: 12) {
                 
                 // 选择视频
@@ -153,11 +193,9 @@ struct VideoSuperResView: View {
         // 监听状态变化，刷新播放器
         .onChange(of: viewModel.state) { _, newState in
             if newState == .videoSelected, let url = viewModel.originalVideoURL {
-                // 选中后播放原视频预览
                 player?.pause()
                 player = AVPlayer(url: url)
             } else if newState == .completed, let url = viewModel.resultVideoURL {
-                // 处理完成后自动播放超分后的视频
                 player?.pause()
                 player = AVPlayer(url: url)
                 player?.play()
