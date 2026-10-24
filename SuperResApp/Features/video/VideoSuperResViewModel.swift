@@ -4,6 +4,7 @@ import SwiftUI
 import PhotosUI
 import AVFoundation
 import Photos
+import UIKit
 
 // MARK: - 模型元数据
 struct SuperResModel: Identifiable, Hashable, Sendable {
@@ -30,12 +31,10 @@ struct SuperResModel: Identifiable, Hashable, Sendable {
     }
 }
 
-// MARK: - 主 ViewModel（❗️单例，使任务脱离 View 生命周期）
+// MARK: - 主 ViewModel
 @MainActor
 final class VideoSuperResViewModel: ObservableObject {
 
-    /// ❗️关键修复：应用级单例。切换 Tab / 导航返回导致 View 销毁重建时，
-    /// 拿到的仍是同一个实例，处理任务不会被 View 生命周期打断。
     static let shared = VideoSuperResViewModel()
 
     enum State: Equatable {
@@ -77,16 +76,58 @@ final class VideoSuperResViewModel: ObservableObject {
     private var processor: VideoSuperResProcessor?
     private var generation: Int = 0
 
+    // ❗️后台任务句柄：beginBackgroundTask 返回值，必须与 endBackgroundTask 一一配对
+    private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
+
     var currentScaleFactor: Int {
         SuperResModel.scaleFactor(for: selectedModelID)
     }
 
-    // 单例不允许外部 init
     private init() {}
+
+    // MARK: - 后台任务管理
+    private func beginBackgroundTaskIfNeeded() {
+        guard backgroundTaskID == .invalid else { return }
+
+        backgroundTaskID = UIApplication.shared.beginBackgroundTask(
+            withName: "VideoSuperResProcessing"
+        ) { [weak self] in
+            // ❗️系统即将收回后台时间：先立即 end（防止被系统 kill），
+            // 再主动取消处理器，保证 UI 状态机与后台真正执行的逻辑保持一致。
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                AppLogger.shared.log(
+                    "[视频控制] ⚠️ 后台执行时间即将耗尽，主动取消以避免被系统强杀",
+                    isError: true
+                )
+                self.endBackgroundTaskIfNeeded()
+                self.cancelProcessing()
+            }
+        }
+
+        if backgroundTaskID == .invalid {
+            AppLogger.shared.log("[视频控制] ⚠️ 申请后台任务失败", isError: true)
+        } else {
+            AppLogger.shared.log(
+                "[视频控制] ✅ 已申请后台任务 ID=\(backgroundTaskID.rawValue)",
+                isError: false
+            )
+        }
+    }
+
+    private func endBackgroundTaskIfNeeded() {
+        guard backgroundTaskID != .invalid else { return }
+        let id = backgroundTaskID
+        backgroundTaskID = .invalid
+        UIApplication.shared.endBackgroundTask(id)
+        AppLogger.shared.log(
+            "[视频控制] 已结束后台任务 ID=\(id.rawValue)",
+            isError: false
+        )
+    }
 
     // MARK: - 加载相册视频
     func handleVideoSelection(_ item: PhotosPickerItem) async {
-        // busy 时（处理中/保存中）拒绝新选择，防止打断任务
         guard !state.isBusy else {
             AppLogger.shared.log("[视频控制] 忽略选视频请求：当前任务进行中", isError: false)
             return
@@ -105,7 +146,6 @@ final class VideoSuperResViewModel: ObservableObject {
                 )
             }
 
-            // 期间状态被覆盖（reset 等）则丢弃本次结果
             guard state == .loading else {
                 try? FileManager.default.removeItem(at: movie.url)
                 return
@@ -141,6 +181,9 @@ final class VideoSuperResViewModel: ObservableObject {
         state = .processing
         progress = 0.0
 
+        // ❗️进入处理前申请后台执行时间（App 在后台时也能继续跑）
+        beginBackgroundTaskIfNeeded()
+
         let gen = generation
         let outputURL = tempDirectory
             .appendingPathComponent("superres_\(Int(Date().timeIntervalSince1970)).mov")
@@ -171,6 +214,7 @@ final class VideoSuperResViewModel: ObservableObject {
 
             guard generation == gen else {
                 try? FileManager.default.removeItem(at: outputURL)
+                endBackgroundTaskIfNeeded()
                 return
             }
 
@@ -178,6 +222,7 @@ final class VideoSuperResViewModel: ObservableObject {
             self.progress = 1.0
             self.state = .completed
             self.processor = nil
+            endBackgroundTaskIfNeeded()
             AppLogger.shared.log("[视频控制] 视频处理完毕，准备预览。", isError: false)
 
         } catch is CancellationError {
@@ -187,14 +232,19 @@ final class VideoSuperResViewModel: ObservableObject {
                 self.progress = 0.0
                 self.processor = nil
             }
+            endBackgroundTaskIfNeeded()
             AppLogger.shared.log("[视频控制] 任务被取消。", isError: false)
 
         } catch {
             try? FileManager.default.removeItem(at: outputURL)
-            guard generation == gen else { return }
+            guard generation == gen else {
+                endBackgroundTaskIfNeeded()
+                return
+            }
             self.state = .failed("视频处理失败: \(error.localizedDescription)")
             self.progress = 0.0
             self.processor = nil
+            endBackgroundTaskIfNeeded()
             AppLogger.shared.log(
                 "[视频控制] 任务异常中止: \(error.localizedDescription)",
                 isError: true
@@ -202,9 +252,13 @@ final class VideoSuperResViewModel: ObservableObject {
         }
     }
 
-    // MARK: - 取消处理（❗️唯一允许打断任务的入口）
+    // MARK: - 取消处理（唯一允许打断任务的入口）
     func cancelProcessing() {
-        guard state == .processing else { return }
+        guard state == .processing else {
+            // 即使状态已不是 processing，也要确保后台句柄被释放（幂等）
+            endBackgroundTaskIfNeeded()
+            return
+        }
         generation += 1
         AppLogger.shared.log("[视频控制] 用户点击取消...", isError: false)
 
@@ -214,6 +268,7 @@ final class VideoSuperResViewModel: ObservableObject {
         processor = nil
         progress = 0.0
         state = originalVideoURL != nil ? .videoSelected : .empty
+        endBackgroundTaskIfNeeded()
     }
 
     // MARK: - 保存到相册
@@ -262,7 +317,7 @@ final class VideoSuperResViewModel: ObservableObject {
         }
     }
 
-    // MARK: - 重置（❗️busy 时拒绝，防止意外打断）
+    // MARK: - 重置
     func reset() {
         guard !state.isBusy else {
             AppLogger.shared.log(
@@ -278,6 +333,7 @@ final class VideoSuperResViewModel: ObservableObject {
             Task { await p.cancel() }
         }
         processor = nil
+        endBackgroundTaskIfNeeded()
 
         if let url = originalVideoURL { try? FileManager.default.removeItem(at: url) }
         if let url = resultVideoURL { try? FileManager.default.removeItem(at: url) }
