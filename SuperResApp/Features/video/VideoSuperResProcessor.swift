@@ -41,7 +41,10 @@ actor VideoSuperResProcessor {
         let naturalSize = try await videoTrack.load(.naturalSize)
         let preferredTransform = try await videoTrack.load(.preferredTransform)
         let duration = try await asset.load(.duration)
-        let nominalFrameRate = try await videoTrack.load(.nominalFrameRate)
+        
+        // ⭐️ 修复点 1：将 Float 类型的 nominalFrameRate 转换为 Double
+        let rawFrameRate = try await videoTrack.load(.nominalFrameRate)
+        let nominalFrameRate = Double(rawFrameRate)
         
         let transformedSize = naturalSize.applying(preferredTransform)
         let pixelWidth = abs(transformedSize.width)
@@ -52,13 +55,12 @@ actor VideoSuperResProcessor {
         targetWidth = targetWidth / 2 * 2
         targetHeight = targetHeight / 2 * 2
         
-        // ⭐️ 核心新增：自适应抽帧计算
-        // 假设我们希望视频最高不超过 30fps（你可以根据情况改成 24 或 60）
+        // ⭐️ 自适应抽帧计算
         let targetMaxFPS: Double = 30.0
         var skipInterval: Int = 1
         
+        // 现在两边都是 Double，可以正常比较和相除了
         if nominalFrameRate > targetMaxFPS {
-            // 算出差值，比如 60fps / 30fps = 2，代表处理 1 帧，跳过 1 帧
             skipInterval = Int(round(nominalFrameRate / targetMaxFPS))
         }
         
@@ -132,9 +134,10 @@ actor VideoSuperResProcessor {
         writer.startSession(atSourceTime: .zero)
         await logInfo("⚙️ 编码器启动成功，开始逐帧超分...")
         
+        // ⭐️ 修复点 2：现在两边都是 Double，可以正常相乘了
         let totalFrames = max(1.0, CMTimeGetSeconds(duration) * nominalFrameRate)
         var currentFrame: Double = 0
-        var framesToSkip = 0 // ⭐️ 抽帧计数器
+        var framesToSkip = 0
         
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             let queue = DispatchQueue(label: "com.superres.video.processing")
@@ -222,7 +225,7 @@ actor VideoSuperResProcessor {
             
             if let audioInput = writerAudioInput, let audioOutput = readerAudioOutput {
                 audioInput.requestMediaDataWhenReady(on: queue) {
-                    while audioInput.isReadyForMoreMediaData {
+                    while audioInput.isMediaDataReady {
                         guard let audioSampleBuffer = audioOutput.copyNextSampleBuffer() else {
                             audioInput.markAsFinished()
                             return
