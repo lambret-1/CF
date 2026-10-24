@@ -3,7 +3,7 @@ import UIKit
 import CoreImage
 import CoreImage.CIFilterBuiltins
 
-final class TrueColorEngine {
+final class PhotoColorRestorer {
     private let ciContext: CIContext
     
     init() {
