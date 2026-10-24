@@ -52,8 +52,8 @@ class IllumEstimator(nn.Module):
 print("正在初始化模型...")
 model = IllumEstimator()
 
-# 尝试加载权重 (如果存在就加载，不存在就使用初始权重以保证编译通过)
-weight_path = "model-awb-pref.pt"
+# 注意：由于 YAML 中克隆了官方仓库，权重路径发生了变化
+weight_path = "time-aware-awb/models/model-awb-pref.pt"
 if os.path.exists(weight_path):
     print(f"✅ 发现权重文件 {weight_path}，正在加载...")
     try:
@@ -63,7 +63,7 @@ if os.path.exists(weight_path):
     except Exception as e:
         print(f"⚠️ 权重加载失败，可能结构不匹配，将使用随机权重。报错信息: {e}")
 else:
-    print("⚠️ 未找到权重文件，将使用随机初始化的权重生成模型（结构正确，可用于打通流水线）。")
+    print("⚠️ 未找到权重文件，将使用随机初始化的权重生成模型。")
 
 model.eval()
 
