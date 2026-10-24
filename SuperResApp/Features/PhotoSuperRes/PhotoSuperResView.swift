@@ -70,7 +70,6 @@ struct PhotoSuperResView: View {
             .task {
                 availableModels = await viewModel.availableModels()
             }
-            // ⭐️ 新增：保存成功的提示弹窗
             .alert("提示", isPresented: .init(
                 get: { viewModel.saveSuccessMessage != nil },
                 set: { if !$0 { viewModel.saveSuccessMessage = nil } }
