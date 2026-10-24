@@ -33,7 +33,6 @@ actor VideoSuperResProcessor {
         let asset = AVAsset(url: inputURL)
         
         guard let videoTrack = try await asset.loadTracks(withMediaType: .video).first else {
-            await logError("找不到视频轨道")
             throw NSError(domain: "VideoSR", code: 404, userInfo: [NSLocalizedDescriptionKey: "找不到视频轨道"])
         }
         let audioTrack = try? await asset.loadTracks(withMediaType: .audio).first
@@ -42,8 +41,7 @@ actor VideoSuperResProcessor {
         let preferredTransform = try await videoTrack.load(.preferredTransform)
         let duration = try await asset.load(.duration)
         
-        let rawFrameRate = try await videoTrack.load(.nominalFrameRate)
-        let nominalFrameRate = Double(rawFrameRate)
+        let nominalFrameRate = Double(try await videoTrack.load(.nominalFrameRate))
         
         let transformedSize = naturalSize.applying(preferredTransform)
         let pixelWidth = abs(transformedSize.width)
@@ -54,23 +52,19 @@ actor VideoSuperResProcessor {
         targetWidth = targetWidth / 2 * 2
         targetHeight = targetHeight / 2 * 2
         
-        // ⭐️ 自适应抽帧计算
         let targetMaxFPS: Double = 30.0
         var skipInterval: Int = 1
-        
         if nominalFrameRate > targetMaxFPS {
             skipInterval = Int(round(nominalFrameRate / targetMaxFPS))
         }
         
-        await logInfo("🎬 开始处理视频：\(Int(pixelWidth))x\(Int(pixelHeight)) -> \(targetWidth)x\(targetHeight)")
+        await logInfo("🎬 开始流水线并发处理：\(Int(pixelWidth))x\(Int(pixelHeight)) -> \(targetWidth)x\(targetHeight)")
         if skipInterval > 1 {
-            await logInfo("⚡️ 抽帧生效：原帧率 \(Int(nominalFrameRate))fps -> 目标 \(Int(targetMaxFPS))fps (每 \(skipInterval) 帧取 1 帧)")
+            await logInfo("⚡️ 抽帧生效：原帧率 \(Int(nominalFrameRate))fps -> 目标 \(Int(targetMaxFPS))fps")
         }
         
         let reader = try AVAssetReader(asset: asset)
-        let videoOutputSettings: [String: Any] = [
-            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
-        ]
+        let videoOutputSettings: [String: Any] = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
         let readerVideoOutput = AVAssetReaderTrackOutput(track: videoTrack, outputSettings: videoOutputSettings)
         readerVideoOutput.alwaysCopiesSampleData = false
         reader.add(readerVideoOutput)
@@ -86,12 +80,9 @@ actor VideoSuperResProcessor {
             readerAudioOutput = AVAssetReaderTrackOutput(track: audioTrack, outputSettings: audioOutputSettings)
             if let audioOutput = readerAudioOutput { reader.add(audioOutput) }
             await logInfo("🔊 已找到音频轨道，准备混流")
-        } else {
-            await logInfo("🔇 原视频无音频轨道")
         }
         
         let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mov)
-        
         let videoCompressionProperties: [String: Any] = [
             AVVideoAverageBitRateKey: Int(targetWidth * targetHeight * 4),
             AVVideoMaxKeyFrameIntervalKey: 30
@@ -118,109 +109,157 @@ actor VideoSuperResProcessor {
             if let audioInput = writerAudioInput { writer.add(audioInput) }
         }
         
-        guard reader.startReading() else {
-            let err = reader.error?.localizedDescription ?? "未知"
-            await logError("Reader 启动失败: \(err)")
-            throw reader.error ?? NSError(domain: "VideoSR", code: 500, userInfo: [NSLocalizedDescriptionKey: "Reader 启动失败: \(err)"])
-        }
-        guard writer.startWriting() else {
-            let err = writer.error?.localizedDescription ?? "未知"
-            await logError("Writer 启动失败: \(err)")
-            throw writer.error ?? NSError(domain: "VideoSR", code: 500, userInfo: [NSLocalizedDescriptionKey: "Writer 启动失败: \(err)"])
-        }
+        guard reader.startReading() else { throw reader.error! }
+        guard writer.startWriting() else { throw writer.error! }
         
         writer.startSession(atSourceTime: .zero)
-        await logInfo("⚙️ 编码器启动成功，开始逐帧超分...")
+        await logInfo("⚙️ 编码器启动成功，进入多线程并发超分模式...")
         
         let totalFrames = max(1.0, CMTimeGetSeconds(duration) * nominalFrameRate)
-        var currentFrame: Double = 0
+        
+        // ⭐️ 并发控制核心变量
+        let condition = NSCondition()
+        var readFrameIndex = 0
+        var writeFrameIndex = 0
         var framesToSkip = 0
         
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            let queue = DispatchQueue(label: "com.superres.video.processing")
-            
-            writerVideoInput.requestMediaDataWhenReady(on: queue) { [weak self] in
-                guard let self = self else { return }
+        // 缓存字典：存放超分完成的帧，以 Index 为 Key
+        var completedFrames: [Int: CMSampleBuffer] = [:]
+        var isReadingFinished = false
+        
+        // 生产者（读取线程）
+        let producerQueue = DispatchQueue(label: "video.producer")
+        writerVideoInput.requestMediaDataWhenReady(on: producerQueue) {
+            while writerVideoInput.isReadyForMoreMediaData {
+                condition.lock()
                 
+                if self.isCancelled {
+                    condition.broadcast()
+                    condition.unlock()
+                    reader.cancelReading()
+                    writer.cancelWriting()
+                    return
+                }
+                
+                // 如果缓存积压太多，暂停读取，防止内存爆炸
+                if readFrameIndex - writeFrameIndex > 10 {
+                    condition.unlock()
+                    Thread.sleep(forTimeInterval: 0.01)
+                    continue
+                }
+                
+                // 抽帧判断
+                if framesToSkip > 0 {
+                    framesToSkip -= 1
+                    readFrameIndex += 1
+                    condition.unlock()
+                    continue
+                }
+                framesToSkip = skipInterval - 1
+                
+                guard let videoSampleBuffer = readerVideoOutput.copyNextSampleBuffer() else {
+                    isReadingFinished = true
+                    condition.broadcast()
+                    condition.unlock()
+                    break
+                }
+                
+                let currentIdx = readFrameIndex
+                readFrameIndex += 1
+                condition.unlock()
+                
+                // 丢给后台超分任务
+                let semaphore = DispatchSemaphore(value: 0)
+                DispatchQueue.global(qos: .userInitiated).async {
+                    autoreleasepool {
+                        guard let imageBuffer = CMSampleBufferGetImageBuffer(videoSampleBuffer) else {
+                            semaphore.signal(); return
+                        }
+                        let timestamp = CMSampleBufferGetPresentationTimeStamp(videoSampleBuffer)
+                        let ciImage = CIImage(cvPixelBuffer: imageBuffer).transformed(by: preferredTransform)
+                        
+                        if let cgImage = self.ciContext.createCGImage(ciImage, from: ciImage.extent) {
+                            var superResCGImage: CGImage?
+                            let dispatchGroup = DispatchGroup()
+                            dispatchGroup.enter()
+                            
+                            Task {
+                                superResCGImage = try? await SuperResolver.shared.fastUpscale(image: cgImage, modelID: modelID)
+                                dispatchGroup.leave()
+                            }
+                            dispatchGroup.wait()
+                            
+                            if let resImage = superResCGImage,
+                               let newBuffer = self.pixelBuffer(from: resImage, width: targetWidth, height: targetHeight),
+                               let newSampleBuffer = self.createSampleBuffer(from: newBuffer, timestamp: timestamp) {
+                                
+                                condition.lock()
+                                completedFrames[currentIdx] = newSampleBuffer
+                                condition.broadcast() // 唤醒消费者
+                                condition.unlock()
+                            }
+                        }
+                        semaphore.signal()
+                    }
+                }
+            }
+        }
+        
+        // 消费者（写入线程）
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            let consumerQueue = DispatchQueue(label: "video.consumer")
+            writerVideoInput.requestMediaDataWhenReady(on: consumerQueue) {
                 while writerVideoInput.isReadyForMoreMediaData {
+                    condition.lock()
+                    
                     if self.isCancelled {
-                        reader.cancelReading()
-                        writer.cancelWriting()
-                        Task { await self.logWarning("⏹ 用户取消了视频处理") }
+                        condition.unlock()
                         continuation.resume(throwing: NSError(domain: "VideoSR", code: 499, userInfo: [NSLocalizedDescriptionKey: "用户已取消"]))
                         return
                     }
                     
-                    guard let videoSampleBuffer = readerVideoOutput.copyNextSampleBuffer() else {
-                        writerVideoInput.markAsFinished()
-                        writerAudioInput?.markAsFinished()
-                        
-                        writer.finishWriting {
-                            if writer.status == .completed {
-                                Task { await self.logInfo("✅ 视频超分处理完成！") }
-                                continuation.resume()
-                            } else {
-                                let err = writer.error?.localizedDescription ?? "未知"
-                                Task { await self.logError("❌ 视频合成失败: \(err)") }
-                                continuation.resume(throwing: NSError(domain: "VideoSR", code: 500, userInfo: [NSLocalizedDescriptionKey: "视频合成失败: \(err)"]))
-                            }
-                        }
-                        return
-                    }
-                    
-                    // ⭐️ 核心抽帧逻辑
-                    if framesToSkip > 0 {
-                        framesToSkip -= 1
-                        currentFrame += 1
-                        let progress = min(1.0, currentFrame / totalFrames)
-                        DispatchQueue.main.async { self.progressHandler?(progress) }
-                        continue
-                    }
-                    framesToSkip = skipInterval - 1 
-                    
-                    autoreleasepool {
-                        guard let imageBuffer = CMSampleBufferGetImageBuffer(videoSampleBuffer) else { return }
-                        let timestamp = CMSampleBufferGetPresentationTimeStamp(videoSampleBuffer)
-                        
-                        let ciImage = CIImage(cvPixelBuffer: imageBuffer).transformed(by: preferredTransform)
-                        guard let cgImage = self.ciContext.createCGImage(ciImage, from: ciImage.extent) else { return }
-                        
-                        let semaphore = DispatchSemaphore(value: 0)
-                        var superResCGImage: CGImage?
-                        
-                        Task {
-                            do {
-                                superResCGImage = try await SuperResolver.shared.fastUpscale(
-                                    image: cgImage,
-                                    modelID: modelID
-                                )
-                            } catch {
-                                let frameIndex = Int(currentFrame)
-                                Task { await self.logError("⚠️ 第 \(frameIndex) 帧超分失败: \(error.localizedDescription)") }
-                            }
-                            semaphore.signal()
-                        }
-                        
-                        semaphore.wait()
-                        
-                        if let superResCGImage = superResCGImage {
-                            if let newBuffer = self.pixelBuffer(from: superResCGImage, width: targetWidth, height: targetHeight) {
-                                if let newSampleBuffer = self.createSampleBuffer(from: newBuffer, timestamp: timestamp) {
-                                    writerVideoInput.append(newSampleBuffer)
+                    // 如果当前需要的帧还没算完，等待
+                    if completedFrames[writeFrameIndex] == nil {
+                        if isReadingFinished && readFrameIndex == writeFrameIndex {
+                            // 所有帧处理完毕
+                            condition.unlock()
+                            writerVideoInput.markAsFinished()
+                            writerAudioInput?.markAsFinished()
+                            writer.finishWriting {
+                                if writer.status == .completed {
+                                    continuation.resume()
+                                } else {
+                                    continuation.resume(throwing: writer.error ?? NSError(domain: "VideoSR", code: 500, userInfo: nil))
                                 }
                             }
+                            return
                         }
                         
-                        currentFrame += 1
-                        let progress = min(1.0, currentFrame / totalFrames)
+                        // 没算完就挂起等待
+                        condition.wait()
+                        condition.unlock()
+                        continue
+                    }
+                    
+                    // 顺序写入
+                    if let buffer = completedFrames.removeValue(forKey: writeFrameIndex) {
+                        writeFrameIndex += 1
+                        
+                        // 更新进度
+                        let progress = min(1.0, Double(writeFrameIndex) / totalFrames)
                         DispatchQueue.main.async { self.progressHandler?(progress) }
+                        
+                        condition.unlock()
+                        writerVideoInput.append(buffer)
+                    } else {
+                        condition.unlock()
                     }
                 }
             }
             
+            // 音频写入保持独立
             if let audioInput = writerAudioInput, let audioOutput = readerAudioOutput {
-                audioInput.requestMediaDataWhenReady(on: queue) {
-                    // ⭐️ 修复点：把 isMediaDataReady 改为正确的 isReadyForMoreMediaData
+                audioInput.requestMediaDataWhenReady(on: consumerQueue) {
                     while audioInput.isReadyForMoreMediaData {
                         guard let audioSampleBuffer = audioOutput.copyNextSampleBuffer() else {
                             audioInput.markAsFinished()
@@ -231,6 +270,7 @@ actor VideoSuperResProcessor {
                 }
             }
         }
+        await logInfo("✅ 并发超分处理完成！")
     }
     
     // MARK: - 日志辅助
@@ -239,14 +279,10 @@ actor VideoSuperResProcessor {
     }
     
     private func logError(_ msg: String) async {
-        await MainActor.run { AppLogger.shared.log("[视频管道] \(msg)", isError: true) }
+        await MainActor.run { AppLogger.shared.log("[视频管道] \(msg)",还是 isError: true) }
     }
     
-    private func logWarning(_ msg: String) async {
-        await MainActor.run { AppLogger.shared.log("[视频管道] \(msg)", isError: false) }
-    }
-    
-    // MARK: - 转换工具
+    // MARK感觉: - 转换工具
     private func pixelBuffer(from image: CGImage, width: Int, height: Int) -> CVPixelBuffer? {
         let attrs: [CFString: Any] = [
             kCVPixelBufferCGImageCompatibilityKey: true,
