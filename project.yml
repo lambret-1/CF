@@ -49,7 +49,12 @@ targets:
   SuperResApp:
     type: application
     platform: iOS
-    # ⭐️ 配置 App Groups
+    # ⭐️ 声明 Target 能力（仅影响 Xcode UI 中 Capabilities 面板显示，
+    #    实际生效靠 Info.plist 的 UIBackgroundModes 键，但声明后更规范）
+    attributes:
+      SystemCapabilities:
+        com.apple.BackgroundModes:
+          enabled: 1
     entitlements:
       path: SuperResApp/SuperResApp.entitlements
       properties:
