@@ -518,8 +518,7 @@ final class VideoSuperResProcessor: @unchecked Sendable {
         await logInfoAsync(finalMsg)
     }
 
-   // MARK: - 像素缓冲区生成 (GPU 加速版)
-    private func makePixelBuffer(pool: CVPixelBufferPool?, image: CGImage, width: Int, height: Int) -> CVPixelBuffer? {
+      private func makePixelBuffer(pool: CVPixelBufferPool?, image: CGImage, width: Int, height: Int) -> CVPixelBuffer? {
         var pb: CVPixelBuffer?
         if let pool = pool {
             CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &pb)
@@ -529,7 +528,7 @@ final class VideoSuperResProcessor: @unchecked Sendable {
         
         guard let buffer = pb else { return nil }
 
-        // ⭐️ 使用 CIContext 的 GPU 渲染，替代 CPU 密集的 CGContext.draw
+        // ⭐️ 优化点：使用 CIContext 的 GPU 渲染，替代 CPU 密集的 CGContext.draw
         let ciImage = CIImage(cgImage: image)
         // 确保渲染的比例和尺寸完全匹配
         let scaleX = CGFloat(width) / ciImage.extent.width
@@ -540,4 +539,5 @@ final class VideoSuperResProcessor: @unchecked Sendable {
         ciContext.render(scaledImage, to: buffer)
         
         return buffer
-    
+    }
+    }
