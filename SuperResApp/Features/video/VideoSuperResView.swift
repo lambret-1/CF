@@ -4,7 +4,7 @@ import SwiftUI
 import PhotosUI
 import AVKit
 
-// MARK: - 通用按钮样式（修复 #18）
+// MARK: - 通用按钮样式
 private struct FilledButtonStyle: ButtonStyle {
     var color: Color
     var foreground: Color = .white
@@ -23,23 +23,21 @@ private struct FilledButtonStyle: ButtonStyle {
 }
 
 struct VideoSuperResView: View {
-    @StateObject private var viewModel = VideoSuperResViewModel()
+
+    // ❗️关键修复：使用单例 + @ObservedObject。
+    // View 销毁重建时拿到的仍是同一个 ViewModel，处理任务永不被打断。
+    @ObservedObject private var viewModel = VideoSuperResViewModel.shared
+
     @State private var pickerItem: PhotosPickerItem?
     @State private var player: AVPlayer?
-
-    // 修复 #1：alert 由消息驱动，失败 / 成功都能提示
     @State private var alertMessage: String?
 
     var body: some View {
         VStack(spacing: 20) {
             previewArea
-
             errorBanner
-
             Spacer(minLength: 0)
-
             modelMenu
-
             actionArea
         }
         .navigationTitle("视频超分")
@@ -50,7 +48,14 @@ struct VideoSuperResView: View {
         } message: {
             Text(alertMessage ?? "")
         }
-        // 修复 #2：处理完立刻清空，允许重选同一视频
+        // 进入页面：根据 ViewModel 当前状态恢复播放器（切 Tab 回来 / 返回时会触发）
+        .onAppear { restorePlayer() }
+        // ❗️关键修复：离开页面只暂停播放器，绝不动 ViewModel 的处理任务
+        .onDisappear {
+            player?.pause()
+            player = nil
+        }
+        // 选视频后清空 pickerItem，允许重复选择同一视频
         .onChange(of: pickerItem) { _, newItem in
             guard let newItem else { return }
             Task {
@@ -58,26 +63,36 @@ struct VideoSuperResView: View {
                 pickerItem = nil
             }
         }
-        // 修复 #3：由 URL 驱动播放器，避免与 state 更新时序不同步
-        .onChange(of: viewModel.originalVideoURL) { _, url in
-            player?.pause()
-            player = url.map { AVPlayer(url: $0) }
-        }
+        // 处理完成时（View 在前台）立即切换播放器
         .onChange(of: viewModel.resultVideoURL) { _, url in
             guard let url else { return }
             player?.pause()
             player = AVPlayer(url: url)
             player?.play()
         }
-        // 修复 #5：离开页面释放播放器并取消处理
-        .onDisappear {
+        // 换原视频时刷新播放器
+        .onChange(of: viewModel.originalVideoURL) { _, url in
+            guard viewModel.state != .completed else { return }
             player?.pause()
-            player = nil
-            viewModel.cancelProcessing()
+            player = url.map { AVPlayer(url: $0) }
         }
     }
 
-    // MARK: - Alert 绑定（修复 #1）
+    // MARK: - 恢复播放器
+    private func restorePlayer() {
+        // 优先展示处理结果
+        if viewModel.state == .completed, let url = viewModel.resultVideoURL {
+            player = AVPlayer(url: url)
+            player?.play()
+            return
+        }
+        // 其次展示原视频
+        if let url = viewModel.originalVideoURL {
+            player = AVPlayer(url: url)
+        }
+    }
+
+    // MARK: - Alert 绑定
     private var alertBinding: Binding<Bool> {
         Binding(
             get: { alertMessage != nil },
@@ -85,7 +100,7 @@ struct VideoSuperResView: View {
         )
     }
 
-    // MARK: - 预览区（修复 #12 / #14）
+    // MARK: - 预览区
     private var previewArea: some View {
         ZStack {
             Color.black.opacity(0.9)
@@ -130,7 +145,7 @@ struct VideoSuperResView: View {
         .transition(.opacity)
     }
 
-    // MARK: - 错误条（修复 #8）
+    // MARK: - 错误条
     @ViewBuilder
     private var errorBanner: some View {
         if case .failed(let message) = viewModel.state {
@@ -142,7 +157,7 @@ struct VideoSuperResView: View {
         }
     }
 
-    // MARK: - 模型菜单（修复 #11 / #13 / #15 / #16）
+    // MARK: - 模型菜单
     private var modelMenu: some View {
         Menu {
             Picker("模型", selection: $viewModel.selectedModelID) {
@@ -173,7 +188,7 @@ struct VideoSuperResView: View {
         .disabled(!viewModel.state.canEditModel)
     }
 
-    // MARK: - 操作区（修复 #8 / #9）
+    // MARK: - 操作区
     @ViewBuilder
     private var actionArea: some View {
         VStack(spacing: 12) {
@@ -191,6 +206,7 @@ struct VideoSuperResView: View {
                 .buttonStyle(FilledButtonStyle(color: .blue))
 
             case .processing:
+                // ❗️这是唯一允许打断任务的按钮
                 Button("取消处理", role: .destructive) {
                     viewModel.cancelProcessing()
                 }
@@ -242,7 +258,6 @@ struct VideoSuperResView: View {
         .padding(.vertical, 14)
     }
 
-    // MARK: - 保存（修复 #1 / #4）
     private func save() {
         Task {
             let ok = await viewModel.saveToAlbum()
@@ -252,7 +267,7 @@ struct VideoSuperResView: View {
         }
     }
 
-    // MARK: - 工具栏（修复 #6）
+    // MARK: - 工具栏
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
         if viewModel.state != .empty {
@@ -261,9 +276,9 @@ struct VideoSuperResView: View {
                     player?.pause()
                     player = nil
                     pickerItem = nil
-                    viewModel.reset()
+                    viewModel.reset()   // busy 时内部 guard 直接拒绝
                 }
-                .disabled(viewModel.state.isBusy)   // 处理中/加载中/保存中禁用
+                .disabled(viewModel.state.isBusy)
             }
         }
     }
