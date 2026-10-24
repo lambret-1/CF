@@ -37,7 +37,14 @@ struct VideoSuperResView: View {
             previewArea
             errorBanner
             Spacer(minLength: 0)
-            modelMenu
+            
+            // ⭐️ 将模型选择和分辨率选择统一放入一个 VStack 中
+            VStack(spacing: 10) {
+                modelMenu
+                downscaleMenu
+            }
+            .padding(.horizontal)
+            
             actionArea
         }
         .navigationTitle("视频超分")
@@ -167,6 +174,9 @@ struct VideoSuperResView: View {
             }
         } label: {
             HStack(spacing: 6) {
+                Image(systemName: "cpu")
+                    .foregroundColor(.blue)
+                
                 Text("当前模型：\(SuperResModel.displayName(for: viewModel.selectedModelID))")
                     .font(.subheadline)
                     .fontWeight(.medium)
@@ -174,12 +184,50 @@ struct VideoSuperResView: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
 
+                Spacer()
+
                 Image(systemName: "chevron.up.chevron.down")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 10)
+            .padding(.vertical, 12)
+            .background(
+                Color(uiColor: .secondarySystemBackground),
+                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            )
+        }
+        .disabled(!viewModel.state.canEditModel)
+    }
+
+    // MARK: - ⭐️ 新增：降采样分辨率菜单
+    private var downscaleMenu: some View {
+        Menu {
+            Picker("降采样分辨率", selection: $viewModel.selectedDownscaleOption) {
+                ForEach(DownscaleOption.allCases) { option in
+                    Text(option.rawValue).tag(option)
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.down.right.and.arrow.up.left")
+                    .foregroundColor(.orange)
+                
+                Text("输入分辨率：\(viewModel.selectedDownscaleOption.rawValue)")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+
+                Spacer()
+
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
             .background(
                 Color(uiColor: .secondarySystemBackground),
                 in: RoundedRectangle(cornerRadius: 10, style: .continuous)
