@@ -1,4 +1,3 @@
-
 import Foundation
 import UIKit
 import CoreImage
@@ -69,7 +68,7 @@ struct RestorerOptions {
     var analysisScale: CGFloat = 0.05
 }
 
-// MARK: - 外部依赖协
+// MARK: - 外部依赖协议
 
 protocol CameraColorMatrixProvider { func matrix(for model: String?) -> simd_double3x3? }
 protocol LensProfileProvider {
@@ -127,21 +126,42 @@ final class PhotoColorRestorer {
 
     // MARK: 主入口
     func autoRestoreColor(image: UIImage, previewScale: CGFloat? = nil) -> (UIImage?, Diagnostics)? {
-// ✅ 修复：使用 guard let 解包，并在失败时记录日志
-guard let restorer = PhotoColorRestorer() else {
-    AppLogger.shared.log("[PhotoRestoreView] ❌ PhotoColorRestorer 初始化失败（色彩空间不可用）", isError: true)
-    return
-}
+        log("========== 开始真实色彩还原 ==========")
+        log("原图：size=\(Int(image.size.width))x\(Int(image.size.height))，scale=\(image.scale)，orientation=\(image.imageOrientation.rawValue)")
 
-// 现在 restorer 是安全的
-guard let result = restorer.autoRestoreColor(image: image) else {
-    AppLogger.shared.log("[PhotoRestoreView] ❌ 色彩还原返回 nil，保留原图", isError: true)
-    return
-}
+        var diag = Diagnostics()
 
-// 成功拿到 result（UIImage）
-AppLogger.shared.log("[PhotoRestoreView] ✅ 色彩还原成功，准备更新 UI")
-// 使用 result 更新你的 UI..
+        // 0. 输入方向归一化
+        let normalized = image.normalizedOrientation()
+        guard let ciImage = CIImage(image: normalized) else {
+            logError("CIImage 转换失败，返回原图")
+            return (image, diag)
+        }
+        log("CIImage extent=\(ciImage.extent)")
+
+        // 1. 预处理
+        log("--- 阶段 1：预处理（CCM/暗角/色差）---")
+        let preprocessed = preprocess(ciImage, diag: &diag)
+
+        // 2. 下采样
+        let scale = previewScale ?? options.analysisScale
+        log("--- 阶段 2：下采样 scale=\(scale) ---")
+        guard let small = downsample(preprocessed, scale: scale) else {
+            logError("下采样失败")
+            return (image, diag)
+        }
+        let extent = small.extent.integral
+        let w = Int(extent.width), h = Int(extent.height)
+        guard w > 0, h > 0 else {
+            logError("下采样尺寸无效 \(w)x\(h)")
+            return (image, diag)
+        }
+        log("分析采样尺寸=\(w)x\(h)（线性空间）")
+
+        var bitmap = [Float](repeating: 0, count: w * h * 4)
+        ciContext.render(small, toBitmap: &bitmap,
+                         rowBytes: w * 4 * MemoryLayout<Float>.size,
+                         bounds: extent, format: .RGBAf, colorSpace: nil)
         log("render 到 bitmap 完成，共 \(w*h) 像素")
 
         // 3. 场景分析
@@ -584,7 +604,6 @@ AppLogger.shared.log("[PhotoRestoreView] ✅ 色彩还原成功，准备更新 U
                         }}
                         let n = Double((2 * win + 1) * (2 * win + 1))
                         let o = (y * w + x) * 4
-                        // [修复] 强制使用 Foundation.log 以免和自定义的日志方法冲突
                         sr += Foundation.log(max(Double(bitmap[o]), 1e-4) + 1e-4) - Foundation.log(lr / n + 1e-4)
                         sg += Foundation.log(max(Double(bitmap[o + 1]), 1e-4) + 1e-4) - Foundation.log(lg / n + 1e-4)
                         sb += Foundation.log(max(Double(bitmap[o + 2]), 1e-4) + 1e-4) - Foundation.log(lb / n + 1e-4)
@@ -1066,14 +1085,12 @@ AppLogger.shared.log("[PhotoRestoreView] ✅ 色彩还原成功，准备更新 U
     // MARK: - Logging（统一入口）
 
     private func log(_ message: String) {
-        // [修复] 包裹在 Task { @MainActor } 中，解决跨线程调用报错
         Task { @MainActor in
             AppLogger.shared.log("[PhotoColorRestorer] \(message)", isError: false)
         }
     }
 
     private func logError(_ message: String) {
-        // [修复] 包裹在 Task { @MainActor } 中，解决跨线程调用报错
         Task { @MainActor in
             AppLogger.shared.log("[PhotoColorRestorer] ❌ \(message)", isError: true)
         }
