@@ -60,12 +60,14 @@ struct RestorerOptions {
     var enableMemoryColor = false
     var enableHueTwistCorrection = false
     var enableSaturationHighlightCompress = false
-    var enablePerChannelCurve = false
-    var enableNoiseAwareWeighting = true
-    var enableVignettingCorrection = false
-    var enableChromaticAberration = false
-    var enableIterativeRefinement = true
-    var maxIterations = 3
+    var enablePerChannelCuragve = false
+    var enableNoiseAwareWeight)
+ing = true
+    var enableVignettingCor       rection = false
+    var enableCh }
+romaticAberration = false
+    var enableIterative       Refinement = true
+    var maxIterations = log 3
     var analysisScale: CGFloat = 0.05
 }
 
@@ -164,9 +166,7 @@ final class PhotoColorRestorer {
         let w = Int(extent.width), h = Int(extent.height)
         guard w > 0, h > 0 else {
             logError("下采样尺寸无效 \(w)x\(h)")
-            return (image, diag)
-        }
-        log("分析采样尺寸=\(w)x\(h)（线性空间）")
+            return (image, di("分析采样尺寸=\(w)x\(h)（线性空间）")
 
         // 修复 8：clamp 再 crop，避免 bitmap 边缘未覆盖导致 alpha 跳过
         let renderRect = small.extent.integral
@@ -368,8 +368,8 @@ final class PhotoColorRestorer {
 
         return (out, diag)
     }
-}
-// MARK: - 预处理
+    
+    // MARK: - 预处理
     private func preprocess(_ img: CIImage, diag: inout Diagnostics) -> CIImage {
         var out = img
 
@@ -568,7 +568,6 @@ final class PhotoColorRestorer {
         _ pixels: [(r: Float, g: Float, b: Float, luma: Float)],
         scene: Scene
     ) -> [(r: Float, g: Float, b: Float, luma: Float)] {
-        // 无任何语义 mask 时不做排除
         guard scene.skyMask != nil || scene.vegMask != nil || scene.faceMask != nil else {
             return pixels
         }
@@ -578,19 +577,15 @@ final class PhotoColorRestorer {
             let r = Double(p.0), g = Double(p.1), b = Double(p.2)
             let maxC = max(r, max(g, b)), minC = min(r, min(g, b))
             let sat = maxC > 1e-6 ? (maxC - minC) / maxC : 0
-            // 中性像素一律保留
             guard sat > 0.2 else { return true }
 
             switch scene.type {
             case .landscape:
-                // 高饱和天空 / 植被是语义色，会污染 GrayWorld 与 ShadesOfGray
-                if b > r && b > g { return false }   // 蓝天空
-                if g > r && g > b { return false }   // 绿植被
+                if b > r && b > g { return false }
+                if g > r && g > b { return false }
             case .portrait:
-                // 高饱和肤色会污染中性估计
                 if r > g && g > b && (r - b) > 0.15 { return false }
             case .document:
-                // 文档场景优先保留近中性像素
                 if sat > 0.35 { return false }
             default:
                 break
@@ -598,7 +593,6 @@ final class PhotoColorRestorer {
             return true
         }
 
-        // 排除过猛时回退一半，保证估计器有足够样本
         if filtered.count < max(200, before / 4) {
             log("场景排除过猛（\(before)→\(filtered.count)），回退到全部像素")
             return pixels
@@ -616,7 +610,6 @@ final class PhotoColorRestorer {
             return results
         }
 
-        // 修复 4：WhitePatch 改为亮度 top 5% 的中位数，避免单像素噪声/高光污染
         if options.enableWhitePatch {
             let sorted = pixels.sorted { $0.luma > $1.luma }
             let topN = max(1, Int(Double(sorted.count) * 0.05))
@@ -786,7 +779,6 @@ final class PhotoColorRestorer {
             results.append(e)
         }
 
-        // 场景先验调权
         for i in results.indices {
             switch scene.type {
             case .portrait:
@@ -804,7 +796,6 @@ final class PhotoColorRestorer {
             case .generic:
                 break
             }
-            // 修复 4：confidence 裁剪到 [0,1]
             results[i].confidence = clamp(results[i].confidence, 0, 1)
         }
 
@@ -817,6 +808,7 @@ final class PhotoColorRestorer {
                        e.method, e.rgb.r, e.rgb.g, e.rgb.b, e.confidence))
         }
     }
+    
     // MARK: - 修复 4：融合改为对数色比加权中位数 + MAD 离群剔除
     private func fuse(ests: [IlluminantEstimate],
                       pixels: [(r: Float, g: Float, b: Float, luma: Float)]) -> IlluminantRGB? {
@@ -830,7 +822,6 @@ final class PhotoColorRestorer {
         }
         log("融合：\(valid.count)/\(ests.count) 个有效估计")
 
-        // 对数色比：u = log(R/G), v = log(B/G)，避免 RGB 线性平均把冲突估计抵消成中性
         func toLog(_ e: IlluminantEstimate) -> (u: Double, v: Double) {
             let g = max(e.rgb.g, 1e-6)
             return (Foundation.log(max(e.rgb.r, 1e-6) / g),
@@ -854,7 +845,6 @@ final class PhotoColorRestorer {
         let mu = weightedMedian(logPts.map { $0.u }, weights)
         let mv = weightedMedian(logPts.map { $0.v }, weights)
 
-        // MAD 离群剔除
         let du = logPts.map { abs($0.u - mu) }
         let dv = logPts.map { abs($0.v - mv) }
         let madU = weightedMedian(du, weights)
@@ -869,7 +859,6 @@ final class PhotoColorRestorer {
         let useSet = filtered.isEmpty ? valid : filtered
         log("融合：MAD 剔除 \(valid.count - useSet.count) 个（阈值 u=\(String(format: "%.4f", thresholdU)) v=\(String(format: "%.4f", thresholdV))）")
 
-        // 在 log 空间按置信度加权回算 RGB
         let wSum = useSet.reduce(0.0) { $0 + $1.confidence }
         var r = 0.0, g = 0.0, b = 0.0
         for e in useSet {
@@ -964,14 +953,12 @@ final class PhotoColorRestorer {
         }
     }
 
-    // MARK: - 修复 1：D65 目标白点不再二次乘 sRGB→XYZ
     private func computeCATGains(fused: IlluminantRGB, method: CATMethod) -> (Double, Double, Double)? {
         let M_sRGB2XYZ = simd_double3x3(columns: (
             SIMD3(0.4124564, 0.2126729, 0.0193339),
             SIMD3(0.3575761, 0.7151522, 0.1191920),
             SIMD3(0.1804375, 0.0721750, 0.9503041)))
 
-        // 源白点：估计光源，归一化到 Y=1
         let srcXYZ = M_sRGB2XYZ * SIMD3(fused.r, fused.g, fused.b)
         guard srcXYZ.y.isFinite, srcXYZ.y > 1e-6 else {
             logError("CAT：srcXYZ.Y=\(srcXYZ.y) 异常")
@@ -979,7 +966,6 @@ final class PhotoColorRestorer {
         }
         let srcXYZN = srcXYZ / srcXYZ.y
 
-        // 目标白点：D65，本身已是 XYZ，不要再乘 M_sRGB2XYZ
         let dstXYZ = SIMD3(0.95047, 1.0, 1.08883)
 
         let (toLMS, _) = catMatrices(method)
@@ -1012,11 +998,9 @@ final class PhotoColorRestorer {
         return M_XYZ2sRGB * fromLMS * gain * toLMS * M_sRGB2XYZ
     }
 
-    // MARK: - 修复 2：CIColorMatrix 行向量，不再转置
     private func applyMatrix(_ m: simd_double3x3, to img: CIImage) -> CIImage? {
         let f = CIFilter.colorMatrix()
         f.inputImage = img
-        // simd 列主序 m[col][row]；CIColorMatrix 的 rVector 是矩阵第 0 行
         f.rVector = CIVector(x: m[0][0], y: m[1][0], z: m[2][0], w: 0)
         f.gVector = CIVector(x: m[0][1], y: m[1][1], z: m[2][1], w: 0)
         f.bVector = CIVector(x: m[0][2], y: m[1][2], z: m[2][2], w: 0)
@@ -1027,6 +1011,7 @@ final class PhotoColorRestorer {
         }
         return out
     }
+    
     // MARK: - 曝光/动态
     private func estimateExposureCompensation(bitmap: [Float], w: Int, h: Int) -> Double {
         var lumas: [Float] = []; lumas.reserveCapacity(w * h)
@@ -1077,7 +1062,6 @@ final class PhotoColorRestorer {
         return f.outputImage ?? img
     }
 
-    // 修复 7：名不副实的近似后处理默认关闭；保留实现但日志明确标注为近似
     private func correctHueTwist(_ img: CIImage, M: simd_double3x3) -> CIImage {
         let f = CIFilter.vibrance()
         f.inputImage = img
@@ -1094,7 +1078,6 @@ final class PhotoColorRestorer {
         return f.outputImage ?? img
     }
 
-    // 修复 6：mask 缩放到全分辨率
     private func scaledMask(_ mask: CIImage, to extent: CGRect) -> CIImage {
         let sx = extent.width / max(mask.extent.width, 1)
         let sy = extent.height / max(mask.extent.height, 1)
@@ -1176,7 +1159,7 @@ final class PhotoColorRestorer {
         return out
     }
 
-    // MARK: - 修复 3：ΔE2000 同亮度色度评估，使用实际 M_final
+    // MARK: - 修复 3：ΔE2000 同亮度色度评估
     private func meanDeltaEOfNeutrals(
         pixels: [(r: Float, g: Float, b: Float, luma: Float)],
         matrix: simd_double3x3
@@ -1193,7 +1176,6 @@ final class PhotoColorRestorer {
             let Y = 0.2126 * out.x + 0.7152 * out.y + 0.0722 * out.z
             guard Y > 1e-6 else { continue }
 
-            // 参考色取同亮度中性灰，只比较色度分量
             sum += deltaE2000Chroma(lab(out.x, out.y, out.z), lab(Y, Y, Y))
             cnt += 1
         }
@@ -1211,7 +1193,6 @@ final class PhotoColorRestorer {
         return (116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz))
     }
 
-    // 只算色度分量（令 dL = 0）的 CIEDE2000
     private func deltaE2000Chroma(_ a: (L: Double, a: Double, b: Double),
                                    _ b: (L: Double, a: Double, b: Double)) -> Double {
         let dA = b.a - a.a, dB = b.b - a.b
@@ -1245,7 +1226,6 @@ final class PhotoColorRestorer {
         return sqrt(cTerm * cTerm + hTerm * hTerm + RT * cTerm * hTerm)
     }
 
-    // 完整 CIEDE2000（保留给需要亮度+色度综合评估的调用方）
     private func deltaE2000(_ a: (L: Double, a: Double, b: Double),
                             _ b: (L: Double, a: Double, b: Double)) -> Double {
         let dL = b.L - a.L, dA = b.a - a.a, dB = b.b - a.b
@@ -1287,7 +1267,7 @@ final class PhotoColorRestorer {
             SIMD3(0.1804375, 0.0721750, 0.9503041)))
         let xyz = M * SIMD3(c.r, c.g, c.b)
         let s = xyz.x + xyz.y + xyz.z
-        guard s > 1e-9 else { return (0.3127, 0.3290) } // 退化时返回 D65 xy
+        guard s > 1e-9 else { return (0.3127, 0.3290) }
         return (xyz.x / s, xyz.y / s)
     }
 
@@ -1310,7 +1290,8 @@ final class PhotoColorRestorer {
             AppLogger.shared.log("[PhotoColorRestorer] ❌ \(message)", isError: true)
         }
     }
-}
+
+} // ← 这里是类的正确闭合位置
 
 // MARK: - UIImage 方向归一化
 extension UIImage {
