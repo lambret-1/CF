@@ -8,27 +8,22 @@ struct PhotoRestoreView: View {
     @State private var restoredImage: UIImage?
     
     @State private var isProcessing = false
-    @State private var isShowingOriginal = false // 用于长按对比
-    @State private var intensity: CGFloat = 1.0  // 还原强度
+    @State private var isShowingOriginal = false
     @State private var alertMessage: String?
     
     private let colorEngine = TrueColorEngine()
     
     var body: some View {
         VStack(spacing: 0) {
-            // 1. 预览区
             GeometryReader { geo in
                 ZStack {
                     Color.black.opacity(0.9)
                     
-                    // 核心逻辑：如果正在长按，显示原图；否则如果有结果就显示结果，没结果显示原图
-                    if let display)
-Image = isShowingOriginal ? originalImage : (restoredImage ?? originalImage) {
+                    if let displayImage = isShowingOriginal ? originalImage : (restoredImage ?? originalImage) {
                         Image(uiImage: displayImage)
                             .resizable()
                             .scaledToFit()
                             .frame(width: geo.size.width, height: geo.size.height)
-                            // ⭐️ 关键：手指按下与松开的手势
                             .onLongPressGesture(minimumDuration: .infinity, pressing: { pressing in
                                 withAnimation(.easeInOut(duration: 0.1)) {
                                     self.isShowingOriginal = pressing
@@ -36,21 +31,21 @@ Image = isShowingOriginal ? originalImage : (restoredImage ?? originalImage) {
                             }, perform: {})
                     } else {
                         VStack(spacing: 12) {
-                            Image(systemName: "paintpalette")
+                            Image(systemName: "wand.and.stars")
                                 .font(.system(size: 50))
                                 .foregroundColor(.gray)
-                            Text("请选择需要还原色彩的照片")
+                            Text("请选择照片")
                                 .foregroundColor(.gray)
                         }
                     }
                     
                     if isProcessing {
                         Color.black.opacity(0.5)
-                        ProgressView("正在分析色彩...")
-                            .tint(.white                            .foregroundColor(.white)
+                        ProgressView("正在还原...")
+                            .tint(.white)
+                            .foregroundColor(.white)
                     }
                     
-                    // 长按提示
                     if restoredImage != nil && !isShowingOriginal && !isProcessing {
                         VStack {
                             Spacer()
@@ -66,30 +61,6 @@ Image = isShowingOriginal ? originalImage : (restoredImage ?? originalImage) {
                 }
             }
             
-            // 2. 控制面板 (有还原结果时才显示)
-            if restoredImage != nil {
-                VStack(spacing: 12) {
-                    HStack {
-                        Text("还原强度")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                        Slider(value: $intensity, in: 0...1, onEditingChanged: { editing in
-                            if !editing {
-                                processImage() // 拖动结束时重新计算
-                            }
-                        })
-                        Text("\(Int(intensity * 100))%")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .frame(width: 35, alignment: .trailing)
-                    }
-                    .padding(.horizontal)
-                }
-                .padding(.vertical, 12)
-                .background(Color(uiColor: .secondarySystemBackground))
-            }
-            
-            // 3. 底部操作区
             VStack(spacing: 16) {
                 PhotosPicker(selection: $pickerItem, matching: .images) {
                     Text("从相册选择照片")
@@ -103,12 +74,13 @@ Image = isShowingOriginal ? originalImage : (restoredImage ?? originalImage) {
                 
                 if originalImage != nil {
                     HStack(spacing: 12) {
+                        // 只有一个按钮，点一下直接出图
                         Button {
-                            processImage()
+                            performAutoRestore()
                         } label: {
                             HStack {
                                 Image(systemName: "wand.and.stars")
-                                Text("一键还原")
+                                Text("一键还原真实色彩")
                             }
                             .font(.headline)
                             .foregroundColor(.white)
@@ -119,7 +91,6 @@ Image = isShowingOriginal ? originalImage : (restoredImage ?? originalImage) {
                         }
                         .disabled(isProcessing)
                         
-                        // ⭐️ 新增：保存按钮
                         if let result = restoredImage {
                             Button {
                                 saveToAlbum(image: result)
@@ -156,7 +127,6 @@ Image = isShowingOriginal ? originalImage : (restoredImage ?? originalImage) {
                     await MainActor.run {
                         self.originalImage = uiImage
                         self.restoredImage = nil
-                        self.intensity = 1.0
                         self.pickerItem = nil
                     }
                 }
@@ -164,15 +134,12 @@ Image = isShowingOriginal ? originalImage : (restoredImage ?? originalImage) {
         }
     }
     
-    // MARK: - 执行色彩还原
-    private func processImage() {
+    private func performAutoRestore() {
         guard let original = originalImage else { return }
         isProcessing = true
         
-        let currentIntensity = intensity
-        
         DispatchQueue.global(qos: .userInitiated).async {
-            let result = colorEngine.restoreTrueColor(image: original, intensity: currentIntensity)
+            let result = colorEngine.autoRestoreColor(image: original)
             DispatchQueue.main.async {
                 self.restoredImage = result
                 self.isProcessing = false
@@ -180,25 +147,17 @@ Image = isShowingOriginal ? originalImage : (restoredImage ?? originalImage) {
         }
     }
     
-    // MARK: - 保存到相册
     private func saveToAlbum(image: UIImage) {
         PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
             guard status == .authorized || status == .limited else {
-                DispatchQueue.main.async {
-                    self.alertMessage = "未获得相册权限，请在设置中开启"
-                }
+                DispatchQueue.main.async { self.alertMessage = "未获得相册权限" }
                 return
             }
-            
             PHPhotoLibrary.shared().performChanges {
                 PHAssetChangeRequest.creationRequestForAsset(from: image)
-            } completionHandler: { success, error in
+            } completionHandler: { success, _ in
                 DispatchQueue.main.async {
-                    if success {
-                        self.alertMessage = "✅ 照片已保存到相册"
-                    } else {
-                        self.alertMessage = "保存失败：\(error?.localizedDescription ?? "未知错误")"
-                    }
+                    self.alertMessage = success ? "✅ 照片已保存" : "保存失败"
                 }
             }
         }
