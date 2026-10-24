@@ -10,10 +10,12 @@ struct VideoSuperResView: View {
     // 弹出保存成功提示
     @State private var showSaveSuccessAlert = false
     
-    // ⭐️ 支持的视频超分模型列表（只能放轻量模型，否则跑视频必闪退）
+    // ⭐️ 开放多个适合视频处理的模型（已剔除会爆内存的 x4plus 等大模型）
     private let supportedModels = [
-        ("realesrgan-x4v3", "Real-ESRGAN x4v3 (轻量 4x)")
-        // ("piper-sr-2x", "PiperSR 2x (极速 2x)") // 如果要用，需要去 ViewModel 里把 scaleFactor 改成 2
+        ("realesrgan-x4v3", "Real-ESRGAN x4v3 (轻量 4x)"),
+        ("piper-sr-2x", "PiperSR 2x (极速 2x)"),
+        ("realesrgan-x4", "Real-ESRGAN x4 (通用 4x)"),
+        ("realesrgan-ultrasharp", "Real-ESRGAN UltraSharp (锐化 4x)")
     ]
     
     var body: some View {
