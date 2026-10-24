@@ -56,10 +56,11 @@ struct RestorerOptions {
     var enableShadowLift = false
     var enableBlackLevel = true
     var enableToneMapping = false
-    var enableMemoryColor = true
-    var enableHueTwistCorrection = true
-    var enableSaturationHighlightCompress = true
-    var enablePerChannelCurve = true
+    // 修复 7：名不副实的“近似”后处理默认关闭
+    var enableMemoryColor = false
+    var enableHueTwistCorrection = false
+    var enableSaturationHighlightCompress = false
+    var enablePerChannelCurve = false
     var enableNoiseAwareWeighting = true
     var enableVignettingCorrection = false
     var enableChromaticAberration = false
@@ -99,7 +100,6 @@ final class PhotoColorRestorer {
 
     // MARK: Init
     init?(options: RestorerOptions = RestorerOptions()) {
-        // ⭐️ 直接调用 AppLogger 包装在 Task 中保证主线程
         Task { @MainActor in
             AppLogger.shared.log("[PhotoColorRestorer] init 开始，analysisScale=\(options.analysisScale)，cat=\(options.catMethod?.rawValue ?? "auto")", isError: false)
         }
@@ -110,14 +110,13 @@ final class PhotoColorRestorer {
             }
             return nil
         }
-        
         guard let srgb = CGColorSpace(name: CGColorSpace.sRGB) else {
             Task { @MainActor in
                 AppLogger.shared.log("[PhotoColorRestorer] ❌ init 失败：sRGB 不可用", isError: true)
             }
             return nil
         }
-        
+
         self.linearSRGB = linear
         self.sRGB = srgb
         self.options = options
@@ -125,7 +124,7 @@ final class PhotoColorRestorer {
             .cacheIntermediates: false,
             .workingColorSpace: linear
         ])
-        
+
         log("init 成功：workingSpace=extendedLinearSRGB，outputSpace=sRGB")
     }
 
@@ -169,10 +168,14 @@ final class PhotoColorRestorer {
         }
         log("分析采样尺寸=\(w)x\(h)（线性空间）")
 
+        // 修复 8：clamp 再 crop，避免 bitmap 边缘未覆盖导致 alpha 跳过
+        let renderRect = small.extent.integral
+        let safeSmall = small.clampedToExtent().cropped(to: renderRect)
+
         var bitmap = [Float](repeating: 0, count: w * h * 4)
-        ciContext.render(small, toBitmap: &bitmap,
+        ciContext.render(safeSmall, toBitmap: &bitmap,
                          rowBytes: w * 4 * MemoryLayout<Float>.size,
-                         bounds: extent, format: .RGBAf, colorSpace: nil)
+                         bounds: renderRect, format: .RGBAf, colorSpace: nil)
         log("render 到 bitmap 完成，共 \(w*h) 像素")
 
         // 3. 场景分析
@@ -192,26 +195,62 @@ final class PhotoColorRestorer {
         let valid = trimHistogram(pixels)
         log("修剪后像素=\(valid.count)（剔除约 4% 极值）")
 
-        // 5. 多光源估计 + 迭代融合
+        // 修复 4：场景 mask 排除语义色像素，供光源估计使用
+        let estimatePixels = sceneExcludedPixels(valid, scene: scene)
+        log("光源估计像素：\(estimatePixels.count) / \(valid.count)（已排除语义色）")
+
+        // 5. 多光源估计 + 迭代残差补偿（修复 5）
         log("--- 阶段 5：多光源估计 + 融合 ---")
         var fused = IlluminantRGB(r: 1, g: 1, b: 1)
         let iterationLimit = options.enableIterativeRefinement ? options.maxIterations : 1
         var iterations = iterationLimit
+
         for it in 0..<iterationLimit {
             log("  迭代第 \(it + 1)/\(iterationLimit) 轮")
-            let ests = runEstimators(pixels: valid, scene: scene,
-                                     bitmap: bitmap, w: w, h: h, ciImage: small)
+
+            // 用当前 fused 对 estimatePixels 做临时白平衡，估计残差
+            let gr = fused.g / max(fused.r, 1e-6)
+            let gb = fused.g / max(fused.b, 1e-6)
+            let corrected = estimatePixels.map {
+                (r: Float(Double($0.r) * gr),
+                 g: $0.g,
+                 b: Float(Double($0.b) * gb),
+                 luma: $0.luma)
+            }
+
+            // 重建 bitmap（全局近似 gain，保留空间结构）
+            var iterBitmap = bitmap
+            if it > 0 {
+                let fgr = Float(gr), fgb = Float(gb)
+                for i in 0..<(w * h) {
+                    let o = i * 4
+                    iterBitmap[o] *= fgr
+                    iterBitmap[o + 2] *= fgb
+                }
+            }
+
+            let ests = runEstimators(pixels: corrected, scene: scene,
+                                     bitmap: iterBitmap, w: w, h: h, ciImage: small)
             if it == 0 { diag.estimates = ests }
             logEstimates(ests)
 
-            guard let f = fuse(ests: ests, pixels: valid) else {
+            guard let residual = fuse(ests: ests, pixels: corrected) else {
                 logError("融合失败：无有效估计，放弃还原")
                 return (image, diag)
             }
-            let delta = abs(f.r - fused.r) + abs(f.g - fused.g) + abs(f.b - fused.b)
-            log(String(format: "  融合结果 R=%.4f G=%.4f B=%.4f（Δ=%.5f）", f.r, f.g, f.b, delta))
-            fused = f
-            if delta < 0.01 {
+
+            // 残差乘到当前 fused 上
+            let next = normalizeGM(IlluminantRGB(
+                r: fused.r * residual.r,
+                g: fused.g * residual.g,
+                b: fused.b * residual.b))
+
+            let delta = abs(next.r - fused.r) + abs(next.g - fused.g) + abs(next.b - fused.b)
+            log(String(format: "  残差补偿 R=%.4f G=%.4f B=%.4f（Δ=%.5f）",
+                       next.r, next.g, next.b, delta))
+            fused = next
+
+            if delta < 0.005 {
                 iterations = it + 1
                 log("  迭代收敛于第 \(iterations) 轮")
                 break
@@ -246,7 +285,7 @@ final class PhotoColorRestorer {
         let M_final = buildFinalMatrix(fused: fused, gains: gains, method: cat)
         log("最终 3×3 矩阵构建完成")
 
-        // 7. 应用 WB 矩阵
+        // 7. 应用 WB 矩阵（修复 2：矩阵不再转置）
         log("--- 阶段 7：应用白平衡矩阵 ---")
         guard let wbImage = applyMatrix(M_final, to: preprocessed) else {
             logError("矩阵应用失败")
@@ -318,29 +357,30 @@ final class PhotoColorRestorer {
         let out = UIImage(cgImage: cg, scale: normalized.scale, orientation: .up)
         log("输出图尺寸 \(Int(out.size.width))x\(Int(out.size.height))")
 
-        // 11. 评估
+        // 11. 评估（修复 3：同亮度色度 ΔE，用实际 M_final）
         log("--- 阶段 11：ΔE2000 评估 ---")
-        diag.deltaEBefore = meanDeltaEOfNeutrals(pixels: valid, fused: IlluminantRGB(r: 1, g: 1, b: 1))
-        diag.deltaEAfter = meanDeltaEOfNeutrals(pixels: valid, fused: fused)
-        log(String(format: "ΔE2000 中性区：before=%.3f after=%.3f（降低 %.1f%%）",
+        diag.deltaEBefore = meanDeltaEOfNeutrals(pixels: valid, matrix: matrix_identity_double3x3)
+        diag.deltaEAfter  = meanDeltaEOfNeutrals(pixels: valid, matrix: M_final)
+        log(String(format: "ΔE2000 中性区（色度）：before=%.3f after=%.3f（降低 %.1f%%）",
                    diag.deltaEBefore, diag.deltaEAfter,
                    diag.deltaEBefore > 0 ? (1 - diag.deltaEAfter / diag.deltaEBefore) * 100 : 0))
         log("========== 真实色彩还原完成 ==========")
 
         return (out, diag)
     }
-
-    // MARK: - 预处理
+}
+// MARK: - 预处理
     private func preprocess(_ img: CIImage, diag: inout Diagnostics) -> CIImage {
         var out = img
 
+        // 修复 2：CCM 列主序转行向量，不再转置
         if let ccm = cameraMatrixProvider?.matrix(for: nil) {
             log("CCM：已获取相机色彩矩阵，开始应用")
             let f = CIFilter.colorMatrix()
             f.inputImage = out
-            f.rVector = CIVector(x: ccm[0][0], y: ccm[0][1], z: ccm[0][2], w: 0)
-            f.gVector = CIVector(x: ccm[1][0], y: ccm[1][1], z: ccm[1][2], w: 0)
-            f.bVector = CIVector(x: ccm[2][0], y: ccm[2][1], z: ccm[2][2], w: 0)
+            f.rVector = CIVector(x: ccm[0][0], y: ccm[1][0], z: ccm[2][0], w: 0)
+            f.gVector = CIVector(x: ccm[0][1], y: ccm[1][1], z: ccm[2][1], w: 0)
+            f.bVector = CIVector(x: ccm[0][2], y: ccm[1][2], z: ccm[2][2], w: 0)
             if let o = f.outputImage { out = o; log("CCM：应用完成") }
             else { logError("CCM：矩阵应用失败，跳过") }
         } else {
@@ -523,19 +563,71 @@ final class PhotoColorRestorer {
         return CIImage(cgImage: cg)
     }
 
+    // MARK: - 修复 4：场景掩膜排除语义色像素（供光源估计使用）
+    private func sceneExcludedPixels(
+        _ pixels: [(r: Float, g: Float, b: Float, luma: Float)],
+        scene: Scene
+    ) -> [(r: Float, g: Float, b: Float, luma: Float)] {
+        // 无任何语义 mask 时不做排除
+        guard scene.skyMask != nil || scene.vegMask != nil || scene.faceMask != nil else {
+            return pixels
+        }
+
+        let before = pixels.count
+        let filtered = pixels.filter { p in
+            let r = Double(p.0), g = Double(p.1), b = Double(p.2)
+            let maxC = max(r, max(g, b)), minC = min(r, min(g, b))
+            let sat = maxC > 1e-6 ? (maxC - minC) / maxC : 0
+            // 中性像素一律保留
+            guard sat > 0.2 else { return true }
+
+            switch scene.type {
+            case .landscape:
+                // 高饱和天空 / 植被是语义色，会污染 GrayWorld 与 ShadesOfGray
+                if b > r && b > g { return false }   // 蓝天空
+                if g > r && g > b { return false }   // 绿植被
+            case .portrait:
+                // 高饱和肤色会污染中性估计
+                if r > g && g > b && (r - b) > 0.15 { return false }
+            case .document:
+                // 文档场景优先保留近中性像素
+                if sat > 0.35 { return false }
+            default:
+                break
+            }
+            return true
+        }
+
+        // 排除过猛时回退一半，保证估计器有足够样本
+        if filtered.count < max(200, before / 4) {
+            log("场景排除过猛（\(before)→\(filtered.count)），回退到全部像素")
+            return pixels
+        }
+        return filtered
+    }
+
     // MARK: - 光源估计器池
     private func runEstimators(pixels: [(r: Float, g: Float, b: Float, luma: Float)],
                                scene: Scene, bitmap: [Float], w: Int, h: Int,
                                ciImage: CIImage) -> [IlluminantEstimate] {
         var results: [IlluminantEstimate] = []
+        guard !pixels.isEmpty else {
+            logError("runEstimators：输入像素为空")
+            return results
+        }
 
+        // 修复 4：WhitePatch 改为亮度 top 5% 的中位数，避免单像素噪声/高光污染
         if options.enableWhitePatch {
-            let mr = pixels.map { Double($0.0) }.max() ?? 1
-            let mg = pixels.map { Double($0.1) }.max() ?? 1
-            let mb = pixels.map { Double($0.2) }.max() ?? 1
+            let sorted = pixels.sorted { $0.luma > $1.luma }
+            let topN = max(1, Int(Double(sorted.count) * 0.05))
+            let top = Array(sorted.prefix(topN))
+            let mr = top.map { Double($0.0) }.sorted()[topN / 2]
+            let mg = top.map { Double($0.1) }.sorted()[topN / 2]
+            let mb = top.map { Double($0.2) }.sorted()[topN / 2]
             results.append(IlluminantEstimate(method: "WhitePatch",
                 rgb: normalizeGM(IlluminantRGB(r: mr, g: mg, b: mb)), confidence: 0.4))
         }
+
         if options.enableGrayWorld {
             let n = Double(pixels.count)
             let mr = pixels.reduce(0.0) { $0 + Double($1.0) } / n
@@ -544,6 +636,7 @@ final class PhotoColorRestorer {
             results.append(IlluminantEstimate(method: "GrayWorld",
                 rgb: normalizeGM(IlluminantRGB(r: mr, g: mg, b: mb)), confidence: 0.5))
         }
+
         if options.enableShadesOfGray {
             let p = 6.0; let n = Double(pixels.count)
             let sr = pixels.reduce(0.0) { $0 + pow(Double($1.0), p) }
@@ -553,18 +646,21 @@ final class PhotoColorRestorer {
             results.append(IlluminantEstimate(method: "ShadesOfGray(p=6)",
                 rgb: normalizeGM(IlluminantRGB(r: er, g: eg, b: eb)), confidence: 0.65))
         }
+
         if options.enableGrayEdge {
             var sr = 0.0, sg = 0.0, sb = 0.0; var cnt = 0.0
-            for y in 1..<(h - 1) {
-                for x in 1..<(w - 1) {
-                    let i0 = (y * w + x) * 4
-                    let iR = (y * w + x + 1) * 4
-                    let iD = ((y + 1) * w + x) * 4
-                    let dr = abs(Double(bitmap[iR] - bitmap[i0])) + abs(Double(bitmap[iD] - bitmap[i0]))
-                    let dg = abs(Double(bitmap[iR + 1] - bitmap[i0 + 1])) + abs(Double(bitmap[iD + 1] - bitmap[i0 + 1]))
-                    let db = abs(Double(bitmap[iR + 2] - bitmap[i0 + 2])) + abs(Double(bitmap[iD + 2] - bitmap[i0 + 2]))
-                    let m = max(dr, max(dg, db)); guard m > 0.02 else { continue }
-                    sr += dr; sg += dg; sb += db; cnt += 1
+            if w > 2, h > 2 {
+                for y in 1..<(h - 1) {
+                    for x in 1..<(w - 1) {
+                        let i0 = (y * w + x) * 4
+                        let iR = (y * w + x + 1) * 4
+                        let iD = ((y + 1) * w + x) * 4
+                        let dr = abs(Double(bitmap[iR] - bitmap[i0])) + abs(Double(bitmap[iD] - bitmap[i0]))
+                        let dg = abs(Double(bitmap[iR + 1] - bitmap[i0 + 1])) + abs(Double(bitmap[iD + 1] - bitmap[i0 + 1]))
+                        let db = abs(Double(bitmap[iR + 2] - bitmap[i0 + 2])) + abs(Double(bitmap[iD + 2] - bitmap[i0 + 2]))
+                        let m = max(dr, max(dg, db)); guard m > 0.02 else { continue }
+                        sr += dr; sg += dg; sb += db; cnt += 1
+                    }
                 }
             }
             if cnt > 10 {
@@ -572,6 +668,7 @@ final class PhotoColorRestorer {
                     rgb: normalizeGM(IlluminantRGB(r: sr, g: sg, b: sb)), confidence: 0.55))
             }
         }
+
         if options.enableNeutralFilter {
             var sr = 0.0, sg = 0.0, sb = 0.0, sw = 0.0
             for p in pixels {
@@ -586,6 +683,7 @@ final class PhotoColorRestorer {
                     rgb: normalizeGM(IlluminantRGB(r: sr / sw, g: sg / sw, b: sb / sw)), confidence: 0.7))
             }
         }
+
         if options.enableDarkChannelWeighting {
             var sr = 0.0, sg = 0.0, sb = 0.0, sw = 0.0
             for p in pixels {
@@ -598,6 +696,7 @@ final class PhotoColorRestorer {
                     rgb: normalizeGM(IlluminantRGB(r: sr / sw, g: sg / sw, b: sb / sw)), confidence: 0.45))
             }
         }
+
         if options.enableRetinex {
             var sr = 0.0, sg = 0.0, sb = 0.0, cnt = 0.0
             let win = 3
@@ -624,6 +723,7 @@ final class PhotoColorRestorer {
                     rgb: normalizeGM(IlluminantRGB(r: er, g: eg, b: eb)), confidence: 0.5))
             }
         }
+
         if options.enableLocalPartition {
             let gridW = 4, gridH = 4
             var local: [IlluminantRGB] = []
@@ -632,6 +732,7 @@ final class PhotoColorRestorer {
                     var sr = 0.0, sg = 0.0, sb = 0.0, sw = 0.0
                     let x0 = gx * w / gridW, x1 = (gx + 1) * w / gridW
                     let y0 = gy * h / gridH, y1 = (gy + 1) * h / gridH
+                    if x1 <= x0 || y1 <= y0 { continue }
                     for y in y0..<y1 { for x in x0..<x1 {
                         let o = (y * w + x) * 4
                         let maxC = Double(max(bitmap[o], max(bitmap[o + 1], bitmap[o + 2])))
@@ -652,6 +753,7 @@ final class PhotoColorRestorer {
                     rgb: IlluminantRGB(r: r[m], g: g[m], b: b[m]), confidence: 0.6))
             }
         }
+
         if options.enableDualTemperature,
            let base = results.max(by: { $0.confidence < $1.confidence })?.rgb {
             let xy = rgbToXY(base)
@@ -672,6 +774,7 @@ final class PhotoColorRestorer {
                 log("DualTemperature：CCT 在合理范围，不修正")
             }
         }
+
         if options.enableBayesianPrior, let prior = priorProvider?.prior(for: scene.type) {
             results.append(IlluminantEstimate(method: "BayesianPrior",
                 rgb: prior.mean, confidence: 0.6))
@@ -688,12 +791,21 @@ final class PhotoColorRestorer {
             switch scene.type {
             case .portrait:
                 if results[i].method == "NeutralFilter" { results[i].confidence *= 1.2 }
+                if results[i].method == "DarkChannelWeighted" { results[i].confidence *= 0.8 }
             case .landscape:
                 if results[i].method == "ShadesOfGray(p=6)" { results[i].confidence *= 1.1 }
+                if results[i].method == "GrayWorld" { results[i].confidence *= 0.9 }
             case .night:
                 if results[i].method == "WhitePatch" { results[i].confidence *= 0.7 }
-            default: break
+                if results[i].method == "DarkChannelWeighted" { results[i].confidence *= 0.7 }
+            case .document:
+                if results[i].method == "NeutralFilter" { results[i].confidence *= 1.3 }
+                if results[i].method == "WhitePatch" { results[i].confidence *= 1.1 }
+            case .generic:
+                break
             }
+            // 修复 4：confidence 裁剪到 [0,1]
+            results[i].confidence = clamp(results[i].confidence, 0, 1)
         }
 
         return results
@@ -705,40 +817,71 @@ final class PhotoColorRestorer {
                        e.method, e.rgb.r, e.rgb.g, e.rgb.b, e.confidence))
         }
     }
-
-    // MARK: - 融合
+    // MARK: - 修复 4：融合改为对数色比加权中位数 + MAD 离群剔除
     private func fuse(ests: [IlluminantEstimate],
                       pixels: [(r: Float, g: Float, b: Float, luma: Float)]) -> IlluminantRGB? {
-        let valid = ests.filter { $0.rgb.g.isFinite && $0.rgb.g > 1e-6 }
+        var valid = ests.filter { $0.rgb.g.isFinite && $0.rgb.g > 1e-6 }
         guard !valid.isEmpty else {
             logError("融合：无有效估计")
             return nil
         }
+        for i in valid.indices {
+            valid[i].confidence = clamp(valid[i].confidence, 0, 1)
+        }
         log("融合：\(valid.count)/\(ests.count) 个有效估计")
 
-        func weightedCenter(_ src: [IlluminantEstimate]) -> IlluminantRGB {
-            var r = 0.0, g = 0.0, b = 0.0, w = 0.0
-            for e in src {
-                r += e.rgb.r * e.confidence; g += e.rgb.g * e.confidence; b += e.rgb.b * e.confidence
-                w += e.confidence
-            }
-            return IlluminantRGB(r: r / w, g: g / w, b: b / w)
+        // 对数色比：u = log(R/G), v = log(B/G)，避免 RGB 线性平均把冲突估计抵消成中性
+        func toLog(_ e: IlluminantEstimate) -> (u: Double, v: Double) {
+            let g = max(e.rgb.g, 1e-6)
+            return (Foundation.log(max(e.rgb.r, 1e-6) / g),
+                    Foundation.log(max(e.rgb.b, 1e-6) / g))
         }
 
-        var center = weightedCenter(valid)
-        let dists = valid.map {
-            sqrt(pow($0.rgb.r - center.r, 2) + pow($0.rgb.g - center.g, 2) + pow($0.rgb.b - center.b, 2))
-        }
-        let meanD = dists.reduce(0, +) / Double(dists.count)
-        let varD = dists.map { pow($0 - meanD, 2) }.reduce(0, +) / Double(dists.count)
-        let sigma = sqrt(varD)
-        if sigma > 1e-3 {
-            let filtered = valid.enumerated().filter { dists[$0.offset] <= 2 * sigma }.map { $0.element }
-            if !filtered.isEmpty {
-                center = weightedCenter(filtered)
-                log("融合：2σ 离群剔除 \(valid.count - filtered.count) 个")
+        let logPts = valid.map { toLog($0) }
+        let weights = valid.map { max($0.confidence, 1e-6) }
+
+        func weightedMedian(_ values: [Double], _ w: [Double]) -> Double {
+            let order = values.indices.sorted { values[$0] < values[$1] }
+            let total = w.reduce(0, +)
+            var acc = 0.0
+            for i in order {
+                acc += w[i]
+                if acc >= total / 2 { return values[i] }
             }
+            return values[order.last!]
         }
+
+        let mu = weightedMedian(logPts.map { $0.u }, weights)
+        let mv = weightedMedian(logPts.map { $0.v }, weights)
+
+        // MAD 离群剔除
+        let du = logPts.map { abs($0.u - mu) }
+        let dv = logPts.map { abs($0.v - mv) }
+        let madU = weightedMedian(du, weights)
+        let madV = weightedMedian(dv, weights)
+        let thresholdU = max(2.5 * 1.4826 * madU, 0.03)
+        let thresholdV = max(2.5 * 1.4826 * madV, 0.03)
+
+        let filtered = valid.enumerated().filter {
+            du[$0.offset] <= thresholdU && dv[$0.offset] <= thresholdV
+        }.map { $0.element }
+
+        let useSet = filtered.isEmpty ? valid : filtered
+        log("融合：MAD 剔除 \(valid.count - useSet.count) 个（阈值 u=\(String(format: "%.4f", thresholdU)) v=\(String(format: "%.4f", thresholdV))）")
+
+        // 在 log 空间按置信度加权回算 RGB
+        let wSum = useSet.reduce(0.0) { $0 + $1.confidence }
+        var r = 0.0, g = 0.0, b = 0.0
+        for e in useSet {
+            let w = e.confidence / max(wSum, 1e-9)
+            let lg = Foundation.log(max(e.rgb.g, 1e-6))
+            let l = toLog(e)
+            r += exp(lg + l.u) * w
+            g += exp(lg) * w
+            b += exp(lg + l.v) * w
+        }
+
+        var center = normalizeGM(IlluminantRGB(r: r, g: g, b: b))
 
         if options.enableGamutConstraint {
             let score = gamutScore(illuminant: center, pixels: pixels)
@@ -750,11 +893,13 @@ final class PhotoColorRestorer {
                     g: pixels.reduce(0.0) { $0 + Double($1.1) } / n,
                     b: pixels.reduce(0.0) { $0 + Double($1.2) } / n)
                 center = normalizeGM(IlluminantRGB(
-                    r: (center.r + gw.r) / 2, g: (center.g + gw.g) / 2, b: (center.b + gw.b) / 2))
+                    r: (center.r + gw.r) / 2,
+                    g: (center.g + gw.g) / 2,
+                    b: (center.b + gw.b) / 2))
                 log("融合：Gamut 分数过低，向 GrayWorld 拉回一半")
             }
         }
-        return normalizeGM(center)
+        return center
     }
 
     private func gamutScore(illuminant: IlluminantRGB,
@@ -819,31 +964,35 @@ final class PhotoColorRestorer {
         }
     }
 
+    // MARK: - 修复 1：D65 目标白点不再二次乘 sRGB→XYZ
     private func computeCATGains(fused: IlluminantRGB, method: CATMethod) -> (Double, Double, Double)? {
         let M_sRGB2XYZ = simd_double3x3(columns: (
             SIMD3(0.4124564, 0.2126729, 0.0193339),
             SIMD3(0.3575761, 0.7151522, 0.1191920),
             SIMD3(0.1804375, 0.0721750, 0.9503041)))
-        let rgb = SIMD3(fused.r, fused.g, fused.b)
-        let xyz = M_sRGB2XYZ * rgb
-        guard xyz.y.isFinite, xyz.y > 1e-6 else {
-            logError("CAT：XYZ.Y=\(xyz.y) 异常")
+
+        // 源白点：估计光源，归一化到 Y=1
+        let srcXYZ = M_sRGB2XYZ * SIMD3(fused.r, fused.g, fused.b)
+        guard srcXYZ.y.isFinite, srcXYZ.y > 1e-6 else {
+            logError("CAT：srcXYZ.Y=\(srcXYZ.y) 异常")
             return nil
         }
-        let xyzN = xyz / xyz.y
+        let srcXYZN = srcXYZ / srcXYZ.y
+
+        // 目标白点：D65，本身已是 XYZ，不要再乘 M_sRGB2XYZ
+        let dstXYZ = SIMD3(0.95047, 1.0, 1.08883)
 
         let (toLMS, _) = catMatrices(method)
-        let srcLMS = toLMS * xyzN
-        guard srcLMS.x.isFinite, srcLMS.y.isFinite, srcLMS.z.isFinite,
-              srcLMS.x > 1e-6, srcLMS.y > 1e-6, srcLMS.z > 1e-6 else {
-            logError(String(format: "CAT：srcLMS 异常 L=%.6f M=%.6f S=%.6f",
-                            srcLMS.x, srcLMS.y, srcLMS.z))
+        let srcLMS = toLMS * srcXYZN
+        let dstLMS = toLMS * dstXYZ
+
+        guard srcLMS.x > 1e-6, srcLMS.y > 1e-6, srcLMS.z > 1e-6,
+              dstLMS.x > 1e-6, dstLMS.y > 1e-6, dstLMS.z > 1e-6 else {
+            logError(String(format: "CAT：LMS 异常 src=(%.6f,%.6f,%.6f) dst=(%.6f,%.6f,%.6f)",
+                            srcLMS.x, srcLMS.y, srcLMS.z,
+                            dstLMS.x, dstLMS.y, dstLMS.z))
             return nil
         }
-
-        let d65 = IlluminantRGB.d65
-        let dstXYZ = M_sRGB2XYZ * SIMD3(d65.r, d65.g, d65.b)
-        let dstLMS = toLMS * dstXYZ
 
         let gL = clamp(dstLMS.x / srcLMS.x, 0.25, 4.0)
         let gM = clamp(dstLMS.y / srcLMS.y, 0.25, 4.0)
@@ -863,12 +1012,14 @@ final class PhotoColorRestorer {
         return M_XYZ2sRGB * fromLMS * gain * toLMS * M_sRGB2XYZ
     }
 
+    // MARK: - 修复 2：CIColorMatrix 行向量，不再转置
     private func applyMatrix(_ m: simd_double3x3, to img: CIImage) -> CIImage? {
         let f = CIFilter.colorMatrix()
         f.inputImage = img
-        f.rVector = CIVector(x: m[0][0], y: m[0][1], z: m[0][2], w: 0)
-        f.gVector = CIVector(x: m[1][0], y: m[1][1], z: m[1][2], w: 0)
-        f.bVector = CIVector(x: m[2][0], y: m[2][1], z: m[2][2], w: 0)
+        // simd 列主序 m[col][row]；CIColorMatrix 的 rVector 是矩阵第 0 行
+        f.rVector = CIVector(x: m[0][0], y: m[1][0], z: m[2][0], w: 0)
+        f.gVector = CIVector(x: m[0][1], y: m[1][1], z: m[2][1], w: 0)
+        f.bVector = CIVector(x: m[0][2], y: m[1][2], z: m[2][2], w: 0)
         f.aVector = CIVector(x: 0, y: 0, z: 0, w: 1)
         guard let out = f.outputImage else {
             logError("CIColorMatrix 输出为空")
@@ -876,7 +1027,6 @@ final class PhotoColorRestorer {
         }
         return out
     }
-
     // MARK: - 曝光/动态
     private func estimateExposureCompensation(bitmap: [Float], w: Int, h: Int) -> Double {
         var lumas: [Float] = []; lumas.reserveCapacity(w * h)
@@ -927,6 +1077,7 @@ final class PhotoColorRestorer {
         return f.outputImage ?? img
     }
 
+    // 修复 7：名不副实的近似后处理默认关闭；保留实现但日志明确标注为近似
     private func correctHueTwist(_ img: CIImage, M: simd_double3x3) -> CIImage {
         let f = CIFilter.vibrance()
         f.inputImage = img
@@ -943,6 +1094,15 @@ final class PhotoColorRestorer {
         return f.outputImage ?? img
     }
 
+    // 修复 6：mask 缩放到全分辨率
+    private func scaledMask(_ mask: CIImage, to extent: CGRect) -> CIImage {
+        let sx = extent.width / max(mask.extent.width, 1)
+        let sy = extent.height / max(mask.extent.height, 1)
+        return mask
+            .transformed(by: CGAffineTransform(scaleX: sx, y: sy))
+            .cropped(to: extent)
+    }
+
     private func applyMemoryColor(_ img: CIImage, scene: Scene) -> CIImage {
         var out = img
         if let sky = scene.skyMask {
@@ -950,12 +1110,17 @@ final class PhotoColorRestorer {
             hue.inputImage = out
             hue.angle = 0.02
             if let o = hue.outputImage {
+                let fullSky = scaledMask(sky, to: img.extent)
                 let blend = CIFilter.blendWithMask()
                 blend.inputImage = o
                 blend.backgroundImage = out
-                blend.maskImage = sky.applyingFilter("CIGaussianBlur", parameters: ["inputRadius": 4])
-                if let b = blend.outputImage { out = b.cropped(to: img.extent) }
-                log("  记忆色：天空色相已微调 +0.02")
+                blend.maskImage = fullSky
+                    .applyingFilter("CIGaussianBlur", parameters: ["inputRadius": 4])
+                    .cropped(to: img.extent)
+                if let b = blend.outputImage {
+                    out = b.cropped(to: img.extent)
+                    log("  记忆色：天空色相已微调 +0.02")
+                }
             }
         }
         if let veg = scene.vegMask {
@@ -963,12 +1128,17 @@ final class PhotoColorRestorer {
             hue.inputImage = out
             hue.angle = -0.02
             if let o = hue.outputImage {
+                let fullVeg = scaledMask(veg, to: img.extent)
                 let blend = CIFilter.blendWithMask()
                 blend.inputImage = o
                 blend.backgroundImage = out
-                blend.maskImage = veg.applyingFilter("CIGaussianBlur", parameters: ["inputRadius": 4])
-                if let b = blend.outputImage { out = b.cropped(to: img.extent) }
-                log("  记忆色：植被色相已微调 -0.02")
+                blend.maskImage = fullVeg
+                    .applyingFilter("CIGaussianBlur", parameters: ["inputRadius": 4])
+                    .cropped(to: img.extent)
+                if let b = blend.outputImage {
+                    out = b.cropped(to: img.extent)
+                    log("  记忆色：植被色相已微调 -0.02")
+                }
             }
         }
         return out
@@ -1006,18 +1176,25 @@ final class PhotoColorRestorer {
         return out
     }
 
-    // MARK: - ΔE2000 评估
-    private func meanDeltaEOfNeutrals(pixels: [(r: Float, g: Float, b: Float, luma: Float)],
-                                      fused: IlluminantRGB) -> Double {
-        let gr = fused.g / max(fused.r, 1e-6)
-        let gb = fused.g / max(fused.b, 1e-6)
-        var sum = 0.0; var cnt = 0
+    // MARK: - 修复 3：ΔE2000 同亮度色度评估，使用实际 M_final
+    private func meanDeltaEOfNeutrals(
+        pixels: [(r: Float, g: Float, b: Float, luma: Float)],
+        matrix: simd_double3x3
+    ) -> Double {
+        var sum = 0.0
+        var cnt = 0
         for p in pixels {
             let maxC = Double(max(p.0, max(p.1, p.2)))
             let minC = Double(min(p.0, min(p.1, p.2)))
             guard maxC > 1e-6, (maxC - minC) / maxC < 0.15 else { continue }
-            let r = Double(p.0) * gr, g = Double(p.1), b = Double(p.2) * gb
-            sum += deltaE2000(lab(r, g, b), lab(0.18, 0.18, 0.18))
+
+            let src = SIMD3(Double(p.0), Double(p.1), Double(p.2))
+            let out = matrix * src
+            let Y = 0.2126 * out.x + 0.7152 * out.y + 0.0722 * out.z
+            guard Y > 1e-6 else { continue }
+
+            // 参考色取同亮度中性灰，只比较色度分量
+            sum += deltaE2000Chroma(lab(out.x, out.y, out.z), lab(Y, Y, Y))
             cnt += 1
         }
         return cnt > 0 ? sum / Double(cnt) : 0
@@ -1034,6 +1211,41 @@ final class PhotoColorRestorer {
         return (116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz))
     }
 
+    // 只算色度分量（令 dL = 0）的 CIEDE2000
+    private func deltaE2000Chroma(_ a: (L: Double, a: Double, b: Double),
+                                   _ b: (L: Double, a: Double, b: Double)) -> Double {
+        let dA = b.a - a.a, dB = b.b - a.b
+        let c1 = sqrt(a.a * a.a + a.b * a.b), c2 = sqrt(b.a * b.a + b.b * b.b)
+        let cBar = (c1 + c2) / 2
+        let g = 0.5 * (1 - sqrt(pow(cBar, 7) / (pow(cBar, 7) + pow(25.0, 7))))
+        let a1 = a.a * (1 + g), a2 = b.a * (1 + g)
+        let c1p = sqrt(a1 * a1 + a.b * a.b), c2p = sqrt(a2 * a2 + b.b * b.b)
+        let h1 = atan2(a.b, a1) * 180 / .pi
+        let h2 = atan2(b.b, a2) * 180 / .pi
+        let dHp: Double
+        if c1p * c2p == 0 { dHp = 0 }
+        else if abs(h2 - h1) <= 180 { dHp = h2 - h1 }
+        else if (h2 - h1) > 180 { dHp = h2 - h1 - 360 }
+        else { dHp = h2 - h1 + 360 }
+        let dH = 2 * sqrt(c1p * c2p) * sin(dHp * .pi / 180 / 2)
+        let dCp = c2p - c1p
+        let cBarP = (c1p + c2p) / 2
+        var hBarP = (h1 + h2) / 2
+        if c1p * c2p == 0 { hBarP = h1 + h2 }
+        else if abs(h1 - h2) > 180 { hBarP = (h1 + h2 + 360) / 2 }
+        if hBarP >= 360 { hBarP -= 360 }
+        let T = 1 - 0.17 * cos((hBarP - 30) * .pi / 180) + 0.24 * cos(2 * hBarP * .pi / 180)
+                + 0.32 * cos((3 * hBarP + 6) * .pi / 180) - 0.20 * cos((4 * hBarP - 63) * .pi / 180)
+        let dTheta = 30 * exp(-pow((hBarP - 275) / 25, 2))
+        let RC = 2 * sqrt(pow(cBarP, 7) / (pow(cBarP, 7) + pow(25.0, 7)))
+        let SC = 1 + 0.045 * cBarP
+        let SH = 1 + 0.015 * cBarP * T
+        let RT = -sin(2 * dTheta * .pi / 180) * RC
+        let cTerm = dCp / SC, hTerm = dH / SH
+        return sqrt(cTerm * cTerm + hTerm * hTerm + RT * cTerm * hTerm)
+    }
+
+    // 完整 CIEDE2000（保留给需要亮度+色度综合评估的调用方）
     private func deltaE2000(_ a: (L: Double, a: Double, b: Double),
                             _ b: (L: Double, a: Double, b: Double)) -> Double {
         let dL = b.L - a.L, dA = b.a - a.a, dB = b.b - a.b
@@ -1075,6 +1287,7 @@ final class PhotoColorRestorer {
             SIMD3(0.1804375, 0.0721750, 0.9503041)))
         let xyz = M * SIMD3(c.r, c.g, c.b)
         let s = xyz.x + xyz.y + xyz.z
+        guard s > 1e-9 else { return (0.3127, 0.3290) } // 退化时返回 D65 xy
         return (xyz.x / s, xyz.y / s)
     }
 
