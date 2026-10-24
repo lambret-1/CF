@@ -11,7 +11,9 @@ final class TrueColorEngine {
         self.ciContext = CIContext(options: [.cacheIntermediates: false, .workingColorSpace: NSNull()])
     }
     
-    func restoreTrueColor(image: UIImage, captureDate: Date = Date(), location: CLLocation? = nil) -> UIImage? {
+    /// 还原真实色彩
+    /// - Parameter intensity: 强度 0.0 ~ 1.0
+    func restoreTrueColor(image: UIImage, captureDate: Date = Date(), location: CLLocation? = nil, intensity: CGFloat = 1.0) -> UIImage? {
         guard let ciImage = CIImage(image: image) else { return image }
         
         let timeWeights = SolarTimeHelper.getSunEventWeights(date: captureDate, location: location)
@@ -22,9 +24,15 @@ final class TrueColorEngine {
         let targetG = baseRGB.g
         let targetB = baseRGB.b * (1.0 - warmBias)
         
-        let rGain = targetG / max(targetR, 0.01)
-        let gGain = targetG / max(targetG, 0.01)
-        let bGain = targetG / max(targetB, 0.01)
+        // 原始计算出的增益
+        let rawR_Gain = targetG / max(targetR, 0.01)
+        let rawG_Gain = targetG / max(targetG, 0.01)
+        let rawB_Gain = targetG / max(targetB, 0.01)
+        
+        // ⭐️ 核心：根据强度进行插值（在 1.0 和原始增益之间）
+        let rGain = 1.0 + (rawR_Gain - 1.0) * intensity
+        let gGain = 1.0 + (rawG_Gain - 1.0) * intensity
+        let bGain = 1.0 + (rawB_Gain - 1.0) * intensity
         
         let colorMatrix = CIFilter.colorMatrix()
         colorMatrix.inputImage = ciImage
