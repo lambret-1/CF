@@ -4,7 +4,7 @@ import CoreImage
 import CoreImage.CIFilterBuiltins
 import CoreLocation
 
-final class PhotoColorRestorer {
+final class TrueColorEngine {
     private let ciContext: CIContext
     
     init() {
@@ -14,24 +14,18 @@ final class PhotoColorRestorer {
     func restoreTrueColor(image: UIImage, captureDate: Date = Date(), location: CLLocation? = nil) -> UIImage? {
         guard let ciImage = CIImage(image: image) else { return image }
         
-        // 1. 获取时间权重 [黎明, 日出, 正午, 日落, 黄昏, 午夜]
         let timeWeights = SolarTimeHelper.getSunEventWeights(date: captureDate, location: location)
-        
-        // 2. 获取平均 RGB
         guard let baseRGB = getAverageRGB(from: ciImage) else { return image }
         
-        // 3. 智能目标：日落/黄昏时保留暖色，正午强迫中性
         let warmBias = timeWeights[3] * 0.3 + timeWeights[4] * 0.4
         let targetR = baseRGB.r * (1.0 + warmBias)
         let targetG = baseRGB.g
         let targetB = baseRGB.b * (1.0 - warmBias)
         
-        // 4. 计算增益
         let rGain = targetG / max(targetR, 0.01)
         let gGain = targetG / max(targetG, 0.01)
         let bGain = targetG / max(targetB, 0.01)
         
-        // 5. 应用色彩矩阵
         let colorMatrix = CIFilter.colorMatrix()
         colorMatrix.inputImage = ciImage
         colorMatrix.rVector = CIVector(x: rGain, y: 0, z: 0, w: 0)
