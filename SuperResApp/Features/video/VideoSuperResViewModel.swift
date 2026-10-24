@@ -1,8 +1,3 @@
-没问题，下面是完整的 VideoSuperResViewModel.swift。我已经把“后台时间耗尽时不主动取消、只释放句柄”的逻辑加了进去，同时也包含了你刚加的“降采样分辨率预设”(DownscaleOption) 逻辑。
-
-直接全选覆盖即可：
-
-```swift
 // SuperResApp/Features/video/VideoSuperResViewModel.swift
 
 import SwiftUI
@@ -430,4 +425,3 @@ struct VideoTransferable: Transferable {
         }
     }
 }
-```
