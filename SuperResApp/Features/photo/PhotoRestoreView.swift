@@ -11,7 +11,8 @@ struct PhotoRestoreView: View {
     @State private var isShowingOriginal = false
     @State private var alertMessage: String?
     
-    private let colorEngine = TrueColorEngine()
+    // ⭐️ 核心对齐：实例化 PhotoColorRestorer
+    private let colorEngine = PhotoColorRestorer()
     
     var body: some View {
         VStack(spacing: 0) {
@@ -49,7 +50,7 @@ struct PhotoRestoreView: View {
                     if restoredImage != nil && !isShowingOriginal && !isProcessing {
                         VStack {
                             Spacer()
-                            Text("长按图片查看原图（学术算法可能洗去艺术氛围）")
+                            Text("长按图片查看原图")
                                 .font(.caption)
                                 .foregroundColor(.white.opacity(0.8))
                                 .padding(8)
@@ -138,6 +139,7 @@ struct PhotoRestoreView: View {
         isProcessing = true
         
         DispatchQueue.global(qos: .userInitiated).async {
+            // 调用对齐后的方法
             let result = colorEngine.autoRestoreColor(image: original)
             DispatchQueue.main.async {
                 self.restoredImage = result
