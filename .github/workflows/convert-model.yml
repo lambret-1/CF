@@ -15,23 +15,33 @@ jobs:
 
       - name: 安装依赖
         run: |
-          pip install torch torchvision coremltools numpy opencv-python
+          pip install --upgrade pip
+          pip install torch torchvision coremltools numpy
 
-      - name: 克隆官方模型代码
+      - name: 下载官方预训练权重（含自动重试与 CDN 兜底）
         run: |
-          git clone https://github.com/SamsungLabs/time-aware-awb.git
-
-      - name: 下载官方预训练权重
-        run: |
-          # 使用 curl -L 下载 Raw 文件，确保能正确重定向
-          curl -L -o model-awb-pref.pt https://raw.githubusercontent.com/SamsungLabs/time-aware-awb/main/models/model-awb-pref.pt
+          URL_RAW="https://raw.githubusercontent.com/SamsungLabs/time-aware-awb/main/models/model-awb-pref.pt"
+          URL_CDN="https://cdn.jsdelivr.net/gh/SamsungLabs/time-aware-awb@main/models/model-awb-pref.pt"
           
-          # 检查文件是否下载成功且大小正常（正常应该有几百KB到几MB）
+          echo "尝试从官方源下载..."
+          if wget -q --tries=3 --timeout=15 -O model-awb-pref.pt "$URL_RAW" && [ $(stat -c%s model-awb-pref.pt 2>/dev/null || echo 0) -gt 100000 ]; then
+            echo "✅ 官方源下载成功"
+          else
+            echo "⚠️ 官方源失败，切换到 jsDelivr CDN 下载..."
+            rm -f model-awb-pref.pt
+            wget -q --tries=3 --timeout=15 -O model-awb-pref.pt "$URL_CDN"
+          fi
+          
+          # 检查最终是否成功
+          FILE_SIZE=$(stat -c%s model-awb-pref.pt 2>/dev/null || echo 0)
+          if [ "$FILE_SIZE" -lt 100000 ]; then
+            echo "❌ 权重文件下载失败或文件过小 (大小: $FILE_SIZE 字节)"
+            exit 1
+          fi
           ls -lh model-awb-pref.pt
 
       - name: 执行转换脚本
         run: |
-          # 修改你的 convert_awb.py 来加载这个权重，注意要确认 PyTorch 的 state_dict 键名与模型匹配
           python convert_awb.py
 
       - name: 上传 CoreML 模型
@@ -39,4 +49,4 @@ jobs:
         with:
           name: TimeAwareAWB-CoreML
           path: TimeAwareAWB.mlpackage
-          retention-days: 7
+          retention-days: 30
