@@ -45,13 +45,13 @@ public struct VideoFrame: @unchecked Sendable {
 public final class VideoDownscaler: @unchecked Sendable {
 
     public struct Config {
-        public var targetShortSide: CGFloat
+        /// ⭐️ 改为可选：nil 表示不降采样（保持原尺寸），默认 272
+        public var targetShortSide: CGFloat?
         public var alignment: Int
         public var clampOvershoot: Bool
         
-        // 显式提供带默认值的 init
         public init(
-            targetShortSide: CGFloat = 272,
+            targetShortSide: CGFloat? = 272,
             alignment: Int = 16,
             clampOvershoot: Bool = true
         ) {
@@ -79,17 +79,12 @@ public final class VideoDownscaler: @unchecked Sendable {
     private let lanczosFilter: CIFilter
     private let clampFilter: CIFilter?
 
-    // MARK: - 日志辅助
     private func logInfo(_ msg: String) {
-        Task { @MainActor in
-            AppLogger.shared.log("[降采样] \(msg)", isError: false)
-        }
+        Task { @MainActor in AppLogger.shared.log("[降采样] \(msg)", isError: false) }
     }
 
     private func logError(_ msg: String) {
-        Task { @MainActor in
-            AppLogger.shared.log("[降采样] ❌ \(msg)", isError: true)
-        }
+        Task { @MainActor in AppLogger.shared.log("[降采样] ❌ \(msg)", isError: true) }
     }
 
     public init(config: Config = Config(), mtlDevice: MTLDevice? = nil) throws {
@@ -103,14 +98,10 @@ public final class VideoDownscaler: @unchecked Sendable {
         }
 
         guard let srgb = CGColorSpace(name: CGColorSpace.sRGB) else {
-            Task { @MainActor in
-                AppLogger.shared.log("[降采样] ❌ 初始化失败: sRGB 色彩空间不可用", isError: true)
-            }
             throw VideoDownscalerError.renderFailed("sRGB 色彩空间不可用")
         }
         self.outputColorSpace = srgb
 
-        // 使用工厂方法创建滤镜
         self.lanczosFilter = CIFilter.lanczosScaleTransform()
         self.clampFilter = config.clampOvershoot ? CIFilter.colorClamp() : nil
     }
@@ -136,7 +127,6 @@ public final class VideoDownscaler: @unchecked Sendable {
         }
         let naturalFrameRate = try await videoTrack.load(.nominalFrameRate)
 
-        // 自动处理视频旋转和像素比例
         let composition = AVMutableVideoComposition(propertiesOf: asset)
         let sourceSize = composition.renderSize
 
@@ -149,14 +139,7 @@ public final class VideoDownscaler: @unchecked Sendable {
         logInfo("目标尺寸=\(Int(targetSize.width))x\(Int(targetSize.height)) (对齐=\(config.alignment))")
         logInfo("时长=\(String(format: "%.2f", duration.seconds))s, 帧率=\(String(format: "%.2f", fps))fps")
 
-        let reader: AVAssetReader
-        do {
-            reader = try AVAssetReader(asset: asset)
-        } catch {
-            logError("创建 AVAssetReader 失败: \(error.localizedDescription)")
-            throw VideoDownscalerError.readerInitFailed(error.localizedDescription)
-        }
-
+        let reader = try AVAssetReader(asset: asset)
         let readerOutput = AVAssetReaderVideoCompositionOutput(
             videoTracks: [videoTrack],
             videoSettings: [
@@ -169,15 +152,12 @@ public final class VideoDownscaler: @unchecked Sendable {
         readerOutput.alwaysCopiesSampleData = false
 
         guard reader.canAdd(readerOutput) else {
-            logError("无法添加 videoCompositionOutput")
             throw VideoDownscalerError.readerStartFailed("无法添加 videoCompositionOutput")
         }
         reader.add(readerOutput)
 
         guard reader.startReading() else {
-            let errMsg = reader.error?.localizedDescription ?? "未知错误"
-            logError("启动 reader 失败: \(errMsg)")
-            throw VideoDownscalerError.readerStartFailed(errMsg)
+            throw VideoDownscalerError.readerStartFailed(reader.error?.localizedDescription ?? "未知错误")
         }
 
         let pool = try makePixelBufferPool(for: targetSize)
@@ -189,39 +169,28 @@ public final class VideoDownscaler: @unchecked Sendable {
             nominalFrameRate: naturalFrameRate
         )
 
-        let frameCounter = LockedBox<Int>(0)
-
-        // 这里去掉了 onCancel 闭包（解决编译报错），改为在空值返回时清理
-        let frames = AsyncThrowingStream<VideoFrame, Error>(
-            unfolding: { [self] () async throws -> VideoFrame? in
-                do {
-                    let frame = try self.pullNextFrame(
-                        reader: reader,
-                        readerOutput: readerOutput,
-                        targetSize: targetSize,
-                        pool: pool
-                    )
-                    
-                    if let _ = frame {
-                        let count = frameCounter.get() + 1
-                        frameCounter.set(count)
-                        if count % 50 == 0 {
-                            self.logInfo("已提取 \(count) 帧供超分使用")
-                        }
-                    } else {
-                        let total = frameCounter.get()
-                        self.logInfo("降采样读取结束，共提取 \(total) 帧")
-                        reader.cancelReading()
-                    }
-                    
-                    return frame
-                } catch {
-                    self.logError("提取帧失败: \(error.localizedDescription)")
-                    reader.cancelReading()
-                    throw error
-                }
+        let frames = AsyncThrowingStream<VideoFrame, Error> { [self] continuation in
+            // 在流取消时清理 reader
+            continuation.onTermination = { _ in
+                reader.cancelReading()
             }
-        )
+            
+            do {
+                var frameCount = 0
+                while let frame = try self.pullNextFrame(reader: reader, readerOutput: readerOutput, targetSize: targetSize, pool: pool) {
+                    continuation.yield(frame)
+                    frameCount += 1
+                    if frameCount % 50 == 0 {
+                        self.logInfo("已提取 \(frameCount) 帧供超分使用")
+                    }
+                }
+                self.logInfo("降采样读取结束，共提取 \(frameCount) 帧")
+                continuation.finish()
+            } catch {
+                self.logError("提取帧失败: \(error.localizedDescription)")
+                continuation.finish(throwing: error)
+            }
+        }
 
         return Output(metadata: metadata, frames: frames)
     }
@@ -232,18 +201,11 @@ public final class VideoDownscaler: @unchecked Sendable {
         targetSize: CGSize,
         pool: CVPixelBufferPool
     ) throws -> VideoFrame? {
-        if let err = reader.error {
-            throw err
-        }
-        guard let sample = readerOutput.copyNextSampleBuffer() else {
-            return nil
-        }
+        if let err = reader.error { throw err }
+        guard let sample = readerOutput.copyNextSampleBuffer() else { return nil }
         
         let pts = CMSampleBufferGetPresentationTimeStamp(sample)
-        
-        guard let imageBuffer = CMSampleBufferGetImageBuffer(sample) else {
-            return nil
-        }
+        guard let imageBuffer = CMSampleBufferGetImageBuffer(sample) else { return nil }
         let out = try renderScaled(from: imageBuffer, to: targetSize, pool: pool)
         return VideoFrame(pixelBuffer: out, presentationTime: pts)
     }
@@ -252,7 +214,9 @@ public final class VideoDownscaler: @unchecked Sendable {
         let shortSide = min(sourceSize.width, sourceSize.height)
         guard shortSide > 0 else { return CGSize(width: 16, height: 16) }
 
-        let scale = config.targetShortSide / shortSide
+        // ⭐️ 如果 targetShortSide 为 nil，直接使用原短边（不缩放），否则按指定值缩放
+        let targetShort = config.targetShortSide ?? shortSide
+        let scale = targetShort / shortSide
         let rawW  = sourceSize.width  * scale
         let rawH  = sourceSize.height * scale
         let align = max(1, config.alignment)
@@ -270,42 +234,36 @@ public final class VideoDownscaler: @unchecked Sendable {
             kCVPixelBufferIOSurfacePropertiesKey as String: [:],
             kCVPixelBufferMetalCompatibilityKey as String: true
         ]
-        let auxAttrs: [String: Any] = [
-            kCVPixelBufferPoolMinimumBufferCountKey as String: 3
-        ]
+        let auxAttrs: [String: Any] = [kCVPixelBufferPoolMinimumBufferCountKey as String: 3]
         var pool: CVPixelBufferPool?
-        let status = CVPixelBufferPoolCreate(
-            kCFAllocatorDefault,
-            auxAttrs as CFDictionary,
-            attrs as CFDictionary,
-            &pool
-        )
+        let status = CVPixelBufferPoolCreate(kCFAllocatorDefault, auxAttrs as CFDictionary, attrs as CFDictionary, &pool)
         guard status == kCVReturnSuccess, let result = pool else {
             throw VideoDownscalerError.pixelBufferPoolFailed
         }
         return result
     }
 
-    private func renderScaled(
-        from sourceBuffer: CVPixelBuffer,
-        to targetSize: CGSize,
-        pool: CVPixelBufferPool
-    ) throws -> CVPixelBuffer {
-
+    private func renderScaled(from sourceBuffer: CVPixelBuffer, to targetSize: CGSize, pool: CVPixelBufferPool) throws -> CVPixelBuffer {
         let input = CIImage(cvPixelBuffer: sourceBuffer)
 
-        let scaleX = targetSize.width  / input.extent.width
-        let scaleY = targetSize.height / input.extent.height
-        let scale  = max(scaleX, scaleY)
+        // 如果不是不降采样，需要执行 Lanczos 缩放
+        var output = input
+        if config.targetShortSide != nil {
+            let scaleX = targetSize.width  / input.extent.width
+            let scaleY = targetSize.height / input.extent.height
+            let scale  = max(scaleX, scaleY)
 
-        lanczosFilter.setValue(input, forKey: kCIInputImageKey)
-        lanczosFilter.setValue(scale, forKey: kCIInputScaleKey)
-        lanczosFilter.setValue(1.0, forKey: kCIInputAspectRatioKey)
+            lanczosFilter.setValue(input, forKey: kCIInputImageKey)
+            lanczosFilter.setValue(scale, forKey: kCIInputScaleKey)
+            lanczosFilter.setValue(1.0, forKey: kCIInputAspectRatioKey)
 
-        guard var output = lanczosFilter.outputImage else {
-            throw VideoDownscalerError.renderFailed("Lanczos outputImage 为 nil")
+            guard let scaledImage = lanczosFilter.outputImage else {
+                throw VideoDownscalerError.renderFailed("Lanczos outputImage 为 nil")
+            }
+            output = scaledImage
         }
 
+        // 居中裁切对齐
         let ext = output.extent
         let cropX = ext.origin.x + (ext.width  - targetSize.width)  / 2
         let cropY = ext.origin.y + (ext.height - targetSize.height) / 2
@@ -315,6 +273,7 @@ public final class VideoDownscaler: @unchecked Sendable {
             .cropped(to: cropRect)
             .transformed(by: CGAffineTransform(translationX: -cropRect.origin.x, y: -cropRect.origin.y))
 
+        // 消除 Lanczos 锐化过冲
         if let clamp = clampFilter {
             clamp.setValue(output, forKey: kCIInputImageKey)
             clamp.setValue(CIVector(x: 0, y: 0, z: 0, w: 0), forKey: "inputMinComponents")
@@ -328,17 +287,7 @@ public final class VideoDownscaler: @unchecked Sendable {
             throw VideoDownscalerError.pixelBufferPoolFailed
         }
 
-        let renderRect = CGRect(origin: .zero, size: targetSize)
-        ciContext.render(output, to: outBuffer, bounds: renderRect, colorSpace: outputColorSpace)
+        ciContext.render(output, to: outBuffer, bounds: CGRect(origin: .zero, size: targetSize), colorSpace: outputColorSpace)
         return outBuffer
     }
-}
-
-// MARK: - 线程安全的计数器
-private final class LockedBox<T>: @unchecked Sendable {
-    private let lock = NSLock()
-    private var value: T
-    init(_ initial: T) { self.value = initial }
-    func set(_ v: T) { lock.lock(); value = v; lock.unlock() }
-    func get() -> T { lock.lock(); defer { lock.unlock() }; return value }
 }
