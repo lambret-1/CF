@@ -282,7 +282,7 @@ final class VideoSuperResProcessor: @unchecked Sendable {
                 guard let sb = io.videoOutput.copyNextSampleBuffer() else {
                     processor.logInfo("📭 Reader 读取结束 reader.status=\(io.reader.status.rawValue) error=\(String(describing: io.reader.error))")
                     state.condition.lock()
-                    state.isReadingFinished = true
+                    state.isReadingFinished = true完成
                     state.condition.broadcast()
                     state.condition.unlock()
                     break
@@ -313,7 +313,7 @@ final class VideoSuperResProcessor: @unchecked Sendable {
                     if origin.x != 0 || origin.y != 0 {
                         ciImage = ciImage.transformed(by: CGAffineTransform(translationX: -origin.x, y: -origin.y))
                     }
-                    guard let cgImage = processor.ciContext.createCGImage(ciImage, from: ciImageBuffer.extent) else {
+                    guard let cgImage = processor.ciContext.createCGImage(ciImage, from: ciImage.extent) else {
                         processor.logError("[#\(idx)] createCGImage 返回 nil")
                         state.condition.lock(); state.bufferFailedCount += 1; state.condition.unlock()
                         return
@@ -321,7 +321,7 @@ final class VideoSuperResProcessor: @unchecked Sendable {
 
                     let imageBox = LockedBox<CGImage>(cgImage)
                     
-                    // ⭐️ 关键：异步提交超分任务，不阻塞 Producer 循环
+                    // ⭐️ 异步提交超分任务，不阻塞 Producer 循环
                     Task.detached(priority: .userInitiated) { [weak state] in
                         guard let state else { return }
                         
@@ -347,7 +347,7 @@ final class VideoSuperResProcessor: @unchecked Sendable {
                             return
                         }
 
-                        // 2. 同步转换 Pixel（使用 autoreleasepool 控制内存峰值）
+                        // 2. 同步转换 PixelBuffer（使用 autoreleasepool 控制内存峰值）
                         autoreleasepool {
                             guard let buffer = processor.makePixelBuffer(
                                 pool: io.adaptor.pixelBufferPool,
@@ -361,7 +361,7 @@ final class VideoSuperResProcessor: @unchecked Sendable {
                                 return
                             }
 
-                            // 3. 存入完成队列，通知 Writer
+                            // 3. 存入队列，通知 Writer
                             state.condition.lock()
                             state.completedBuffers[idx]    = buffer
                             state.completedTimestamps[idx] = ts
