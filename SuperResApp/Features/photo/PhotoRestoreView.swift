@@ -41,7 +41,7 @@ struct PhotoRestoreView: View {
                     
                     if isProcessing {
                         Color.black.opacity(0.5)
-                        ProgressView("正在还原...")
+                        ProgressView("正在分析光源...")
                             .tint(.white)
                             .foregroundColor(.white)
                     }
@@ -49,7 +49,7 @@ struct PhotoRestoreView: View {
                     if restoredImage != nil && !isShowingOriginal && !isProcessing {
                         VStack {
                             Spacer()
-                            Text("长按图片查看原图")
+                            Text("长按图片查看原图（学术算法可能洗去艺术氛围）")
                                 .font(.caption)
                                 .foregroundColor(.white.opacity(0.8))
                                 .padding(8)
@@ -74,7 +74,6 @@ struct PhotoRestoreView: View {
                 
                 if originalImage != nil {
                     HStack(spacing: 12) {
-                        // 只有一个按钮，点一下直接出图
                         Button {
                             performAutoRestore()
                         } label: {
