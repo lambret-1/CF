@@ -156,12 +156,24 @@ final class VideoSuperResProcessor: @unchecked Sendable {
         progressHandler: @escaping @MainActor @Sendable (Double) -> Void
     ) async throws {
 
-        // ⭐ 新增：记录单调时钟起点，defer 兜底覆盖所有出口（成功 / 取消 / 抛错）
+        // ⭐ 新增：记录单调时钟起点和写入帧数缓存
         let clock = ContinuousClock()
         let startInstant = clock.now
+        let finalAppendedCountBox = LockedBox<Int>(0)
+
+        // ⭐ 使用 defer 兜底覆盖所有出口（成功 / 取消 / 抛错）
         defer {
             let elapsed = clock.now - startInstant
-            logInfo("==== 任务结束 总用时 \(Self.formatDuration(elapsed)) ====")
+            let totalSecs = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
+            let count = finalAppendedCountBox.get()
+            
+            var avgMsg = ""
+            if count > 0 {
+                let avg = totalSecs / Double(count)
+                avgMsg = " 平均每帧耗时=\(String(format: "%.2f", avg))秒"
+            }
+            
+            logInfo("==== 任务结束 总用时 \(Self.formatDuration(elapsed))\(avgMsg) ====")
         }
 
         isCancelRequested = false
@@ -232,13 +244,13 @@ final class VideoSuperResProcessor: @unchecked Sendable {
             AVVideoWidthKey: targetWidth,
             AVVideoHeightKey: targetHeight,
             AVVideoCompressionPropertiesKey: [
-                AVVideoAverageBitRateKey: Int(Double(targetWidth * targetHeight) * 2.5),
-                AVVideoMaxKeyFrameIntervalKey: 30,
+                AVVideoAverageBitRateKey: Int(Double(targetWidth * targetHeight) * 2 =.5),
+                AVVideoMaxKeyFrameIntervalKey: 30 false,
                 AVVideoAllowFrameReorderingKey: true
             ]
         ])
-        writerVideoInput.expectsMediaDataInRealTime = false
-        writer.add(writerVideoInput)
+
+        writerVideoInput.expectsMediaDataInRealTime        writer.add(writerVideoInput)
 
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(
             assetWriterInput: writerVideoInput,
@@ -292,7 +304,9 @@ final class VideoSuperResProcessor: @unchecked Sendable {
 
         let state = PipelineState()
         let processor = self
-        let inFlightLimit = 2
+        
+        // ⭐ 修改：并发数改成 3
+        let inFlightLimit = 3
 
         // Producer
         let producerQueue = DispatchQueue(label: "video.producer", qos: .userInitiated)
@@ -375,7 +389,12 @@ final class VideoSuperResProcessor: @unchecked Sendable {
 
                         var resImage: CGImage?
                         do {
+                            // ⭐ 新增：记录超分开始时间
+                            let srStart = ContinuousClock.now
                             resImage = try await SuperResolver.shared.fastUpscale(image: imageBox.get(), modelID: io.modelID)
+                            let cost = ContinuousClock.now - srStart
+                            // ⭐ 新增：打印单帧超分耗时
+                            processor.logInfo("[#\(idx)] 超分耗时=\(Self.formatDuration(cost))")
                         } catch {
                             let desc = error.localizedDescription
                             Task { @MainActor in
@@ -421,10 +440,11 @@ final class VideoSuperResProcessor: @unchecked Sendable {
             let resume = ResumeBox()
 
             let writerQueue = DispatchQueue(label: "video.writer", qos: .userInitiated)
+            
+            // ⭐ 新增：将节流状态提到闭包外部，使用 LockedBox 解决每次重入被重置导致刷屏的 Bug
+            let logState = LockedBox<(percent: Int, wait: Date)>((-100, Date.distantPast))
+            
             io.videoInput.requestMediaDataWhenReady(on: writerQueue) {
-                var lastLoggedPercent = -100
-                var lastWaitLog = Date.distantPast
-
                 while io.videoInput.isReadyForMoreMediaData {
                     state.condition.lock()
 
@@ -468,13 +488,17 @@ final class VideoSuperResProcessor: @unchecked Sendable {
                         state.appendedCount += 1
                         let done = state.writeFrameIndex
                         let cacheSize = state.completedBuffers.count
+                        // ⭐ 更新用于最后统计的总帧数
+                        finalAppendedCountBox.set(state.appendedCount)
                         state.condition.unlock()
 
                         let progress = min(1.0, Double(done) / Double(io.totalOutputFrames))
                         let pct = Int(progress * 100)
                         
-                        if pct / 10 != lastLoggedPercent / 10 {
-                            lastLoggedPercent = pct
+                        // ⭐ 修改：使用外部的 logState 安全控制节流
+                        let currentLogState = logState.get()
+                        if pct / 10 != currentLogState.percent / 10 {
+                            logState.set((pct, currentLogState.wait))
                             processor.logInfo("📊 进度 \(pct)% (\(done)/\(io.totalOutputFrames)) 在途=\(inFlight) 缓存=\(cacheSize)")
                         }
                         
@@ -499,10 +523,12 @@ final class VideoSuperResProcessor: @unchecked Sendable {
                         return
 
                     } else {
+                        // ⭐ 修改：使用外部的 logState 严格 5 秒打印一次等待日志
                         let now = Date()
-                        if now.timeIntervalSince(lastWaitLog) >= 5.0 {
-                            lastWaitLog = now
-                            processor.logInfo("⏳ Writer 等待: 缓存=\(state.completedBuffers.count) read=\(state.readFrameIndex) write=\(state.writeFrameIndex)")
+                        let currentLogState = logState.get()
+                        if now.timeIntervalSince(currentLogState.wait) >= 5.0 {
+                            logState.set((currentLogState.percent, now))
+                            processor.logInfo("⏳ Writer 等待超分结果: 缓存=\(state.completedBuffers.count) read=\(state.readFrameIndex) write=\(state.writeFrameIndex)")
                         }
                         _ = state.condition.wait(until: Date(timeIntervalSinceNow: 0.1))
                         state.condition.unlock()
@@ -542,7 +568,7 @@ final class VideoSuperResProcessor: @unchecked Sendable {
         await logInfoAsync(finalMsg)
     }
 
-      private func makePixelBuffer(pool: CVPixelBufferPool?, image: CGImage, width: Int, height: Int) -> CVPixelBuffer? {
+    private func makePixelBuffer(pool: CVPixelBufferPool?, image: CGImage, width: Int, height: Int) -> CVPixelBuffer? {
         var pb: CVPixelBuffer?
         if let pool = pool {
             CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &pb)
@@ -552,16 +578,13 @@ final class VideoSuperResProcessor: @unchecked Sendable {
         
         guard let buffer = pb else { return nil }
 
-        // ⭐️ 优化点：使用 CIContext 的 GPU 渲染，替代 CPU 密集的 CGContext.draw
         let ciImage = CIImage(cgImage: image)
-        // 确保渲染的比例和尺寸完全匹配
         let scaleX = CGFloat(width) / ciImage.extent.width
         let scaleY = CGFloat(height) / ciImage.extent.height
         let scaledImage = ciImage.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
         
-        // 直接渲染到 CVPixelBuffer，速度极快
         ciContext.render(scaledImage, to: buffer)
         
         return buffer
     }
-    }
+}
