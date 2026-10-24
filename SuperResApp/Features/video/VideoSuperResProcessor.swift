@@ -41,6 +41,7 @@ actor VideoSuperResProcessor {
         let naturalSize = try await videoTrack.load(.naturalSize)
         let preferredTransform = try await videoTrack.load(.preferredTransform)
         let duration = try await asset.load(.duration)
+        let nominalFrameRate = try await videoTrack.load(.nominalFrameRate)
         
         let transformedSize = naturalSize.applying(preferredTransform)
         let pixelWidth = abs(transformedSize.width)
@@ -51,8 +52,20 @@ actor VideoSuperResProcessor {
         targetWidth = targetWidth / 2 * 2
         targetHeight = targetHeight / 2 * 2
         
-        // ⭐️ 记录初始信息
+        // ⭐️ 核心新增：自适应抽帧计算
+        // 假设我们希望视频最高不超过 30fps（你可以根据情况改成 24 或 60）
+        let targetMaxFPS: Double = 30.0
+        var skipInterval: Int = 1
+        
+        if nominalFrameRate > targetMaxFPS {
+            // 算出差值，比如 60fps / 30fps = 2，代表处理 1 帧，跳过 1 帧
+            skipInterval = Int(round(nominalFrameRate / targetMaxFPS))
+        }
+        
         await logInfo("🎬 开始处理视频：\(Int(pixelWidth))x\(Int(pixelHeight)) -> \(targetWidth)x\(targetHeight)")
+        if skipInterval > 1 {
+            await logInfo("⚡️ 抽帧生效：原帧率 \(Int(nominalFrameRate))fps -> 目标 \(Int(targetMaxFPS))fps (每 \(skipInterval) 帧取 1 帧)")
+        }
         
         let reader = try AVAssetReader(asset: asset)
         let videoOutputSettings: [String: Any] = [
@@ -77,7 +90,6 @@ actor VideoSuperResProcessor {
             await logInfo("🔇 原视频无音频轨道")
         }
         
-        // 改用 MOV + HEVC
         let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mov)
         
         let videoCompressionProperties: [String: Any] = [
@@ -86,7 +98,7 @@ actor VideoSuperResProcessor {
         ]
         
         let writerVideoInput = AVAssetWriterInput(mediaType: .video, outputSettings: [
-            AVVideoCodecKey: AVVideoCodecType.hevc, 
+            AVVideoCodecKey: AVVideoCodecType.hevc,
             AVVideoWidthKey: targetWidth,
             AVVideoHeightKey: targetHeight,
             AVVideoCompressionPropertiesKey: videoCompressionProperties
@@ -120,9 +132,9 @@ actor VideoSuperResProcessor {
         writer.startSession(atSourceTime: .zero)
         await logInfo("⚙️ 编码器启动成功，开始逐帧超分...")
         
-        let nominalFrameRate = try await videoTrack.load(.nominalFrameRate)
-        let totalFrames = max(1.0, CMTimeGetSeconds(duration) * Double(nominalFrameRate))
+        let totalFrames = max(1.0, CMTimeGetSeconds(duration) * nominalFrameRate)
         var currentFrame: Double = 0
+        var framesToSkip = 0 // ⭐️ 抽帧计数器
         
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             let queue = DispatchQueue(label: "com.superres.video.processing")
@@ -156,6 +168,18 @@ actor VideoSuperResProcessor {
                         return
                     }
                     
+                    // ⭐️ 核心抽帧逻辑：如果当前帧需要跳过，直接消费掉 Buffer，更新进度，进入下一次循环
+                    if framesToSkip > 0 {
+                        framesToSkip -= 1
+                        currentFrame += 1
+                        let progress = min(1.0, currentFrame / totalFrames)
+                        DispatchQueue.main.async { self.progressHandler?(progress) }
+                        continue
+                    }
+                    // 重置跳过计数器（因为 skipInterval=2 时，我们要处理1帧，跳过1帧）
+                    framesToSkip = skipInterval - 1 
+                    
+                    // 真正进入处理的帧
                     autoreleasepool {
                         guard let imageBuffer = CMSampleBufferGetImageBuffer(videoSampleBuffer) else { return }
                         let timestamp = CMSampleBufferGetPresentationTimeStamp(videoSampleBuffer)
@@ -223,7 +247,7 @@ actor VideoSuperResProcessor {
         await MainActor.run { AppLogger.shared.log("[视频管道] \(msg)", isError: false) }
     }
     
-    // MARK: - 转换工具 (保持原样)
+    // MARK: - 转换工具
     private func pixelBuffer(from image: CGImage, width: Int, height: Int) -> CVPixelBuffer? {
         let attrs: [CFString: Any] = [
             kCVPixelBufferCGImageCompatibilityKey: true,
