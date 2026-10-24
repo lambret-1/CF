@@ -47,9 +47,8 @@ final class VideoSuperResViewModel: ObservableObject {
         guard let inputURL = originalVideoURL else { return }
         
         state = .processing
-        progress = 0.0
         
-        let outputURL = tempDirectory.appendingPathComponent("superres_\(Int(Date().timeIntervalSince1970)).mp4")
+        let outputURL = tempDirectory.appendingPathComponent("superres_\(Int(Date().timeIntervalSince1970)).mov")e1970)).mp4")
         self.processor = VideoSuperResProcessor()
         
         do {
