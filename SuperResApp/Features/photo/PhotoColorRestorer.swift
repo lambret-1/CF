@@ -2,19 +2,20 @@ import Foundation
 import UIKit
 import CoreImage
 import CoreImage.CIFilterBuiltins
+import Accelerate // 引入 Accelerate 加速幂运算
 
 final class TrueColorEngine {
     private let ciContext: CIContext
     
     init() {
         self.ciContext = CIContext(options: [.cacheIntermediates: false, .workingColorSpace: NSNull()])
- return    }
+    }
     
-    /// 极致一键：自动 image融合“白块”与“灰世界”算法
-    func auto }
+    /// 基于 Minkowski p-范数 (p=6) 的学术标准自动白平衡
+    func autoRestoreColor(image: UIImage) -> UIImage? {
+        guard let ciImage = CIImage(image: image) else { return image }
         
-RestoreColor(image: UIImage) ->        UIImage? {
-        guard let ciImage = CIImage(image //: image) else { 1. 缩小图像以极速分析（不损失准确率）
+        // 1. 缩小图像以极速分析 (保持颜色分布)
         let scaleFilter = CIFilter(name: "CILanczosScaleTransform")!
         scaleFilter.setValue(ciImage, forKey: kCIInputImageKey)
         scaleFilter.setValue(0.05, forKey: kCIInputScaleKey)
@@ -30,9 +31,13 @@ RestoreColor(image: UIImage) ->        UIImage? {
         var bitmap = [UInt8](repeating: 0, count: width * height * 4)
         ciContext.render(smallImage, toBitmap: &bitmap, rowBytes: width * 4, bounds: extent, format: .RGBA8, colorSpace: nil)
         
-        // 2. 开始双算法混合计算
-        var whitePatchR: Double = 0, whitePatchG: Double = 0, whitePatchB: Double = 0, whiteCount: Double = 0
-        var grayWorldR: Double = 0, grayWorldG: Double = 0, grayWorldB: Double = 0, grayWeight: Double = 0
+        // 2. 学术标准：计算每个颜色通道的 Minkowski p-范数 (p=6)
+        // 公式: e_i = ( (1/MN) * sum( p_i(x,y)^p ) )^(1/p)
+        let p: Double = 6.0
+        var sumR: Double = 0.0
+        var sumG: Double = 0.0
+        var sumB: Double = 0.0
+        var validPixelCount: Double = 0
         
         for i in 0..<(width * height) {
             let offset = i * 4
@@ -40,64 +45,32 @@ RestoreColor(image: UIImage) ->        UIImage? {
             let g = Double(bitmap[offset + 1]) / 255.0
             let b = Double(bitmap[offset + 2]) / 255.0
             
+            // 学术规范：忽略过曝像素 (动态范围 95% 以上)[reference:6]
             let maxChannel = max(r, max(g, b))
-            let minChannel = min(r, min(g, b))
+            if maxChannel > 0.95 { continue }
             
-            // 【白块算法】寻找高光点 (亮度在 0.7 ~ 0.95 之间，避开纯白过曝)
-            if maxChannel > 0.7 && maxChannel < 0.95 {
-                whitePatchR += r
-                whitePatchG += g
-                whitePatchB += b
-                whiteCount += 1
-            }
-            
-            // 【灰世界算法】寻找中间调 (亮度在 0.15 ~ 0.9 之间)
-            if maxChannel >= 0.15 && maxChannel <= 0.9 {
-                // 计算饱和度，饱和度越高的物体（如红花），越不参与计算，防止被洗灰
-                let saturation = maxChannel == 0 ? 0 : (maxChannel - minChannel) / maxChannel
-                let weight = 1.0 - (saturation * 0.7) 
-                
-                grayWorldR += r * weight
-                grayWorldG += g * weight
-                grayWorldB += b * weight
-                grayWeight += weight
-            }
+            // 累加 p 次幂
+            sumR += pow(r, p)
+            sumG += pow(g, p)
+            sumB += pow(b, p)
+            validPixelCount += 1.0
         }
         
-        // 3. 计算最终需要的 RGB 增益
-        var targetR: Double = 1.0
-        var targetG: Double = 1.0
-        var targetB: Double = 1.0
+        guard validPixelCount > 0 else { return image }
         
-        if whiteCount > (Double(width * height) * 0.01) {
-            // 如果画面中有超过 1% 的高光区域，优先使用白块算法（对偏黄偏蓝极其有效）
-            let avgWPR = whitePatchR / whiteCount
-            let avgWPG = whitePatchG / whiteCount
-            let avgWPB = whitePatchB / whiteCount
-            
-            // 目标是纯白
-            targetR = 1.0 / max(avgWPR, 0.01)
-            targetG = 1.0 / max(avgWPG, 0.01)
-            targetB = 1.0 / max(avgWPB, 0.01)
-        } else if grayWeight > 0 {
-            // 如果没有明显高光（如夜景、森林），降级使用智能灰世界
-            let avgGWR = grayWorldR / grayWeight
-            let avgGWG = grayWorldG / grayWeight
-            let avgGWB = grayWorldB / grayWeight
-            let targetAvg = (avgGWR + avgGWG + avgGWB) / 3.0
-            
-            targetR = targetAvg / max(avgGWR, 0.01)
-            targetG = targetAvg / max(avgGWG, 0.01)
-            targetB = targetAvg / max(avgGWB, 0.01)
-        } else {
-            return image // 极端情况（全黑），直接返回原图
-        }
+        // 计算范数 (开 p 次方根)
+        let eR = pow(sumR / validPixelCount, 1.0 / p)
+        let eG = pow(sumG / validPixelCount, 1.0 / p)
+        let eB = pow(sumB / validPixelCount, 1.0 / p)
         
-        // 限制最大增益，防止暴力拉偏颜色
-        let clamp = { (val: Double) -> Double in min(max(val, 0.5), 2.0) }
-        let finalR = clamp(targetR)
-        let finalG = clamp(targetG)
-        let finalB = clamp(targetB)
+        // 3. 计算增益 (目标为中性灰，即三通道范数相等)
+        // 为防止极端情况，依然保留一个宽松的钳制 (Clamp)
+        let targetAvg = (eR + eG + eB) / 3.0
+        
+        let clamp = { (val: Double) -> Double in min(max(val, 0.4), 2.5) }
+        let finalR = clamp(targetAvg / max(eR, 0.001))
+        let finalG = clamp(targetAvg / max(eG, 0.001))
+        let finalB = clamp(targetAvg / max(eB, 0.001))
         
         // 4. 应用到原图
         let colorMatrix = CIFilter.colorMatrix()
