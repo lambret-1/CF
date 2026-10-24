@@ -24,13 +24,14 @@ private struct FilledButtonStyle: ButtonStyle {
 
 struct VideoSuperResView: View {
 
-    // ❗️关键修复：使用单例 + @ObservedObject。
-    // View 销毁重建时拿到的仍是同一个 ViewModel，处理任务永不被打断。
     @ObservedObject private var viewModel = VideoSuperResViewModel.shared
 
     @State private var pickerItem: PhotosPickerItem?
     @State private var player: AVPlayer?
     @State private var alertMessage: String?
+    
+    // ⭐️ 新增：控制取消确认弹窗的显示
+    @State private var showCancelConfirmation = false
 
     var body: some View {
         VStack(spacing: 20) {
@@ -38,7 +39,6 @@ struct VideoSuperResView: View {
             errorBanner
             Spacer(minLength: 0)
             
-            // ⭐️ 将模型选择和分辨率选择统一放入一个 VStack 中
             VStack(spacing: 10) {
                 modelMenu
                 downscaleMenu
@@ -54,6 +54,15 @@ struct VideoSuperResView: View {
             Button("好的", role: .cancel) { alertMessage = nil }
         } message: {
             Text(alertMessage ?? "")
+        }
+        // ⭐️ 新增：取消处理的二次确认弹窗
+        .confirmationDialog("确定要取消当前超分任务吗？", isPresented: $showCancelConfirmation, titleVisibility: .visible) {
+            Button("确认取消", role: .destructive) {
+                viewModel.cancelProcessing()
+            }
+            Button("继续处理", role: .cancel) {}
+        } message: {
+            Text("取消后当前进度将会丢失，需要从头开始处理。")
         }
         // 进入页面：根据 ViewModel 当前状态恢复播放器（切 Tab 回来 / 返回时会触发）
         .onAppear { restorePlayer() }
@@ -87,13 +96,11 @@ struct VideoSuperResView: View {
 
     // MARK: - 恢复播放器
     private func restorePlayer() {
-        // 优先展示处理结果
         if viewModel.state == .completed, let url = viewModel.resultVideoURL {
             player = AVPlayer(url: url)
             player?.play()
             return
         }
-        // 其次展示原视频
         if let url = viewModel.originalVideoURL {
             player = AVPlayer(url: url)
         }
@@ -124,12 +131,13 @@ struct VideoSuperResView: View {
                 }
             }
 
-            if viewModel.state == .processing {
+            if viewModel.state == View .processing {
                 processingOverlay
+ {
             }
         }
-        .frame(maxWidth: .infinity)
-        .frame(minHeight: 220, idealHeight: 340, maxHeight: 380)
+        .frame(max       Width: .infinity)
+        V .frame(minHeight: 220,Stack idealHeight: 340, max(spHeight: 380)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .padding(.horizontal)
     }
@@ -200,7 +208,7 @@ struct VideoSuperResView: View {
         .disabled(!viewModel.state.canEditModel)
     }
 
-    // MARK: - ⭐️ 新增：降采样分辨率菜单
+    // MARK: - 降采样分辨率菜单
     private var downscaleMenu: some View {
         Menu {
             Picker("降采样分辨率", selection: $viewModel.selectedDownscaleOption) {
@@ -213,7 +221,7 @@ struct VideoSuperResView: View {
                 Image(systemName: "arrow.down.right.and.arrow.up.left")
                     .foregroundColor(.orange)
                 
-                Text("输入采样分辨率：\(viewModel.selectedDownscaleOption.rawValue)")
+                Text("输入分辨率：\(viewModel.selectedDownscaleOption.rawValue)")
                     .font(.subheadline)
                     .fontWeight(.medium)
                     .foregroundColor(.primary)
@@ -238,8 +246,7 @@ struct VideoSuperResView: View {
 
     // MARK: - 操作区
     @ViewBuilder
-    private var actionArea: some View {
-        VStack(spacing: 12) {
+    private var actionArea: someacing: 12) {
             switch viewModel.state {
             case .empty:
                 photosPickerButton
@@ -254,9 +261,9 @@ struct VideoSuperResView: View {
                 .buttonStyle(FilledButtonStyle(color: .blue))
 
             case .processing:
-                // ❗️这是唯一允许打断任务的按钮
+                // ⭐️ 修改：点击取消时，先弹窗确认，而不是直接取消
                 Button("取消处理", role: .destructive) {
-                    viewModel.cancelProcessing()
+                    showCancelConfirmation = true
                 }
                 .buttonStyle(FilledButtonStyle(color: .red.opacity(0.1), foreground: .red))
 
