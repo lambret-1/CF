@@ -30,7 +30,7 @@ struct VideoSuperResView: View {
     @State private var player: AVPlayer?
     @State private var alertMessage: String?
     
-    // ⭐️ 新增：控制取消确认弹窗的显示
+    // 控制取消确认弹窗的显示
     @State private var showCancelConfirmation = false
 
     var body: some View {
@@ -55,7 +55,7 @@ struct VideoSuperResView: View {
         } message: {
             Text(alertMessage ?? "")
         }
-        // ⭐️ 新增：取消处理的二次确认弹窗
+        // 取消处理的二次确认弹窗
         .confirmationDialog("确定要取消当前超分任务吗？", isPresented: $showCancelConfirmation, titleVisibility: .visible) {
             Button("确认取消", role: .destructive) {
                 viewModel.cancelProcessing()
@@ -64,14 +64,11 @@ struct VideoSuperResView: View {
         } message: {
             Text("取消后当前进度将会丢失，需要从头开始处理。")
         }
-        // 进入页面：根据 ViewModel 当前状态恢复播放器（切 Tab 回来 / 返回时会触发）
         .onAppear { restorePlayer() }
-        // ❗️关键修复：离开页面只暂停播放器，绝不动 ViewModel 的处理任务
         .onDisappear {
             player?.pause()
             player = nil
         }
-        // 选视频后清空 pickerItem，允许重复选择同一视频
         .onChange(of: pickerItem) { _, newItem in
             guard let newItem else { return }
             Task {
@@ -79,14 +76,12 @@ struct VideoSuperResView: View {
                 pickerItem = nil
             }
         }
-        // 处理完成时（View 在前台）立即切换播放器
         .onChange(of: viewModel.resultVideoURL) { _, url in
             guard let url else { return }
             player?.pause()
             player = AVPlayer(url: url)
             player?.play()
         }
-        // 换原视频时刷新播放器
         .onChange(of: viewModel.originalVideoURL) { _, url in
             guard viewModel.state != .completed else { return }
             player?.pause()
@@ -119,7 +114,7 @@ struct VideoSuperResView: View {
         ZStack {
             Color.black.opacity(0.9)
 
-            if let player {
+            if let player = player {
                 VideoPlayer(player: player)
             } else {
                 VStack(spacing: 12) {
@@ -131,13 +126,12 @@ struct VideoSuperResView: View {
                 }
             }
 
-            if viewModel.state == View .processing {
+            if viewModel.state == .processing {
                 processingOverlay
- {
             }
         }
-        .frame(max       Width: .infinity)
-        V .frame(minHeight: 220,Stack idealHeight: 340, max(spHeight: 380)
+        .frame(maxWidth: .infinity)
+        .frame(minHeight: 220, idealHeight: 340, maxHeight: 380)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .padding(.horizontal)
     }
@@ -246,7 +240,8 @@ struct VideoSuperResView: View {
 
     // MARK: - 操作区
     @ViewBuilder
-    private var actionArea: someacing: 12) {
+    private var actionArea: some View {
+        VStack(spacing: 12) {
             switch viewModel.state {
             case .empty:
                 photosPickerButton
@@ -261,7 +256,6 @@ struct VideoSuperResView: View {
                 .buttonStyle(FilledButtonStyle(color: .blue))
 
             case .processing:
-                // ⭐️ 修改：点击取消时，先弹窗确认，而不是直接取消
                 Button("取消处理", role: .destructive) {
                     showCancelConfirmation = true
                 }
@@ -331,7 +325,7 @@ struct VideoSuperResView: View {
                     player?.pause()
                     player = nil
                     pickerItem = nil
-                    viewModel.reset()   // busy 时内部 guard 直接拒绝
+                    viewModel.reset()
                 }
                 .disabled(viewModel.state.isBusy)
             }
