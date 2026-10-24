@@ -1,5 +1,5 @@
 name: Convert Time-Aware AWB to CoreML
-on: [workflow_dispatch] # 允许你在 Actions 页面手动点击触发
+on: [workflow_dispatch]
 
 jobs:
   convert:
@@ -11,7 +11,7 @@ jobs:
       - name: 安装 Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.8' # 建议使用 3.8 以兼容官方旧版依赖
+          python-version: '3.8'
 
       - name: 安装依赖
         run: |
@@ -21,13 +21,18 @@ jobs:
         run: |
           git clone https://github.com/SamsungLabs/time-aware-awb.git
 
-      - name: 下载预训练权重
+      - name: 下载官方预训练权重
         run: |
-          # 请替换为官方提供的真实权重下载链接
-          wget -O weights/awb_final.pth https://example.com/path/to/awb_final.pth
+          # 使用 curl -L 下载 Raw 文件，确保能正确重定向
+          curl -L -o model-awb-pref.pt https://raw.githubusercontent.com/SamsungLabs/time-aware-awb/main/models/model-awb-pref.pt
+          
+          # 检查文件是否下载成功且大小正常（正常应该有几百KB到几MB）
+          ls -lh model-awb-pref.pt
 
       - name: 执行转换脚本
-        run: python convert_awb.py
+        run: |
+          # 修改你的 convert_awb.py 来加载这个权重，注意要确认 PyTorch 的 state_dict 键名与模型匹配
+          python convert_awb.py
 
       - name: 上传 CoreML 模型
         uses: actions/upload-artifact@v4
