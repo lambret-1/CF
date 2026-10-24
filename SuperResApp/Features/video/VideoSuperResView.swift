@@ -213,7 +213,7 @@ struct VideoSuperResView: View {
                 Image(systemName: "arrow.down.right.and.arrow.up.left")
                     .foregroundColor(.orange)
                 
-                Text("输入分辨率：\(viewModel.selectedDownscaleOption.rawValue)")
+                Text("输入采样分辨率：\(viewModel.selectedDownscaleOption.rawValue)")
                     .font(.subheadline)
                     .fontWeight(.medium)
                     .foregroundColor(.primary)
