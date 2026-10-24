@@ -42,7 +42,6 @@ actor VideoSuperResProcessor {
         let preferredTransform = try await videoTrack.load(.preferredTransform)
         let duration = try await asset.load(.duration)
         
-        // ⭐️ 修复点 1：将 Float 类型的 nominalFrameRate 转换为 Double
         let rawFrameRate = try await videoTrack.load(.nominalFrameRate)
         let nominalFrameRate = Double(rawFrameRate)
         
@@ -59,7 +58,6 @@ actor VideoSuperResProcessor {
         let targetMaxFPS: Double = 30.0
         var skipInterval: Int = 1
         
-        // 现在两边都是 Double，可以正常比较和相除了
         if nominalFrameRate > targetMaxFPS {
             skipInterval = Int(round(nominalFrameRate / targetMaxFPS))
         }
@@ -134,7 +132,6 @@ actor VideoSuperResProcessor {
         writer.startSession(atSourceTime: .zero)
         await logInfo("⚙️ 编码器启动成功，开始逐帧超分...")
         
-        // ⭐️ 修复点 2：现在两边都是 Double，可以正常相乘了
         let totalFrames = max(1.0, CMTimeGetSeconds(duration) * nominalFrameRate)
         var currentFrame: Double = 0
         var framesToSkip = 0
@@ -171,7 +168,7 @@ actor VideoSuperResProcessor {
                         return
                     }
                     
-                    // ⭐️ 核心抽帧逻辑：如果当前帧需要跳过，直接消费掉 Buffer，更新进度，进入下一次循环
+                    // ⭐️ 核心抽帧逻辑
                     if framesToSkip > 0 {
                         framesToSkip -= 1
                         currentFrame += 1
@@ -179,10 +176,8 @@ actor VideoSuperResProcessor {
                         DispatchQueue.main.async { self.progressHandler?(progress) }
                         continue
                     }
-                    // 重置跳过计数器（因为 skipInterval=2 时，我们要处理1帧，跳过1帧）
                     framesToSkip = skipInterval - 1 
                     
-                    // 真正进入处理的帧
                     autoreleasepool {
                         guard let imageBuffer = CMSampleBufferGetImageBuffer(videoSampleBuffer) else { return }
                         let timestamp = CMSampleBufferGetPresentationTimeStamp(videoSampleBuffer)
@@ -225,7 +220,8 @@ actor VideoSuperResProcessor {
             
             if let audioInput = writerAudioInput, let audioOutput = readerAudioOutput {
                 audioInput.requestMediaDataWhenReady(on: queue) {
-                    while audioInput.isMediaDataReady {
+                    // ⭐️ 修复点：把 isMediaDataReady 改为正确的 isReadyForMoreMediaData
+                    while audioInput.isReadyForMoreMediaData {
                         guard let audioSampleBuffer = audioOutput.copyNextSampleBuffer() else {
                             audioInput.markAsFinished()
                             return
