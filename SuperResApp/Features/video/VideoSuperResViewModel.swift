@@ -5,7 +5,7 @@ import PhotosUI
 import AVFoundation
 import Photos
 import UIKit
-import Metal // ⭐️ 新增：为了获取 MTLCreateSystemDefaultDevice()
+import Metal
 
 // MARK: - 模型元数据
 struct SuperResModel: Identifiable, Hashable, Sendable {
@@ -213,14 +213,22 @@ final class VideoSuperResViewModel: ObservableObject {
                 isError: false
             )
 
-            // 3. 动态计算最终输出尺寸（保持 16:9 且对齐偶数，防止播放器拉伸或 HEVC 报错）
+            // 3. 动态计算最终输出尺寸（自动识别横竖屏，防止拉伸）
             let targetOutputSize: CGSize?
+            let isPortrait = source.metadata.targetSize.height > source.metadata.targetSize.width
+            
             if scale == 4 {
-                targetOutputSize = CGSize(width: 1920, height: 1080) // 4x 统一输出标准 1080p
+                // 4x 统一输出 1080p 级别
+                targetOutputSize = isPortrait 
+                    ? CGSize(width: 1080, height: 1920) // 竖屏 1080p
+                    : CGSize(width: 1920, height: 1080) // 横屏 1080p
             } else if scale == 2 {
-                targetOutputSize = CGSize(width: 960, height: 540)   // 2x 统一输出标准 540p
+                // 2x 统一输出 540p 级别
+                targetOutputSize = isPortrait 
+                    ? CGSize(width: 540, height: 960)   // 竖屏 540p
+                    : CGSize(width: 960, height: 540)   // 横屏 540p
             } else {
-                targetOutputSize = nil // 其他倍数则交由 Processor 内部按 targetSize * scale 计算
+                targetOutputSize = nil // 其他倍数保持原比例
             }
 
             // 4. 开始超分与编码
