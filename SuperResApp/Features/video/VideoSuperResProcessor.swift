@@ -5,7 +5,6 @@ import AVFoundation
 import CoreImage
 import UIKit
 
-/// 视频超分核心管道（基于 AVFoundation 的流式处理）
 actor VideoSuperResProcessor {
     
     private let ciContext = CIContext(options: [.workingColorSpace: NSNull()])
@@ -34,6 +33,7 @@ actor VideoSuperResProcessor {
         let asset = AVAsset(url: inputURL)
         
         guard let videoTrack = try await asset.loadTracks(withMediaType: .video).first else {
+            await logError("找不到视频轨道")
             throw NSError(domain: "VideoSR", code: 404, userInfo: [NSLocalizedDescriptionKey: "找不到视频轨道"])
         }
         let audioTrack = try? await asset.loadTracks(withMediaType: .audio).first
@@ -46,13 +46,14 @@ actor VideoSuperResProcessor {
         let pixelWidth = abs(transformedSize.width)
         let pixelHeight = abs(transformedSize.height)
         
-        // 计算超分尺寸，必须保证是偶数，否则编码器会崩溃
         var targetWidth = Int(pixelWidth) * scaleFactor
         var targetHeight = Int(pixelHeight) * scaleFactor
         targetWidth = targetWidth / 2 * 2
         targetHeight = targetHeight / 2 * 2
         
-        // 1. 初始化 Reader
+        // ⭐️ 记录初始信息
+        await logInfo("🎬 开始处理视频：\(Int(pixelWidth))x\(Int(pixelHeight)) -> \(targetWidth)x\(targetHeight)")
+        
         let reader = try AVAssetReader(asset: asset)
         let videoOutputSettings: [String: Any] = [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
@@ -71,10 +72,12 @@ actor VideoSuperResProcessor {
             ]
             readerAudioOutput = AVAssetReaderTrackOutput(track: audioTrack, outputSettings: audioOutputSettings)
             if let audioOutput = readerAudioOutput { reader.add(audioOutput) }
+            await logInfo("🔊 已找到音频轨道，准备混流")
+        } else {
+            await logInfo("🔇 原视频无音频轨道")
         }
         
-        // 2. 初始化 Writer (改用 MOV 容器 + HEVC 编码，抗高分辨率压力)
-        // 注意：调用此方法前，ViewModel 里的 outputURL 后缀最好改成 .mov
+        // 改用 MOV + HEVC
         let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mov)
         
         let videoCompressionProperties: [String: Any] = [
@@ -82,7 +85,6 @@ actor VideoSuperResProcessor {
             AVVideoMaxKeyFrameIntervalKey: 30
         ]
         
-        // ⭐️ 核心修复：使用 HEVC 编码器，它支持 8K 甚至更高
         let writerVideoInput = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: AVVideoCodecType.hevc, 
             AVVideoWidthKey: targetWidth,
@@ -105,13 +107,18 @@ actor VideoSuperResProcessor {
         }
         
         guard reader.startReading() else {
-            throw reader.error ?? NSError(domain: "VideoSR", code: 500, userInfo: [NSLocalizedDescriptionKey: "Reader 启动失败: \(reader.error?.localizedDescription ?? "")"])
+            let err = reader.error?.localizedDescription ?? "未知"
+            await logError("Reader 启动失败: \(err)")
+            throw reader.error ?? NSError(domain: "VideoSR", code: 500, userInfo: [NSLocalizedDescriptionKey: "Reader 启动失败: \(err)"])
         }
         guard writer.startWriting() else {
-            throw writer.error ?? NSError(domain: "VideoSR", code: 500, userInfo: [NSLocalizedDescriptionKey: "Writer 启动失败: \(writer.error?.localizedDescription ?? "")"])
+            let err = writer.error?.localizedDescription ?? "未知"
+            await logError("Writer 启动失败: \(err)")
+            throw writer.error ?? NSError(domain: "VideoSR", code: 500, userInfo: [NSLocalizedDescriptionKey: "Writer 启动失败: \(err)"])
         }
         
         writer.startSession(atSourceTime: .zero)
+        await logInfo("⚙️ 编码器启动成功，开始逐帧超分...")
         
         let nominalFrameRate = try await videoTrack.load(.nominalFrameRate)
         let totalFrames = max(1.0, CMTimeGetSeconds(duration) * Double(nominalFrameRate))
@@ -127,6 +134,7 @@ actor VideoSuperResProcessor {
                     if self.isCancelled {
                         reader.cancelReading()
                         writer.cancelWriting()
+                        Task { await self.logWarning("⏹ 用户取消了视频处理") }
                         continuation.resume(throwing: NSError(domain: "VideoSR", code: 499, userInfo: [NSLocalizedDescriptionKey: "用户已取消"]))
                         return
                     }
@@ -137,10 +145,11 @@ actor VideoSuperResProcessor {
                         
                         writer.finishWriting {
                             if writer.status == .completed {
+                                Task { await self.logInfo("✅ 视频超分处理完成！") }
                                 continuation.resume()
                             } else {
-                                // ⭐️ 如果这里报错，通常是编码器崩了或者内存不够
-                                let err = writer.error?.localizedDescription ?? "未知错误"
+                                let err = writer.error?.localizedDescription ?? "未知"
+                                Task { await self.logError("❌ 视频合成失败: \(err)") }
                                 continuation.resume(throwing: NSError(domain: "VideoSR", code: 500, userInfo: [NSLocalizedDescriptionKey: "视频合成失败: \(err)"]))
                             }
                         }
@@ -152,8 +161,6 @@ actor VideoSuperResProcessor {
                         let timestamp = CMSampleBufferGetPresentationTimeStamp(videoSampleBuffer)
                         
                         let ciImage = CIImage(cvPixelBuffer: imageBuffer).transformed(by: preferredTransform)
-                        
-                        // 提取 CGImage
                         guard let cgImage = self.ciContext.createCGImage(ciImage, from: ciImage.extent) else { return }
                         
                         let semaphore = DispatchSemaphore(value: 0)
@@ -161,13 +168,13 @@ actor VideoSuperResProcessor {
                         
                         Task {
                             do {
-                                // 调用超分 (强制极速模式)
                                 superResCGImage = try await SuperResolver.shared.fastUpscale(
                                     image: cgImage,
                                     modelID: modelID
                                 )
                             } catch {
-                                print("⚠️ 单帧超分失败: \(error.localizedDescription)")
+                                let frameIndex = Int(currentFrame)
+                                Task { await self.logError("⚠️ 第 \(frameIndex) 帧超分失败: \(error.localizedDescription)") }
                             }
                             semaphore.signal()
                         }
@@ -203,11 +210,25 @@ actor VideoSuperResProcessor {
         }
     }
     
+    // MARK: - 日志辅助
+    private func logInfo(_ msg: String) async {
+        await MainActor.run { AppLogger.shared.log("[视频管道] \(msg)", isError: false) }
+    }
+    
+    private func logError(_ msg: String) async {
+        await MainActor.run { AppLogger.shared.log("[视频管道] \(msg)", isError: true) }
+    }
+    
+    private func logWarning(_ msg: String) async {
+        await MainActor.run { AppLogger.shared.log("[视频管道] \(msg)", isError: false) }
+    }
+    
+    // MARK: - 转换工具 (保持原样)
     private func pixelBuffer(from image: CGImage, width: Int, height: Int) -> CVPixelBuffer? {
         let attrs: [CFString: Any] = [
             kCVPixelBufferCGImageCompatibilityKey: true,
             kCVPixelBufferCGBitmapContextCompatibilityKey: true,
-            kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary // 允许硬件加速
+            kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary
         ]
         var pixelBuffer: CVPixelBuffer?
         let status = CVPixelBufferCreate(kCFAllocatorDefault, width, height, kCVPixelFormatType_32BGRA, attrs as CFDictionary, &pixelBuffer)
