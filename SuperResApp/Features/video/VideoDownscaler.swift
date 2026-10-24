@@ -3,7 +3,7 @@
 import Foundation
 import AVFoundation
 import CoreImage
-import CoreImage.CIFilterBuiltins // ⭐️ 必须引入，否则找不到 CILanczosScaleTransform
+import CoreImage.CIFilterBuiltins
 import CoreVideo
 import Metal
 
@@ -45,10 +45,20 @@ public struct VideoFrame: @unchecked Sendable {
 public final class VideoDownscaler: @unchecked Sendable {
 
     public struct Config {
-        public var targetShortSide: CGFloat = 272
-        public var alignment: Int = 16
-        public var clampOvershoot: Bool = true
-        public init() {}
+        public var targetShortSide: CGFloat
+        public var alignment: Int
+        public var clampOvershoot: Bool
+        
+        // 显式提供带默认值的 init
+        public init(
+            targetShortSide: CGFloat = 272,
+            alignment: Int = 16,
+            clampOvershoot: Bool = true
+        ) {
+            self.targetShortSide = targetShortSide
+            self.alignment = alignment
+            self.clampOvershoot = clampOvershoot
+        }
     }
 
     public struct Metadata {
@@ -66,7 +76,7 @@ public final class VideoDownscaler: @unchecked Sendable {
     private let config: Config
     private let ciContext: CIContext
     private let outputColorSpace: CGColorSpace
-    private let lanczos: CILanczosScaleTransform
+    private let lanczosFilter: CIFilter
     private let clampFilter: CIFilter?
 
     // MARK: - 日志辅助
@@ -100,8 +110,9 @@ public final class VideoDownscaler: @unchecked Sendable {
         }
         self.outputColorSpace = srgb
 
-        self.lanczos = CILanczosScaleTransform()
-        self.clampFilter = config.clampOvershoot ? CIFilter(name: "CIColorClamp") : nil
+        // 使用工厂方法创建滤镜
+        self.lanczosFilter = CIFilter.lanczosScaleTransform()
+        self.clampFilter = config.clampOvershoot ? CIFilter.colorClamp() : nil
     }
 
     public func open(_ inputURL: URL) async throws -> Output {
@@ -125,6 +136,7 @@ public final class VideoDownscaler: @unchecked Sendable {
         }
         let naturalFrameRate = try await videoTrack.load(.nominalFrameRate)
 
+        // 自动处理视频旋转和像素比例
         let composition = AVMutableVideoComposition(propertiesOf: asset)
         let sourceSize = composition.renderSize
 
@@ -177,10 +189,9 @@ public final class VideoDownscaler: @unchecked Sendable {
             nominalFrameRate: naturalFrameRate
         )
 
-        // 用于在闭包内安全记录已读取帧数
         let frameCounter = LockedBox<Int>(0)
 
-        // ⭐️ 修复：添加 async 关键字以匹配带 onCancel 的初始化器重载
+        // 这里去掉了 onCancel 闭包（解决编译报错），改为在空值返回时清理
         let frames = AsyncThrowingStream<VideoFrame, Error>(
             unfolding: { [self] () async throws -> VideoFrame? in
                 do {
@@ -194,13 +205,13 @@ public final class VideoDownscaler: @unchecked Sendable {
                     if let _ = frame {
                         let count = frameCounter.get() + 1
                         frameCounter.set(count)
-                        // 每 50 帧打一条日志，避免刷屏
                         if count % 50 == 0 {
                             self.logInfo("已提取 \(count) 帧供超分使用")
                         }
                     } else {
                         let total = frameCounter.get()
                         self.logInfo("降采样读取结束，共提取 \(total) 帧")
+                        reader.cancelReading()
                     }
                     
                     return frame
@@ -209,11 +220,6 @@ public final class VideoDownscaler: @unchecked Sendable {
                     reader.cancelReading()
                     throw error
                 }
-            },
-            onCancel: { [self] in
-                let total = frameCounter.get()
-                logInfo("任务取消，停止降采样 (已提取 \(total) 帧)")
-                reader.cancelReading()
             }
         )
 
@@ -230,14 +236,11 @@ public final class VideoDownscaler: @unchecked Sendable {
             throw err
         }
         guard let sample = readerOutput.copyNextSampleBuffer() else {
-            reader.cancelReading()
             return nil
         }
         
-        // ⭐️ 修复：清除了中间意外多出的空格
         let pts = CMSampleBufferGetPresentationTimeStamp(sample)
         
-        // ⭐️ 修复：清除了中间意外多出的空格
         guard let imageBuffer = CMSampleBufferGetImageBuffer(sample) else {
             return nil
         }
@@ -295,11 +298,11 @@ public final class VideoDownscaler: @unchecked Sendable {
         let scaleY = targetSize.height / input.extent.height
         let scale  = max(scaleX, scaleY)
 
-        lanczos.inputImage  = input
-        lanczos.scale       = Float(scale)
-        lanczos.aspectRatio = 1.0
+        lanczosFilter.setValue(input, forKey: kCIInputImageKey)
+        lanczosFilter.setValue(scale, forKey: kCIInputScaleKey)
+        lanczosFilter.setValue(1.0, forKey: kCIInputAspectRatioKey)
 
-        guard var output = lanczos.outputImage else {
+        guard var output = lanczosFilter.outputImage else {
             throw VideoDownscalerError.renderFailed("Lanczos outputImage 为 nil")
         }
 
