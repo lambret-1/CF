@@ -1,0 +1,37 @@
+name: Convert Time-Aware AWB to CoreML
+on: [workflow_dispatch] # 允许你在 Actions 页面手动点击触发
+
+jobs:
+  convert:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.8' # 建议使用 3.8 以兼容官方旧版依赖
+
+      - name: 安装依赖
+        run: |
+          pip install torch torchvision coremltools numpy opencv-python
+
+      - name: 克隆官方模型代码
+        run: |
+          git clone https://github.com/SamsungLabs/time-aware-awb.git
+
+      - name: 下载预训练权重
+        run: |
+          # 请替换为官方提供的真实权重下载链接
+          wget -O weights/awb_final.pth https://example.com/path/to/awb_final.pth
+
+      - name: 执行转换脚本
+        run: python convert_awb.py
+
+      - name: 上传 CoreML 模型
+        uses: actions/upload-artifact@v4
+        with:
+          name: TimeAwareAWB-CoreML
+          path: TimeAwareAWB.mlpackage
+          retention-days: 7
