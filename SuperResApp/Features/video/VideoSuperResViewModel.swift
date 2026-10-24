@@ -22,6 +22,14 @@ final class VideoSuperResViewModel: ObservableObject {
     private let tempDirectory = FileManager.default.temporaryDirectory
     private var processor: VideoSuperResProcessor?
     
+    // ⭐️ 新增：根据模型 ID 动态获取放大倍数
+    var currentScaleFactor: Int {
+        if selectedModelID.contains("2x") {
+            return 2
+        }
+        return 4 // 其他大部分 ESRGAN 都是 4x
+    }
+    
     // MARK: - 处理相册选中的视频
     func handleVideoSelection(_ item: PhotosPickerItem) async {
         state = .processing
@@ -53,14 +61,16 @@ final class VideoSuperResViewModel: ObservableObject {
         let outputURL = tempDirectory.appendingPathComponent("superres_\(Int(Date().timeIntervalSince1970)).mov")
         self.processor = VideoSuperResProcessor()
         
-        AppLogger.shared.log("[视频控制] 调用超分引擎，使用模型: \(selectedModelID)", isError: false)
+        // ⭐️ 使用动态计算的放大倍数
+        let scale = currentScaleFactor
+        AppLogger.shared.log("[视频控制] 调用超分引擎，模型: \(selectedModelID)，倍数: \(scale)x", isError: false)
         
         do {
             try await processor?.processVideo(
                 inputURL: inputURL,
                 outputURL: outputURL,
                 modelID: selectedModelID,
-                scaleFactor: 4,
+                scaleFactor: scale, // 传入动态倍数
                 progressHandler: { [weak self] p in
                     Task { @MainActor in
                         self?.progress = p
@@ -74,7 +84,6 @@ final class VideoSuperResViewModel: ObservableObject {
             
         } catch {
             self.state = .failed("视频处理失败: \(error.localizedDescription)")
-            // 这个错误通常已经在 Processor 里打过了，但再补一条也无妨
             AppLogger.shared.log("[视频控制] 任务异常中止: \(error.localizedDescription)", isError: true)
         }
     }
