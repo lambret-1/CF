@@ -1,3 +1,8 @@
+没问题，下面是完整的 VideoSuperResViewModel.swift。我已经把“后台时间耗尽时不主动取消、只释放句柄”的逻辑加了进去，同时也包含了你刚加的“降采样分辨率预设”(DownscaleOption) 逻辑。
+
+直接全选覆盖即可：
+
+```swift
 // SuperResApp/Features/video/VideoSuperResViewModel.swift
 
 import SwiftUI
@@ -60,7 +65,12 @@ final class VideoSuperResViewModel: ObservableObject {
     static let shared = VideoSuperResViewModel()
 
     enum State: Equatable {
-        case empty, loading, videoSelected, processing, saving, completed
+        case empty
+        case loading
+        case videoSelected
+        case processing
+        case saving
+        case completed
         case failed(String)
 
         var isBusy: Bool {
@@ -87,12 +97,17 @@ final class VideoSuperResViewModel: ObservableObject {
     @Published var progress: Double = 0.0
     @Published var originalVideoURL: URL?
     @Published var resultVideoURL: URL?
+    
+    // 模型选择
     @Published var selectedModelID: String = SuperResModel.defaultModel.id
-    @Published var selectedDownscaleOption: DownscaleOption = .p272 // ⭐️ 绑定菜单
+    // ⭐️ 降采样预设选择
+    @Published var selectedDownscaleOption: DownscaleOption = .p272
 
     private let tempDirectory = FileManager.default.temporaryDirectory
     private var processor: VideoSuperResProcessor?
     private var generation: Int = 0
+
+    // ❗️后台任务句柄
     private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
 
     var currentScaleFactor: Int {
@@ -101,15 +116,32 @@ final class VideoSuperResViewModel: ObservableObject {
 
     private init() {}
 
+    // MARK: - 后台任务管理
     private func beginBackgroundTaskIfNeeded() {
         guard backgroundTaskID == .invalid else { return }
-        backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: "VideoSuperResProcessing") { [weak self] in
+
+        backgroundTaskID = UIApplication.shared.beginBackgroundTask(
+            withName: "VideoSuperResProcessing"
+        ) { [weak self] in
+            // ⭐️ 修复：时间耗尽时不主动取消任务，只释放后台句柄。
+            // App 会被系统挂起，等用户切回前台时，超分管道会自动恢复继续跑。
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                AppLogger.shared.log("[视频控制] ⚠️ 后台执行时间即将耗尽，主动取消以避免被系统强杀", isError: true)
+                AppLogger.shared.log(
+                    "[视频控制] ⚠️ 后台执行时间耗尽，App 即将被系统挂起（进度将保留，切回前台可继续）",
+                    isError: true
+                )
                 self.endBackgroundTaskIfNeeded()
-                self.cancelProcessing()
             }
+        }
+
+        if backgroundTaskID == .invalid {
+            AppLogger.shared.log("[视频控制] ⚠️ 申请后台任务失败", isError: true)
+        } else {
+            AppLogger.shared.log(
+                "[视频控制] ✅ 已申请后台任务 ID=\(backgroundTaskID.rawValue)",
+                isError: false
+            )
         }
     }
 
@@ -118,10 +150,18 @@ final class VideoSuperResViewModel: ObservableObject {
         let id = backgroundTaskID
         backgroundTaskID = .invalid
         UIApplication.shared.endBackgroundTask(id)
+        AppLogger.shared.log(
+            "[视频控制] 已结束后台任务 ID=\(id.rawValue)",
+            isError: false
+        )
     }
 
+    // MARK: - 加载相册视频
     func handleVideoSelection(_ item: PhotosPickerItem) async {
-        guard !state.isBusy else { return }
+        guard !state.isBusy else {
+            AppLogger.shared.log("[视频控制] 忽略选视频请求：当前任务进行中", isError: false)
+            return
+        }
 
         state = .loading
         progress = 0.0
@@ -129,7 +169,11 @@ final class VideoSuperResViewModel: ObservableObject {
 
         do {
             guard let movie = try await item.loadTransferable(type: VideoTransferable.self) else {
-                throw NSError(domain: "VideoSR", code: 400, userInfo: [NSLocalizedDescriptionKey: "无法读取视频数据"])
+                throw NSError(
+                    domain: "VideoSR",
+                    code: 400,
+                    userInfo: [NSLocalizedDescriptionKey: "无法读取视频数据"]
+                )
             }
 
             guard state == .loading else {
@@ -143,52 +187,83 @@ final class VideoSuperResViewModel: ObservableObject {
 
             self.originalVideoURL = movie.url
             self.state = .videoSelected
+            AppLogger.shared.log(
+                "[视频控制] 视频读取成功，准备就绪: \(movie.url.lastPathComponent)",
+                isError: false
+            )
         } catch {
             guard state == .loading else { return }
             self.originalVideoURL = nil
             self.resultVideoURL = nil
             self.state = .failed("视频读取失败: \(error.localizedDescription)")
+            AppLogger.shared.log(
+                "[视频控制] 视频读取失败: \(error.localizedDescription)",
+                isError: true
+            )
         }
     }
 
+    // MARK: - 开始处理
     func startProcessing() async {
         guard let inputURL = originalVideoURL else { return }
         guard state == .videoSelected || state.isFailed else { return }
 
         state = .processing
         progress = 0.0
+
+        // ❗️进入处理前申请后台执行时间
         beginBackgroundTaskIfNeeded()
 
         let gen = generation
-        let outputURL = tempDirectory.appendingPathComponent("superres_\(Int(Date().timeIntervalSince1970)).mov")
+        let outputURL = tempDirectory
+            .appendingPathComponent("superres_\(Int(Date().timeIntervalSince1970)).mov")
         let newProcessor = VideoSuperResProcessor()
         self.processor = newProcessor
 
         let scale = currentScaleFactor
         let modelID = selectedModelID
         let downscaleOpt = selectedDownscaleOption
+        
+        AppLogger.shared.log(
+            "[视频控制] 准备超分引擎，模型: \(modelID)，倍数: \(scale)x，预设: \(downscaleOpt.rawValue)",
+            isError: false
+        )
 
         do {
-            // 1. 初始化降采样引擎 (使用用户选择的预设)
+            // 1. 初始化降采样引擎（使用 UI 选择的预设）
+            AppLogger.shared.log("[视频控制] 正在初始化降采样...", isError: false)
             let config = VideoDownscaler.Config(targetShortSide: downscaleOpt.shortSide, alignment: 16)
-            let downscaler = try VideoDownscaler(config: config, mtlDevice: MTLCreateSystemDefaultDevice())
+            let downscaler = try VideoDownscaler(
+                config: config,
+                mtlDevice: MTLCreateSystemDefaultDevice()
+            )
             
-            // 2. 打开源视频
+            // 2. 打开源视频，获取帧流
             let source = try await downscaler.open(inputURL)
+            AppLogger.shared.log(
+                "[视频控制] 降采样就绪，中间尺寸: \(Int(source.metadata.targetSize.width))x\(Int(source.metadata.targetSize.height))",
+                isError: false
+            )
 
-            // 3. 动态计算最终尺寸
+            // 3. 动态计算最终输出尺寸（自动识别横竖屏）
             let targetOutputSize: CGSize?
             let isPortrait = source.metadata.targetSize.height > source.metadata.targetSize.width
             
             if scale == 4 {
-                targetOutputSize = isPortrait ? CGSize(width: 1080, height: 1920) : CGSize(width: 1920, height: 1080)
+                // 4x 统一输出 1080p 级别
+                targetOutputSize = isPortrait 
+                    ? CGSize(width: 1080, height: 1920) // 竖屏 1080p
+                    : CGSize(width: 1920, height: 1080) // 横屏 1080p
             } else if scale == 2 {
-                targetOutputSize = isPortrait ? CGSize(width: 540, height: 960) : CGSize(width: 960, height: 540)
+                // 2x 统一输出 540p 级别
+                targetOutputSize = isPortrait 
+                    ? CGSize(width: 540, height: 960)   // 竖屏 540p
+                    : CGSize(width: 960, height: 540)   // 横屏 540p
             } else {
-                targetOutputSize = nil
+                targetOutputSize = nil // 其他倍数保持原比例
             }
 
-            // 4. 开始超分
+            // 4. 开始超分与编码
             try await newProcessor.processVideo(
                 source: source,
                 audioSourceURL: inputURL,
@@ -216,6 +291,7 @@ final class VideoSuperResViewModel: ObservableObject {
             self.state = .completed
             self.processor = nil
             endBackgroundTaskIfNeeded()
+            AppLogger.shared.log("[视频控制] 视频处理完毕，准备预览。", isError: false)
 
         } catch is CancellationError {
             try? FileManager.default.removeItem(at: outputURL)
@@ -225,6 +301,8 @@ final class VideoSuperResViewModel: ObservableObject {
                 self.processor = nil
             }
             endBackgroundTaskIfNeeded()
+            AppLogger.shared.log("[视频控制] 任务被取消。", isError: false)
+
         } catch {
             try? FileManager.default.removeItem(at: outputURL)
             guard generation == gen else {
@@ -235,26 +313,47 @@ final class VideoSuperResViewModel: ObservableObject {
             self.progress = 0.0
             self.processor = nil
             endBackgroundTaskIfNeeded()
+            AppLogger.shared.log(
+                "[视频控制] 任务异常中止: \(error.localizedDescription)",
+                isError: true
+            )
         }
     }
 
+    // MARK: - 取消处理（唯一允许打断任务的入口）
     func cancelProcessing() {
         guard state == .processing else {
+            // 即使状态已不是 processing，也要确保后台句柄被释放（幂等）
             endBackgroundTaskIfNeeded()
             return
         }
         generation += 1
-        if let p = processor { Task { await p.cancel() } }
+        AppLogger.shared.log("[视频控制] 用户点击取消...", isError: false)
+
+        if let p = processor {
+            Task { await p.cancel() }
+        }
         processor = nil
         progress = 0.0
         state = originalVideoURL != nil ? .videoSelected : .empty
         endBackgroundTaskIfNeeded()
     }
 
+    // MARK: - 保存到相册
     func saveToAlbum() async -> Bool {
         guard let resultURL = resultVideoURL, state == .completed else { return false }
+
         state = .saving
+        AppLogger.shared.log("[视频控制] 准备保存视频到系统相册...", isError: false)
+
         let ok = await performSave(url: resultURL)
+
+        if ok {
+            AppLogger.shared.log("[视频控制] ✅ 视频成功保存到相册！", isError: false)
+        } else {
+            AppLogger.shared.log("[视频控制] 保存相册失败或被拒绝权限", isError: true)
+        }
+
         state = .completed
         return ok
     }
@@ -278,14 +377,29 @@ final class VideoSuperResViewModel: ObservableObject {
             }
             return true
         } catch {
+            AppLogger.shared.log(
+                "[视频控制] 保存相册失败: \(error.localizedDescription)",
+                isError: true
+            )
             return false
         }
     }
 
+    // MARK: - 重置
     func reset() {
-        guard !state.isBusy else { return }
+        guard !state.isBusy else {
+            AppLogger.shared.log(
+                "[视频控制] reset 被拒绝：任务进行中，必须先点击取消",
+                isError: false
+            )
+            return
+        }
+
         generation += 1
-        if let p = processor { Task { await p.cancel() } }
+
+        if let p = processor {
+            Task { await p.cancel() }
+        }
         processor = nil
         endBackgroundTaskIfNeeded()
 
@@ -309,9 +423,11 @@ struct VideoTransferable: Transferable {
         } importing: { received in
             let ext = received.file.pathExtension
             let fileName = "original_\(UUID().uuidString)" + (ext.isEmpty ? ".mp4" : ".\(ext)")
-            let copy = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
+            let copy = FileManager.default.temporaryDirectory
+                .appendingPathComponent(fileName)
             try FileManager.default.copyItem(at: received.file, to: copy)
             return Self.init(url: copy)
         }
     }
 }
+```
