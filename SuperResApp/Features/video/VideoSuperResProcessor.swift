@@ -517,7 +517,7 @@ final class VideoSuperResProcessor: @unchecked Sendable {
         state.condition.unlock()
         await logInfoAsync(finalMsg)
     }
-
+｝
    // MARK: - 像素缓冲区生成 (GPU 加速版)
     private func makePixelBuffer(pool: CVPixelBufferPool?, image: CGImage, width: Int, height: Int) -> CVPixelBuffer? {
         var pb: CVPixelBuffer?
