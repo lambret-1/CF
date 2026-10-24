@@ -5,7 +5,7 @@ import UIKit
 
 struct DebugConsoleView: View {
 
-    // 保留既有定义，不改 AppLogger / LogItem
+    // 保留既有定义
     @ObservedObject var logger = AppLogger.shared
 
     // MARK: - 过滤条件
@@ -14,8 +14,8 @@ struct DebugConsoleView: View {
     @State private var searchText: String = ""
 
     // MARK: - 派生数据（缓存，避免每次 body 重算）
-
-    @State private var displayItems: [LogItem] = []
+    // 注意：这里必须用 AppLogger.LogItem
+    @State private var displayItems: [AppLogger.LogItem] = []
     @State private var errorCount: Int = 0
     @State private var totalCount: Int = 0
 
@@ -212,7 +212,7 @@ struct DebugConsoleView: View {
                     LazyVStack(alignment: .leading, spacing: 2) {
                         ForEach(displayItems) { item in
                             DebugLogRow(item: item)
-                                .id(item.id)     // LogItem.id 稳定，不重建整表
+                                .id(item.id)
                         }
                     }
                     .padding(12)
@@ -282,12 +282,13 @@ struct DebugConsoleView: View {
 
     // MARK: - 数据重建
 
-    /// 一次遍历同时产出「过滤结果」和「错误计数」，避免 body 里重算
+    /// 一次遍历同时产出「过滤结果」和「错误计数」
     private func rebuild() {
         let all = logger.logs
         totalCount = all.count
 
-        var filtered: [LogItem] = []
+        // 修复点：用 AppLogger.LogItem
+        var filtered: [AppLogger.LogItem] = []
         var errs = 0
         filtered.reserveCapacity(all.count)
 
@@ -326,14 +327,14 @@ struct DebugConsoleView: View {
     // MARK: - 复制 / 导出
 
     private func copyFilteredToClipboard() {
-        let text = displayItems.map { "\(formattedTime($0.time)) \($0.message)" }
-                              .joined(separator: "\n")
+        // 格式保持与 AppLogger.copyToClipboard 一致
+        let text = displayItems.map { "\($0.time) \($0.isError ? "[ERR]" : "[LOG]") \($0.message)" }.joined(separator: "\n")
         UIPasteboard.general.string = text
     }
 
     private func prepareExport() {
-        let text = displayItems.map { "\(formattedTime($0.time)) \($0.message)" }
-                              .joined(separator: "\n")
+        let text = displayItems.map { "\($0.time) \($0.isError ? "[ERR]" : "[LOG]") \($0.message)" }.joined(separator: "\n")
+        
         guard !text.isEmpty else {
             exportErrorMessage = "当前没有可导出的日志内容。"
             showExportError = true
@@ -361,16 +362,13 @@ struct DebugConsoleView: View {
         try? FileManager.default.removeItem(at: url)
         exportURL = nil
     }
-
-    private func formattedTime(_ date: Date) -> String {
-        date.formatted(date: .abbreviated, time: .standard)
-    }
 }
 
 // MARK: - 日志行视图
 
 private struct DebugLogRow: View {
-    let item: LogItem
+    // 修复点：这里也必须用 AppLogger.LogItem
+    let item: AppLogger.LogItem
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -386,7 +384,7 @@ private struct DebugLogRow: View {
     }
 }
 
-// MARK: - 分享封装（改名，避免与项目里已有的 ActivityViewController 冲突）
+// MARK: - 分享封装
 
 private struct DebugActivityViewController: UIViewControllerRepresentable {
     let activityItems: [Any]
@@ -398,7 +396,7 @@ private struct DebugActivityViewController: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
-// MARK: - onChange 兼容层（private 扩展，文件作用域，不会与其他文件冲突）
+// MARK: - onChange 兼容层
 
 private extension View {
     @ViewBuilder
