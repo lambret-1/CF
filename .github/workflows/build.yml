@@ -85,6 +85,12 @@ jobs:
         if: failure()
         run: |
           if [ -f build.log ]; then
-            echo "=== 构建日志末尾 200 行 ==="
-            tail -200 build.log
+            echo "================ 构建失败！所有 Error 日志如下 ================"
+            # -i 忽略大小写，-n 显示行号，-B 2 -A 2 显示前后各2行上下文
+            grep -i -n -B 2 -A 2 "error:" build.log || echo "⚠️ 未找到包含 'error:' 的行，请检查是否发生了不可恢复的链接或崩溃。"
+            echo "=============================================================="
+            echo "附带提取包含 fatal 或 failed 的行（如果有）："
+            grep -i -n "fatal" build.log || echo "（未发现 fatal 错误）"
+          else
+            echo "❌ 找不到 build.log 文件，可能编译阶段未正常启动。"
           fi
