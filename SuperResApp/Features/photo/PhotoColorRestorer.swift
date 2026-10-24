@@ -56,10 +56,13 @@ struct RestorerOptions {
     var enableShadowLift = false
     var enableBlackLevel = true
     var enableToneMapping = false
+    
+    // 修复：确保这些选项存在
     var enableMemoryColor = false
     var enableHueTwistCorrection = false
     var enableSaturationHighlightCompress = false
     var enablePerChannelCurve = false
+    
     var enableNoiseAwareWeighting = true
     var enableVignettingCorrection = false
     var enableChromaticAberration = false
@@ -138,7 +141,7 @@ final class PhotoColorRestorer {
         log("========== 开始真实色彩还原 ==========")
         log("原图：size=\(Int(image.size.width))x\(Int(image.size.height))，scale=\(image.scale)，orientation=\(image.imageOrientation.rawValue)")
 
-        var diag = Diagnostics()
+        var diag = Diagnostics() // 确保这里是 diag，如果报错 di 说明你抄漏了
 
         // 0. 输入方向归一化
         let normalized = image.normalizedOrientation()
@@ -207,16 +210,18 @@ final class PhotoColorRestorer {
 
             let gr = fused.g / max(fused.r, 1e-6)
             let gb = fused.g / max(fused.b, 1e-6)
-            let corrected = estimatePixels.map {
-                (r: Float(Double($0.r) * gr),
-                 g: $0.g,
-                 b: Float(Double($0.b) * gb),
-                 luma: $0.luma)
+            
+            // 修复编译器类型推断超时
+            let fgr = Float(gr)
+            let fgb = Float(gb)
+            let corrected: [(r: Float, g: Float, b: Float, luma: Float)] = estimatePixels.map { p in
+                let newR: Float = p.r * fgr
+                let newB: Float = p.b * fgb
+                return (r: newR, g: p.g, b: newB, luma: p.luma)
             }
 
             var iterBitmap = bitmap
             if it > 0 {
-                let fgr = Float(gr), fgb = Float(gb)
                 for i in 0..<(w * h) {
                     let o = i * 4
                     iterBitmap[o] *= fgr
@@ -361,7 +366,7 @@ final class PhotoColorRestorer {
 
         return (out, diag)
     }
-    
+
     // MARK: - 预处理
     private func preprocess(_ img: CIImage, diag: inout Diagnostics) -> CIImage {
         var out = img
@@ -555,7 +560,6 @@ final class PhotoColorRestorer {
         return CIImage(cgImage: cg)
     }
 
-    // MARK: - 场景掩膜排除语义色像素
     private func sceneExcludedPixels(
         _ pixels: [(r: Float, g: Float, b: Float, luma: Float)],
         scene: Scene
@@ -800,8 +804,8 @@ final class PhotoColorRestorer {
                        e.method, e.rgb.r, e.rgb.g, e.rgb.b, e.confidence))
         }
     }
-    
-    // MARK: - 光源融合（对数色比 + MAD）
+
+    // MARK: - 光源融合
     private func fuse(ests: [IlluminantEstimate],
                       pixels: [(r: Float, g: Float, b: Float, luma: Float)]) -> IlluminantRGB? {
         var valid = ests.filter { $0.rgb.g.isFinite && $0.rgb.g > 1e-6 }
@@ -903,7 +907,7 @@ final class PhotoColorRestorer {
         return IlluminantRGB(r: c.r / g, g: 1.0, b: c.b / g)
     }
 
-    // MARK: - CAT (色适应变换)
+    // MARK: - CAT
     private func catForScene(_ s: SceneType) -> CATMethod {
         switch s {
         case .portrait: return .vonKries
@@ -1003,7 +1007,7 @@ final class PhotoColorRestorer {
         }
         return out
     }
-    
+
     // MARK: - 曝光/动态
     private func estimateExposureCompensation(bitmap: [Float], w: Int, h: Int) -> Double {
         var lumas: [Float] = []; lumas.reserveCapacity(w * h)
@@ -1151,7 +1155,7 @@ final class PhotoColorRestorer {
         return out
     }
 
-    // MARK: - 评估
+    // MARK: - ΔE2000 评估
     private func meanDeltaEOfNeutrals(
         pixels: [(r: Float, g: Float, b: Float, luma: Float)],
         matrix: simd_double3x3
@@ -1218,41 +1222,6 @@ final class PhotoColorRestorer {
         return sqrt(cTerm * cTerm + hTerm * hTerm + RT * cTerm * hTerm)
     }
 
-    private func deltaE2000(_ a: (L: Double, a: Double, b: Double),
-                            _ b: (L: Double, a: Double, b: Double)) -> Double {
-        let dL = b.L - a.L, dA = b.a - a.a, dB = b.b - a.b
-        let c1 = sqrt(a.a * a.a + a.b * a.b), c2 = sqrt(b.a * b.a + b.b * b.b)
-        let cBar = (c1 + c2) / 2
-        let g = 0.5 * (1 - sqrt(pow(cBar, 7) / (pow(cBar, 7) + pow(25.0, 7))))
-        let a1 = a.a * (1 + g), a2 = b.a * (1 + g)
-        let c1p = sqrt(a1 * a1 + a.b * a.b), c2p = sqrt(a2 * a2 + b.b * b.b)
-        let h1 = atan2(a.b, a1) * 180 / .pi
-        let h2 = atan2(b.b, a2) * 180 / .pi
-        let dHp: Double
-        if c1p * c2p == 0 { dHp = 0 }
-        else if abs(h2 - h1) <= 180 { dHp = h2 - h1 }
-        else if (h2 - h1) > 180 { dHp = h2 - h1 - 360 }
-        else { dHp = h2 - h1 + 360 }
-        let dH = 2 * sqrt(c1p * c2p) * sin(dHp * .pi / 180 / 2)
-        let dCp = c2p - c1p
-        let lBar = (a.L + b.L) / 2, cBarP = (c1p + c2p) / 2
-        var hBarP = (h1 + h2) / 2
-        if c1p * c2p == 0 { hBarP = h1 + h2 }
-        else if abs(h1 - h2) > 180 { hBarP = (h1 + h2 + 360) / 2 }
-        if hBarP >= 360 { hBarP -= 360 }
-        let T = 1 - 0.17 * cos((hBarP - 30) * .pi / 180) + 0.24 * cos(2 * hBarP * .pi / 180)
-                + 0.32 * cos((3 * hBarP + 6) * .pi / 180) - 0.20 * cos((4 * hBarP - 63) * .pi / 180)
-        let dTheta = 30 * exp(-pow((hBarP - 275) / 25, 2))
-        let RC = 2 * sqrt(pow(cBarP, 7) / (pow(cBarP, 7) + pow(25.0, 7)))
-        let SL = 1 + 0.015 * pow(lBar - 50, 2) / sqrt(20 + pow(lBar - 50, 2))
-        let SC = 1 + 0.045 * cBarP
-        let SH = 1 + 0.015 * cBarP * T
-        let RT = -sin(2 * dTheta * .pi / 180) * RC
-        let lTerm = dL / SL, cTerm = dCp / SC, hTerm = dH / SH
-        return sqrt(lTerm * lTerm + cTerm * cTerm + hTerm * hTerm + RT * cTerm * hTerm)
-    }
-
-    // MARK: - 数学与几何工具
     private func rgbToXY(_ c: IlluminantRGB) -> (x: Double, y: Double) {
         let M = simd_double3x3(columns: (
             SIMD3(0.4124564, 0.2126729, 0.0193339),
@@ -1283,10 +1252,9 @@ final class PhotoColorRestorer {
             AppLogger.shared.log("[PhotoColorRestorer] ❌ \(message)", isError: true)
         }
     }
+}
 
-} // ← 这里是 PhotoColorRestorer 类的闭合（如果你复制了遗留代码进去，就会在这里多闭合一次导致报错）
-
-// MARK: - UIImage 方向归一化
+// MARK: - UIImage 方向归一化 (关键：确保此扩展存在，否则会报找不到方法)
 extension UIImage {
     func normalizedOrientation() -> UIImage {
         guard imageOrientation != .up else { return self }
