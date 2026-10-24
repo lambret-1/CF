@@ -9,7 +9,7 @@ on:
 
 env:
   APP_NAME: SuperResApp
-  VERSION: 1.0.0
+  VERSION: 1.0.9  # ⭐️ 假设当前是 1.0.9，测试逢九进一
 
 jobs:
   build:
@@ -19,6 +19,35 @@ jobs:
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
+
+      # ⭐️ 核心新增：计算逢九进一的版本号
+      - name: 计算新版本号 (逢九进一)
+        id: version_bump
+        run: |
+          CURRENT="${{ env.VERSION }}"
+          echo "当前基础版本: $CURRENT"
+          
+          IFS='.' read -r major minor patch <<< "$CURRENT"
+          
+          # 个位加 1
+          patch=$((patch + 1))
+          
+          # 逢九进一逻辑
+          if [ "$patch" -gt 9 ]; then
+              patch=0
+              minor=$((minor + 1))
+          fi
+          
+          if [ "$minor" -gt 9 ]; then
+              minor=0
+              major=$((major + 1))
+          fi
+          
+          NEW_VER="$major.$minor.$patch"
+          echo "计算后的新版本: $NEW_VER"
+          
+          # 将新版本号写入环境变量，供后续步骤（编译、打包）使用
+          echo "NEW_VERSION=$NEW_VER" >> $GITHUB_ENV
 
       - name: 配置 Xcode
         run: |
@@ -62,6 +91,7 @@ jobs:
             DEVELOPMENT_TEAM="" \
             ONLY_ACTIVE_ARCH=NO \
             ARCHS=arm64 \
+            MARKETING_VERSION="${{ env.NEW_VERSION }}" \
             2>&1 | tee build.log
 
       - name: 导出未签名 IPA
@@ -69,16 +99,17 @@ jobs:
           APP_PATH="build/DerivedData/Build/Products/Release-iphoneos/${{ env.APP_NAME }}.app"
           mkdir -p build/Payload
           cp -R "$APP_PATH" build/Payload/
-          cd build && zip -qr "${{ env.APP_NAME }}-unsigned.ipa" Payload
-          ls -lh "${{ env.APP_NAME }}-unsigned.ipa"
+          cd build && zip -qr "${{ env.APP_NAME }}-unsigned-v${{ env.NEW_VERSION }}.ipa" Payload
+          ls -lh "${{ env.APP_NAME }}-unsigned-v${{ env.NEW_VERSION }}.ipa"
           echo "=== App 内模型检查 ==="
           find "Payload/${{ env.APP_NAME }}.app" -name "*.mlmodelc" -type d || echo "（未找到 .mlmodelc）"
 
       - name: 上传 IPA 产物
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.APP_NAME }}-unsigned-v${{ env.VERSION }}.ipa
-          path: build/${{ env.APP_NAME }}-unsigned.ipa
+          # ⭐️ 这里换成新计算的版本号
+          name: ${{ env.APP_NAME }}-unsigned-v${{ env.NEW_VERSION }}.ipa
+          path: build/${{ env.APP_NAME }}-unsigned-v${{ env.NEW_VERSION }}.ipa
           retention-days: 30
 
       - name: 构建失败时输出日志
@@ -86,11 +117,8 @@ jobs:
         run: |
           if [ -f build.log ]; then
             echo "================ 构建失败！所有 Error 日志如下 ================"
-            # -i 忽略大小写，-n 显示行号，-B 2 -A 2 显示前后各2行上下文
-            grep -i -n -B 2 -A 2 "error:" build.log || echo "⚠️ 未找到包含 'error:' 的行，请检查是否发生了不可恢复的链接或崩溃。"
+            grep -i -n -B 2 -A 2 "error:" build.log || echo "⚠️ 未找到包含 'error:' 的行"
             echo "=============================================================="
-            echo "附带提取包含 fatal 或 failed 的行（如果有）："
-            grep -i -n "fatal" build.log || echo "（未发现 fatal 错误）"
           else
-            echo "❌ 找不到 build.log 文件，可能编译阶段未正常启动。"
+            echo "❌ 找不到 build.log 文件。"
           fi
