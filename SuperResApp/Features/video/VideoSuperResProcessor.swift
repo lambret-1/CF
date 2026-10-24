@@ -268,7 +268,7 @@ final class VideoSuperResProcessor: @unchecked Sendable {
 
         let state = PipelineState()
         let processor = self
-        let inFlightLimit = 4
+        let inFlightLimit = 2
 
         // Producer
         let producerQueue = DispatchQueue(label: "video.producer", qos: .userInitiated)
