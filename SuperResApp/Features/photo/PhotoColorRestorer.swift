@@ -56,18 +56,15 @@ struct RestorerOptions {
     var enableShadowLift = false
     var enableBlackLevel = true
     var enableToneMapping = false
-    // 修复 7：名不副实的“近似”后处理默认关闭
     var enableMemoryColor = false
     var enableHueTwistCorrection = false
     var enableSaturationHighlightCompress = false
-    var enablePerChannelCuragve = false
-    var enableNoiseAwareWeight)
-ing = true
-    var enableVignettingCor       rection = false
-    var enableCh }
-romaticAberration = false
-    var enableIterative       Refinement = true
-    var maxIterations = log 3
+    var enablePerChannelCurve = false
+    var enableNoiseAwareWeighting = true
+    var enableVignettingCorrection = false
+    var enableChromaticAberration = false
+    var enableIterativeRefinement = true
+    var maxIterations = 3
     var analysisScale: CGFloat = 0.05
 }
 
@@ -166,9 +163,10 @@ final class PhotoColorRestorer {
         let w = Int(extent.width), h = Int(extent.height)
         guard w > 0, h > 0 else {
             logError("下采样尺寸无效 \(w)x\(h)")
-            return (image, di("分析采样尺寸=\(w)x\(h)（线性空间）")
+            return (image, diag)
+        }
+        log("分析采样尺寸=\(w)x\(h)（线性空间）")
 
-        // 修复 8：clamp 再 crop，避免 bitmap 边缘未覆盖导致 alpha 跳过
         let renderRect = small.extent.integral
         let safeSmall = small.clampedToExtent().cropped(to: renderRect)
 
@@ -195,11 +193,10 @@ final class PhotoColorRestorer {
         let valid = trimHistogram(pixels)
         log("修剪后像素=\(valid.count)（剔除约 4% 极值）")
 
-        // 修复 4：场景 mask 排除语义色像素，供光源估计使用
         let estimatePixels = sceneExcludedPixels(valid, scene: scene)
         log("光源估计像素：\(estimatePixels.count) / \(valid.count)（已排除语义色）")
 
-        // 5. 多光源估计 + 迭代残差补偿（修复 5）
+        // 5. 多光源估计 + 迭代残差补偿
         log("--- 阶段 5：多光源估计 + 融合 ---")
         var fused = IlluminantRGB(r: 1, g: 1, b: 1)
         let iterationLimit = options.enableIterativeRefinement ? options.maxIterations : 1
@@ -208,7 +205,6 @@ final class PhotoColorRestorer {
         for it in 0..<iterationLimit {
             log("  迭代第 \(it + 1)/\(iterationLimit) 轮")
 
-            // 用当前 fused 对 estimatePixels 做临时白平衡，估计残差
             let gr = fused.g / max(fused.r, 1e-6)
             let gb = fused.g / max(fused.b, 1e-6)
             let corrected = estimatePixels.map {
@@ -218,7 +214,6 @@ final class PhotoColorRestorer {
                  luma: $0.luma)
             }
 
-            // 重建 bitmap（全局近似 gain，保留空间结构）
             var iterBitmap = bitmap
             if it > 0 {
                 let fgr = Float(gr), fgb = Float(gb)
@@ -239,7 +234,6 @@ final class PhotoColorRestorer {
                 return (image, diag)
             }
 
-            // 残差乘到当前 fused 上
             let next = normalizeGM(IlluminantRGB(
                 r: fused.r * residual.r,
                 g: fused.g * residual.g,
@@ -261,7 +255,6 @@ final class PhotoColorRestorer {
         log(String(format: "最终光源估计 R=%.4f G=%.4f B=%.4f（迭代 %d 轮）",
                    fused.r, fused.g, fused.b, iterations))
 
-        // 时域一致性（可选）
         if let ts = temporalConsistency {
             let smoothed = ts.smooth(fused)
             log(String(format: "时域一致性平滑：R %.4f→%.4f G %.4f→%.4f B %.4f→%.4f",
@@ -285,7 +278,7 @@ final class PhotoColorRestorer {
         let M_final = buildFinalMatrix(fused: fused, gains: gains, method: cat)
         log("最终 3×3 矩阵构建完成")
 
-        // 7. 应用 WB 矩阵（修复 2：矩阵不再转置）
+        // 7. 应用 WB 矩阵
         log("--- 阶段 7：应用白平衡矩阵 ---")
         guard let wbImage = applyMatrix(M_final, to: preprocessed) else {
             logError("矩阵应用失败")
@@ -357,7 +350,7 @@ final class PhotoColorRestorer {
         let out = UIImage(cgImage: cg, scale: normalized.scale, orientation: .up)
         log("输出图尺寸 \(Int(out.size.width))x\(Int(out.size.height))")
 
-        // 11. 评估（修复 3：同亮度色度 ΔE，用实际 M_final）
+        // 11. 评估
         log("--- 阶段 11：ΔE2000 评估 ---")
         diag.deltaEBefore = meanDeltaEOfNeutrals(pixels: valid, matrix: matrix_identity_double3x3)
         diag.deltaEAfter  = meanDeltaEOfNeutrals(pixels: valid, matrix: M_final)
@@ -373,7 +366,6 @@ final class PhotoColorRestorer {
     private func preprocess(_ img: CIImage, diag: inout Diagnostics) -> CIImage {
         var out = img
 
-        // 修复 2：CCM 列主序转行向量，不再转置
         if let ccm = cameraMatrixProvider?.matrix(for: nil) {
             log("CCM：已获取相机色彩矩阵，开始应用")
             let f = CIFilter.colorMatrix()
@@ -563,7 +555,7 @@ final class PhotoColorRestorer {
         return CIImage(cgImage: cg)
     }
 
-    // MARK: - 修复 4：场景掩膜排除语义色像素（供光源估计使用）
+    // MARK: - 场景掩膜排除语义色像素
     private func sceneExcludedPixels(
         _ pixels: [(r: Float, g: Float, b: Float, luma: Float)],
         scene: Scene
@@ -809,7 +801,7 @@ final class PhotoColorRestorer {
         }
     }
     
-    // MARK: - 修复 4：融合改为对数色比加权中位数 + MAD 离群剔除
+    // MARK: - 光源融合（对数色比 + MAD）
     private func fuse(ests: [IlluminantEstimate],
                       pixels: [(r: Float, g: Float, b: Float, luma: Float)]) -> IlluminantRGB? {
         var valid = ests.filter { $0.rgb.g.isFinite && $0.rgb.g > 1e-6 }
@@ -857,7 +849,7 @@ final class PhotoColorRestorer {
         }.map { $0.element }
 
         let useSet = filtered.isEmpty ? valid : filtered
-        log("融合：MAD 剔除 \(valid.count - useSet.count) 个（阈值 u=\(String(format: "%.4f", thresholdU)) v=\(String(format: "%.4f", thresholdV))）")
+        log("融合：MAD 剔除 \(valid.count - useSet.count) 个")
 
         let wSum = useSet.reduce(0.0) { $0 + $1.confidence }
         var r = 0.0, g = 0.0, b = 0.0
@@ -911,7 +903,7 @@ final class PhotoColorRestorer {
         return IlluminantRGB(r: c.r / g, g: 1.0, b: c.b / g)
     }
 
-    // MARK: - CAT
+    // MARK: - CAT (色适应变换)
     private func catForScene(_ s: SceneType) -> CATMethod {
         switch s {
         case .portrait: return .vonKries
@@ -1159,7 +1151,7 @@ final class PhotoColorRestorer {
         return out
     }
 
-    // MARK: - 修复 3：ΔE2000 同亮度色度评估
+    // MARK: - 评估
     private func meanDeltaEOfNeutrals(
         pixels: [(r: Float, g: Float, b: Float, luma: Float)],
         matrix: simd_double3x3
@@ -1260,6 +1252,7 @@ final class PhotoColorRestorer {
         return sqrt(lTerm * lTerm + cTerm * cTerm + hTerm * hTerm + RT * cTerm * hTerm)
     }
 
+    // MARK: - 数学与几何工具
     private func rgbToXY(_ c: IlluminantRGB) -> (x: Double, y: Double) {
         let M = simd_double3x3(columns: (
             SIMD3(0.4124564, 0.2126729, 0.0193339),
@@ -1291,7 +1284,7 @@ final class PhotoColorRestorer {
         }
     }
 
-} // ← 这里是类的正确闭合位置
+} // ← 这里是 PhotoColorRestorer 类的闭合（如果你复制了遗留代码进去，就会在这里多闭合一次导致报错）
 
 // MARK: - UIImage 方向归一化
 extension UIImage {
