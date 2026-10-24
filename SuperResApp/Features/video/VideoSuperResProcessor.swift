@@ -239,18 +239,21 @@ final class VideoSuperResProcessor: @unchecked Sendable {
         // Writer
         let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mov)
 
+        // ⚠️ 修复点 1 & 2：修复了 `* 2.5` 和 `30,` 的语法错误
         let writerVideoInput = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: AVVideoCodecType.hevc,
             AVVideoWidthKey: targetWidth,
             AVVideoHeightKey: targetHeight,
             AVVideoCompressionPropertiesKey: [
-                AVVideoAverageBitRateKey: Int(Double(targetWidth * targetHeight) * 2 =.5),
-                AVVideoMaxKeyFrameIntervalKey: 30 false,
+                AVVideoAverageBitRateKey: Int(Double(targetWidth * targetHeight) * 2.5),
+                AVVideoMaxKeyFrameIntervalKey: 30,
                 AVVideoAllowFrameReorderingKey: true
             ]
         ])
 
-        writerVideoInput.expectsMediaDataInRealTime        writer.add(writerVideoInput)
+        // ⚠️ 修复点 3：修复了断行及缺少 = false 的问题
+        writerVideoInput.expectsMediaDataInRealTime = false
+        writer.add(writerVideoInput)
 
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(
             assetWriterInput: writerVideoInput,
