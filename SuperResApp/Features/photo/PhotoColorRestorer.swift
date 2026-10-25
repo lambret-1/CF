@@ -56,13 +56,12 @@ struct RestorerOptions {
     var enableShadowLift = false
     var enableBlackLevel = true
     var enableToneMapping = false
-    
-    // 修复：确保这些选项存在
+
     var enableMemoryColor = false
     var enableHueTwistCorrection = false
     var enableSaturationHighlightCompress = false
     var enablePerChannelCurve = false
-    
+
     var enableNoiseAwareWeighting = true
     var enableVignettingCorrection = false
     var enableChromaticAberration = false
@@ -141,7 +140,7 @@ final class PhotoColorRestorer {
         log("========== 开始真实色彩还原 ==========")
         log("原图：size=\(Int(image.size.width))x\(Int(image.size.height))，scale=\(image.scale)，orientation=\(image.imageOrientation.rawValue)")
 
-        var diag = Diagnostics() // 确保这里是 diag，如果报错 di 说明你抄漏了
+        var diag = Diagnostics()
 
         // 0. 输入方向归一化
         let normalized = image.normalizedOrientation()
@@ -194,7 +193,7 @@ final class PhotoColorRestorer {
             return (image, diag)
         }
         let valid = trimHistogram(pixels)
-        log("修剪后像素=\(valid.count)（剔除约 4% 极值）")
+        log("修剪后像素=\(valid.count)（仅剔除暗部 2% 极值，保留亮部给 WhitePatch）")
 
         let estimatePixels = sceneExcludedPixels(valid, scene: scene)
         log("光源估计像素：\(estimatePixels.count) / \(valid.count)（已排除语义色）")
@@ -210,27 +209,22 @@ final class PhotoColorRestorer {
 
             let gr = fused.g / max(fused.r, 1e-6)
             let gb = fused.g / max(fused.b, 1e-6)
-            
-            // 修复编译器类型推断超时
+
             let fgr = Float(gr)
             let fgb = Float(gb)
             let corrected: [(r: Float, g: Float, b: Float, luma: Float)] = estimatePixels.map { p in
                 let newR: Float = p.r * fgr
                 let newB: Float = p.b * fgb
-                return (r: newR, g: p.g, b: newB, luma: p.luma)
+                // 修复：luma 必须重算
+                let newLuma: Float = 0.2126 * newR + 0.7152 * p.g + 0.0722 * newB
+                return (r: newR, g: p.g, b: newB, luma: newLuma)
             }
 
-            var iterBitmap = bitmap
-            if it > 0 {
-                for i in 0..<(w * h) {
-                    let o = i * 4
-                    iterBitmap[o] *= fgr
-                    iterBitmap[o + 2] *= fgb
-                }
-            }
-
+            // 修复：几何类估计器只在第 0 轮跑，避免与 pixels 语义过滤不一致
+            let allowGeometry = (it == 0)
             let ests = runEstimators(pixels: corrected, scene: scene,
-                                     bitmap: iterBitmap, w: w, h: h, ciImage: small)
+                                     bitmap: bitmap, w: w, h: h, ciImage: small,
+                                     allowGeometry: allowGeometry)
             if it == 0 { diag.estimates = ests }
             logEstimates(ests)
 
@@ -291,9 +285,9 @@ final class PhotoColorRestorer {
         }
         log("白平衡矩阵已应用")
 
-        // 8. 曝光解耦
+        // 8. 曝光解耦（修复：改为用 fused 增益修正后估计，避免色温污染 luma）
         log("--- 阶段 8：曝光解耦 ---")
-        let expComp = estimateExposureCompensation(bitmap: bitmap, w: w, h: h)
+        let expComp = estimateExposureCompensation(bitmap: bitmap, w: w, h: h, gains: fused)
         diag.exposureComp = expComp
         log(String(format: "曝光补偿系数=%.4f（EV=%.3f）", expComp, log2(expComp)))
         let exposed: CIImage = options.enableExposureDecoupling
@@ -321,27 +315,30 @@ final class PhotoColorRestorer {
         }
         if options.enableHueTwistCorrection {
             processed = correctHueTwist(processed, M: M_final)
-            log("  HueTwist 修正: 已应用（CIVibrance 近似）")
+            log("  HueTwist 修正: 已应用（矩阵 85% + identity 15% 混合）")
         }
         if options.enableSaturationHighlightCompress {
             processed = compressSatHighlights(processed)
-            log("  饱和度高光压缩: 已应用")
+            log("  饱和度高光压缩: 已应用（luminance mask 局部降饱和）")
         }
         if options.enableMemoryColor {
             processed = applyMemoryColor(processed, scene: scene)
-            log("  记忆色校正: 已应用（sky/veg mask）")
+            log("  记忆色校正: 已应用（sky/veg mask，±0.01 rad 微调）")
         }
         if options.enablePerChannelCurve {
             processed = applyPerChannelCurve(processed)
-            log("  PerChannel 曲线: 已应用（CIColorControls 近似）")
+            log("  PerChannel 曲线: 已应用（仅饱和 +5%，不做对比）")
         }
         if options.enableToneMapping {
             processed = toneMap(processed)
             log("  ToneMapping: 已应用")
         }
         if let lut = lutProvider?.lut(for: scene.type) {
-            processed = applyLUT3D(processed, lut: lut)
-            log("  3D LUT: 已应用 size=\(lut.size)")
+            // 修复：3D LUT 在 sRGB gamma 空间应用（LUT 通常为 sRGB 设计）
+            let inSRGB = processed.applyingFilter("CILinearToSRGBToneCurve")
+            let lutted = applyLUT3D(inSRGB, lut: lut)
+            processed = lutted.applyingFilter("CISRGBToneCurveToLinear")
+            log("  3D LUT: 已应用 size=\(lut.size)（sRGB gamma 空间）")
         }
 
         // 10. 输出
@@ -438,12 +435,13 @@ final class PhotoColorRestorer {
         return out
     }
 
+    /// 修复：只剔除暗部 2%，保留亮部给 WhitePatch 作为白点候选
     private func trimHistogram(_ px: [(r: Float, g: Float, b: Float, luma: Float)])
         -> [(r: Float, g: Float, b: Float, luma: Float)] {
         let sorted = px.sorted { $0.3 < $1.3 }
         let n = Int(Float(sorted.count) * 0.02)
-        guard sorted.count > n * 2 + 100 else { return sorted }
-        return Array(sorted[n..<(sorted.count - n)])
+        guard sorted.count > n + 100 else { return sorted }
+        return Array(sorted[n..<sorted.count])
     }
 
     // MARK: - 场景分析
@@ -464,7 +462,8 @@ final class PhotoColorRestorer {
             meanY += Double(0.2126 * r + 0.7152 * g + 0.0722 * b)
             if b > r && b > g { blueRatio += 1 }
             if g > r && g > b { greenRatio += 1 }
-            if r > 0.3 && r > g && g > b && (r - b) > 0.15 { skinRatio += 1 }
+            // 修复：线性空间中 r>0.15 约等于 sRGB 0.43，更贴近真实肤色
+            if r > 0.15 && r > g && g > b && (r - b) > 0.08 { skinRatio += 1 }
         }
         let n = Double(w * h)
         meanY /= n; blueRatio /= n; greenRatio /= n; skinRatio /= n
@@ -473,36 +472,29 @@ final class PhotoColorRestorer {
 
         var faceMask: CIImage? = nil
         var hasFace = false
+        var docRect: CGRect? = nil
+
+        // 修复：合并两个 Vision request 到一次 perform，减少开销
         if let cg = cgImage {
-            let req = VNDetectFaceRectanglesRequest()
             let handler = VNImageRequestHandler(cgImage: cg, options: [:])
+            let faceReq = VNDetectFaceRectanglesRequest()
+            let rectReq = VNDetectRectanglesRequest()
+            rectReq.minimumSize = 0.3
             do {
-                try handler.perform([req])
-                if let results = req.results, !results.isEmpty {
+                try handler.perform([faceReq, rectReq])
+                if let results = faceReq.results, !results.isEmpty {
                     hasFace = true
                     faceMask = buildMaskRect(results.map { $0.boundingBox }, w: w, h: h)
                     log("Vision：检测到 \(results.count) 张人脸")
                 } else {
                     log("Vision：未检测到人脸")
                 }
-            } catch {
-                logError("Vision 人脸检测异常：\(error.localizedDescription)")
-            }
-        }
-
-        var docRect: CGRect? = nil
-        if let cg = cgImage {
-            let req = VNDetectRectanglesRequest()
-            req.minimumSize = 0.3
-            let handler = VNImageRequestHandler(cgImage: cg, options: [:])
-            do {
-                try handler.perform([req])
-                if let r = req.results?.first {
+                if let r = rectReq.results?.first {
                     docRect = r.boundingBox
                     log("Vision：检测到文档矩形 \(r.boundingBox)")
                 }
             } catch {
-                logError("Vision 矩形检测异常：\(error.localizedDescription)")
+                logError("Vision 检测异常：\(error.localizedDescription)")
             }
         }
 
@@ -547,8 +539,10 @@ final class PhotoColorRestorer {
             let r = Double(bitmap[o]), g = Double(bitmap[o + 1]), b = Double(bitmap[o + 2])
             let maxC = max(r, max(g, b)), minC = min(r, min(g, b))
             let sat = maxC > 1e-6 ? (maxC - minC) / maxC : 0
+            let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b
             var val: UInt8 = 0
-            if sat > 0.2 {
+            // 修复：暗部不做色彩 mask，避免线性空间小值噪声误判
+            if sat > 0.2 && luma > 0.02 {
                 switch hue {
                 case .blue:  if b > r && b > g { val = 255 }
                 case .green: if g > r && g > b { val = 255 }
@@ -589,8 +583,19 @@ final class PhotoColorRestorer {
             return true
         }
 
+        // 修复：排除过猛时回退到「中性像素」而非「全部像素」，避免语义色污染估计器
         if filtered.count < max(200, before / 4) {
-            log("场景排除过猛（\(before)→\(filtered.count)），回退到全部像素")
+            let neutral = pixels.filter { p in
+                let maxC = Double(max(p.0, max(p.1, p.2)))
+                let minC = Double(min(p.0, min(p.1, p.2)))
+                let sat = maxC > 1e-6 ? (maxC - minC) / maxC : 0
+                return sat < 0.2
+            }
+            if neutral.count >= 200 {
+                log("场景排除过猛（\(before)→\(filtered.count)），回退到中性像素（\(neutral.count)）")
+                return neutral
+            }
+            log("场景排除过猛（\(before)→\(filtered.count)），中性像素也不足，回退到全部像素")
             return pixels
         }
         return filtered
@@ -599,14 +604,16 @@ final class PhotoColorRestorer {
     // MARK: - 光源估计器池
     private func runEstimators(pixels: [(r: Float, g: Float, b: Float, luma: Float)],
                                scene: Scene, bitmap: [Float], w: Int, h: Int,
-                               ciImage: CIImage) -> [IlluminantEstimate] {
+                               ciImage: CIImage,
+                               allowGeometry: Bool) -> [IlluminantEstimate] {
         var results: [IlluminantEstimate] = []
         guard !pixels.isEmpty else {
             logError("runEstimators：输入像素为空")
             return results
         }
 
-        if options.enableWhitePatch {
+        // 修复：夜景中 WhitePatch 取霓虹灯，不可靠，直接跳过
+        if options.enableWhitePatch && scene.type != .night {
             let sorted = pixels.sorted { $0.luma > $1.luma }
             let topN = max(1, Int(Double(sorted.count) * 0.05))
             let top = Array(sorted.prefix(topN))
@@ -636,7 +643,9 @@ final class PhotoColorRestorer {
                 rgb: normalizeGM(IlluminantRGB(r: er, g: eg, b: eb)), confidence: 0.65))
         }
 
-        if options.enableGrayEdge {
+        // GrayEdge / LocalPartition / RetinexSSR 只在第 0 轮跑（数据源一致性）
+        // document 场景边缘是黑字白纸，几何类估计器无效，跳过
+        if options.enableGrayEdge && allowGeometry && scene.type != .document {
             var sr = 0.0, sg = 0.0, sb = 0.0; var cnt = 0.0
             if w > 2, h > 2 {
                 for y in 1..<(h - 1) {
@@ -673,7 +682,8 @@ final class PhotoColorRestorer {
             }
         }
 
-        if options.enableDarkChannelWeighting {
+        // 修复：夜景中暗通道被阴影主导，跳过
+        if options.enableDarkChannelWeighting && scene.type != .night {
             var sr = 0.0, sg = 0.0, sb = 0.0, sw = 0.0
             for p in pixels {
                 let dark = Double(min(p.0, min(p.1, p.2)))
@@ -686,9 +696,12 @@ final class PhotoColorRestorer {
             }
         }
 
-        if options.enableRetinex {
+        // 修复：窗口加大到 13×13（win=6），提升尺度，减少与 GrayWorld 共线
+        // document/night 中 Retinex 会放大噪声或误抓文字边缘，跳过
+        if options.enableRetinex && allowGeometry
+            && scene.type != .night && scene.type != .document {
             var sr = 0.0, sg = 0.0, sb = 0.0, cnt = 0.0
-            let win = 3
+            let win = 6
             if w > 2 * win, h > 2 * win {
                 for y in win..<(h - win) {
                     for x in win..<(w - win) {
@@ -713,7 +726,7 @@ final class PhotoColorRestorer {
             }
         }
 
-        if options.enableLocalPartition {
+        if options.enableLocalPartition && allowGeometry && scene.type != .document {
             let gridW = 4, gridH = 4
             var local: [IlluminantRGB] = []
             for gy in 0..<gridH {
@@ -749,16 +762,19 @@ final class PhotoColorRestorer {
             let cct = cctFromXY(xy)
             log(String(format: "DualTemperature：base CCT≈%.0fK", cct))
             if cct < 1800 || cct > 20000 {
+                // 修复：方向反转
+                // CCT < 1800（光源极暖，图偏橙红）→ 压低 R、抬高 B
+                // CCT > 20000（光源极冷，图偏蓝）→ 抬高 R、压低 B
                 let target = cct < 1800
-                    ? IlluminantRGB(r: 1.2, g: 0.9, b: 0.6)
-                    : IlluminantRGB(r: 0.7, g: 0.9, b: 1.2)
+                    ? IlluminantRGB(r: 0.7, g: 0.9, b: 1.2)
+                    : IlluminantRGB(r: 1.2, g: 0.9, b: 0.6)
                 let mixed = IlluminantRGB(
                     r: (base.r + target.r) / 2,
                     g: (base.g + target.g) / 2,
                     b: (base.b + target.b) / 2)
                 results.append(IlluminantEstimate(method: "DualTemperature",
                     rgb: normalizeGM(mixed), confidence: 0.55))
-                log("DualTemperature：CCT 越界，已拉回")
+                log("DualTemperature：CCT 越界，已拉回中性")
             } else {
                 log("DualTemperature：CCT 在合理范围，不修正")
             }
@@ -852,7 +868,8 @@ final class PhotoColorRestorer {
             du[$0.offset] <= thresholdU && dv[$0.offset] <= thresholdV
         }.map { $0.element }
 
-        let useSet = filtered.isEmpty ? valid : filtered
+        // 修复：只剩 1 个估计时方差爆炸，回退到全量
+        let useSet = (filtered.count >= 2) ? filtered : valid
         log("融合：MAD 剔除 \(valid.count - useSet.count) 个")
 
         let wSum = useSet.reduce(0.0) { $0 + $1.confidence }
@@ -872,16 +889,28 @@ final class PhotoColorRestorer {
             let score = gamutScore(illuminant: center, pixels: pixels)
             log(String(format: "融合：Gamut score=%.2f", score))
             if score < 0.7 {
-                let n = Double(pixels.count)
-                let gw = IlluminantRGB(
-                    r: pixels.reduce(0.0) { $0 + Double($1.0) } / n,
-                    g: pixels.reduce(0.0) { $0 + Double($1.1) } / n,
-                    b: pixels.reduce(0.0) { $0 + Double($1.2) } / n)
-                center = normalizeGM(IlluminantRGB(
-                    r: (center.r + gw.r) / 2,
-                    g: (center.g + gw.g) / 2,
-                    b: (center.b + gw.b) / 2))
-                log("融合：Gamut 分数过低，向 GrayWorld 拉回一半")
+                // 修复：兜底不再无条件用全图 GrayWorld（会被大色块带偏），
+                // 改用中性像素（sat<0.15）的 GrayWorld
+                var nr = 0.0, ng = 0.0, nb = 0.0; var nc = 0
+                for p in pixels {
+                    let maxC = Double(max(p.0, max(p.1, p.2)))
+                    let minC = Double(min(p.0, min(p.1, p.2)))
+                    let sat = maxC > 1e-6 ? (maxC - minC) / maxC : 0
+                    if sat < 0.15 {
+                        nr += Double(p.0); ng += Double(p.1); nb += Double(p.2); nc += 1
+                    }
+                }
+                if nc > 100 {
+                    let neutralGW = normalizeGM(IlluminantRGB(
+                        r: nr / Double(nc), g: ng / Double(nc), b: nb / Double(nc)))
+                    center = normalizeGM(IlluminantRGB(
+                        r: (center.r + neutralGW.r) / 2,
+                        g: (center.g + neutralGW.g) / 2,
+                        b: (center.b + neutralGW.b) / 2))
+                    log("融合：Gamut 分数过低，向中性像素 GrayWorld 拉回一半")
+                } else {
+                    log("融合：Gamut 分数过低，但中性像素不足，保持原值")
+                }
             }
         }
         return center
@@ -895,8 +924,13 @@ final class PhotoColorRestorer {
         let step = max(1, pixels.count / 500)
         for i in stride(from: 0, to: pixels.count, by: step) {
             let p = pixels[i]
-            let r = Double(p.0) * gr, b = Double(p.2) * gb
-            if r >= 0 && r <= 1.5 && b >= 0 && b <= 1.5 { inCount += 1 }
+            let r = Double(p.0) * gr
+            let g = Double(p.1)
+            let b = Double(p.2) * gb
+            // 同时检查三个通道
+            if r >= 0 && r <= 1.5 && g >= 0 && g <= 1.5 && b >= 0 && b <= 1.5 {
+                inCount += 1
+            }
             total += 1
         }
         return total > 0 ? Double(inCount) / Double(total) : 1.0
@@ -910,7 +944,7 @@ final class PhotoColorRestorer {
     // MARK: - CAT
     private func catForScene(_ s: SceneType) -> CATMethod {
         switch s {
-        case .portrait: return .vonKries
+        case .portrait: return .bradford   // 修复：vonKries 极端色温下数值稳定性差
         case .landscape: return .bradford
         case .night: return .bradford
         case .document: return .vonKries
@@ -1009,11 +1043,20 @@ final class PhotoColorRestorer {
     }
 
     // MARK: - 曝光/动态
-    private func estimateExposureCompensation(bitmap: [Float], w: Int, h: Int) -> Double {
+
+    /// 修复：用 fused 增益预修正 bitmap 的 R/B，避免暖/冷光污染中位 luma
+    /// 中灰参考值 0.18 保持不变（extendedLinearSRGB 中 18% 反射率 = 0.18）
+    private func estimateExposureCompensation(bitmap: [Float], w: Int, h: Int,
+                                              gains: IlluminantRGB) -> Double {
         var lumas: [Float] = []; lumas.reserveCapacity(w * h)
+        let gr = Float(gains.r)
+        let gb = Float(gains.b)
         for i in 0..<(w * h) {
             let o = i * 4
-            lumas.append(0.2126 * bitmap[o] + 0.7152 * bitmap[o + 1] + 0.0722 * bitmap[o + 2])
+            let r = bitmap[o] * gr
+            let g = bitmap[o + 1]
+            let b = bitmap[o + 2] * gb
+            lumas.append(0.2126 * r + 0.7152 * g + 0.0722 * b)
         }
         lumas.sort()
         guard !lumas.isEmpty else { return 1.0 }
@@ -1058,20 +1101,54 @@ final class PhotoColorRestorer {
         return f.outputImage ?? img
     }
 
+    /// 修复：HueTwist 的合理近似是「把最终矩阵与 identity 混合」——
+    /// 这既保留 WB 增益，又把矩阵引入的色相扭转按比例衰减。
     private func correctHueTwist(_ img: CIImage, M: simd_double3x3) -> CIImage {
-        let f = CIFilter.vibrance()
-        f.inputImage = img
-        f.amount = 0.2
-        return f.outputImage ?? img
+        let blend = 0.85
+        let invBlend = 1.0 - blend
+        var col0 = SIMD3<Double>(0, 0, 0)
+        var col1 = SIMD3<Double>(0, 0, 0)
+        var col2 = SIMD3<Double>(0, 0, 0)
+        for r in 0..<3 {
+            col0[r] = M[0][r] * blend + (r == 0 ? invBlend : 0)
+            col1[r] = M[1][r] * blend + (r == 1 ? invBlend : 0)
+            col2[r] = M[2][r] * blend + (r == 2 ? invBlend : 0)
+        }
+        let m2 = simd_double3x3(columns: (col0, col1, col2))
+        return applyMatrix(m2, to: img) ?? img
     }
 
+    /// 修复：真正的高光饱和压缩 —— luminance mask 局部降饱和
     private func compressSatHighlights(_ img: CIImage) -> CIImage {
-        let f = CIFilter.colorControls()
-        f.inputImage = img
-        f.saturation = 0.95
-        f.brightness = 0
-        f.contrast = 1.02
-        return f.outputImage ?? img
+        // 1) 全局降饱和版本
+        let desat = img.applyingFilter("CIColorControls", parameters: [
+            kCIInputSaturationKey: 0.6
+        ])
+
+        // 2) 计算 luma（R=G=B=luma）
+        let luma = img.applyingFilter("CIColorMatrix", parameters: [
+            "inputRVector": CIVector(x: 0.2126, y: 0.7152, z: 0.0722, w: 0),
+            "inputGVector": CIVector(x: 0.2126, y: 0.7152, z: 0.0722, w: 0),
+            "inputBVector": CIVector(x: 0.2126, y: 0.7152, z: 0.0722, w: 0),
+            "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 1),
+            "inputBiasVector": CIVector(x: 0, y: 0, z: 0, w: 0)
+        ])
+
+        // 3) 高光 mask：luma 在 [0.6, 0.9] 区间映射到 [0, 1]
+        //    3.333 * luma - 2.0
+        let mask = luma.applyingFilter("CIColorMatrix", parameters: [
+            "inputRVector": CIVector(x: 3.333, y: 0, z: 0, w: 0),
+            "inputGVector": CIVector(x: 0, y: 3.333, z: 0, w: 0),
+            "inputBVector": CIVector(x: 0, y: 0, z: 3.333, w: 0),
+            "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 1),
+            "inputBiasVector": CIVector(x: -2.0, y: -2.0, z: -2.0, w: 0)
+        ]).applyingFilter("CIColorClamp")
+
+        // 4) mask 区域用降饱和，其余保持
+        return desat.applyingFilter("CIBlendWithMask", parameters: [
+            kCIInputBackgroundImageKey: img,
+            kCIInputMaskImageKey: mask
+        ])
     }
 
     private func scaledMask(_ mask: CIImage, to extent: CGRect) -> CIImage {
@@ -1087,7 +1164,8 @@ final class PhotoColorRestorer {
         if let sky = scene.skyMask {
             let hue = CIFilter.hueAdjust()
             hue.inputImage = out
-            hue.angle = 0.02
+            // 修复：角度从 0.02 降到 0.01，降低与 CAT 色相扭转的冲突
+            hue.angle = 0.01
             if let o = hue.outputImage {
                 let fullSky = scaledMask(sky, to: img.extent)
                 let blend = CIFilter.blendWithMask()
@@ -1098,14 +1176,14 @@ final class PhotoColorRestorer {
                     .cropped(to: img.extent)
                 if let b = blend.outputImage {
                     out = b.cropped(to: img.extent)
-                    log("  记忆色：天空色相已微调 +0.02")
+                    log("  记忆色：天空色相已微调 +0.01")
                 }
             }
         }
         if let veg = scene.vegMask {
             let hue = CIFilter.hueAdjust()
             hue.inputImage = out
-            hue.angle = -0.02
+            hue.angle = -0.01
             if let o = hue.outputImage {
                 let fullVeg = scaledMask(veg, to: img.extent)
                 let blend = CIFilter.blendWithMask()
@@ -1116,18 +1194,19 @@ final class PhotoColorRestorer {
                     .cropped(to: img.extent)
                 if let b = blend.outputImage {
                     out = b.cropped(to: img.extent)
-                    log("  记忆色：植被色相已微调 -0.02")
+                    log("  记忆色：植被色相已微调 -0.01")
                 }
             }
         }
         return out
     }
 
+    /// 修复：去掉对比拉伸，避免和 ToneMap 叠加，只保留饱和微调
     private func applyPerChannelCurve(_ img: CIImage) -> CIImage {
         let f = CIFilter.colorControls()
         f.inputImage = img
         f.saturation = 1.05
-        f.contrast = 1.03
+        f.contrast = 1.0
         f.brightness = 0.0
         return f.outputImage ?? img
     }
@@ -1143,7 +1222,13 @@ final class PhotoColorRestorer {
         return f.outputImage ?? img
     }
 
+    /// 调用方需保证 data 为 RGBA Float32（4 通道）
     private func applyLUT3D(_ img: CIImage, lut: (size: Int, data: [Float])) -> CIImage {
+        let expected = lut.size * lut.size * lut.size * 4
+        guard lut.data.count == expected else {
+            logError("3D LUT 数据长度不匹配：期望 \(expected)，实际 \(lut.data.count)")
+            return img
+        }
         let colorCube = CIFilter.colorCube()
         colorCube.inputImage = img
         colorCube.cubeDimension = Float(lut.size)
@@ -1254,7 +1339,7 @@ final class PhotoColorRestorer {
     }
 }
 
-// MARK: - UIImage 方向归一化 (关键：确保此扩展存在，否则会报找不到方法)
+// MARK: - UIImage 方向归一化
 extension UIImage {
     func normalizedOrientation() -> UIImage {
         guard imageOrientation != .up else { return self }
