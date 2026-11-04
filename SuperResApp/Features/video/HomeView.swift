@@ -14,6 +14,10 @@ struct RecentRecord: Identifiable {
 }
 
 struct HomeView: View {
+    // 两个功能分别持有独立任务状态；页面 push/pop 不会销毁任务状态。
+    @StateObject private var superResViewModel = VideoSuperResViewModel()
+    @StateObject private var frameInterpolationViewModel = VideoSuperResViewModel()
+
     // 模拟数据
     let recentRecords: [RecentRecord] = [
         RecentRecord(coverColor: .blue.opacity(0.6), tag: "视频超分", duration: "0:05", fileName: "output_SR_94209B4...", resolution: "1520x2704", fps: "30fps", fileSize: "12.3 MB", date: "今天 03:15"),
@@ -28,12 +32,12 @@ struct HomeView: View {
                     // 1. 功能大入口 (AI 补帧 & 视频超分)
                     HStack(spacing: 16) {
                         // 左侧：AI 补帧
-                        NavigationLink(destination: VideoFrameInterpolationView()) {
+                        NavigationLink(destination: VideoFrameInterpolationView(viewModel: frameInterpolationViewModel)) {
                             FeatureCard(icon: "slowmo", title: "AI 补帧", color: .purple)
                         }
                         
                         // 右侧：视频超分 (你刚才创建的页面)
-                        NavigationLink(destination:VideoSuperResView()) {
+                        NavigationLink(destination: VideoSuperResView(viewModel: superResViewModel)) {
                             FeatureCard(icon: "film.stack", title: "视频超分", color: .blue)
                         }
                     }
