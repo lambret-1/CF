@@ -838,7 +838,7 @@ private enum EditorTab: String, CaseIterable, Identifiable {
 }
 
 private enum AdjustmentControl: String, CaseIterable, Identifiable {
-    case auto, exposure, contrast, saturation, brightness
+    case auto, exposure, contrast, saturation, brightness, highlights, shadows, temperature, tint, sharpness, noiseReduction, vignette
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -847,6 +847,13 @@ private enum AdjustmentControl: String, CaseIterable, Identifiable {
         case .contrast: "对比度"
         case .saturation: "饱和度"
         case .brightness: "亮度"
+        case .highlights: "高光"
+        case .shadows: "阴影"
+        case .temperature: "色温"
+        case .tint: "色调"
+        case .sharpness: "锐度"
+        case .noiseReduction: "降噪"
+        case .vignette: "暗角"
         }
     }
     var icon: String {
@@ -856,6 +863,13 @@ private enum AdjustmentControl: String, CaseIterable, Identifiable {
         case .contrast: "circle.lefthalf.filled"
         case .saturation: "drop.fill"
         case .brightness: "sun.max"
+        case .highlights: "sun.max.fill"
+        case .shadows: "sun.haze"
+        case .temperature: "thermometer.medium"
+        case .tint: "circle.lefthalf.filled"
+        case .sharpness: "viewfinder"
+        case .noiseReduction: "aqi.medium"
+        case .vignette: "circle.dashed"
         }
     }
     var range: ClosedRange<Double> {
@@ -865,6 +879,13 @@ private enum AdjustmentControl: String, CaseIterable, Identifiable {
         case .contrast: 0.5...1.8
         case .saturation: 0...2
         case .brightness: -0.5...0.5
+        case .highlights: -1...1
+        case .shadows: -1...1
+        case .temperature: 2500...10000
+        case .tint: -150...150
+        case .sharpness: 0...2
+        case .noiseReduction: 0...0.1
+        case .vignette: -2...2
         }
     }
     var keyPath: WritableKeyPath<DemoAdjustmentSettings, Double> {
@@ -873,6 +894,13 @@ private enum AdjustmentControl: String, CaseIterable, Identifiable {
         case .contrast: \.contrast
         case .saturation: \.saturation
         case .brightness: \.brightness
+        case .highlights: \.highlights
+        case .shadows: \.shadows
+        case .temperature: \.temperature
+        case .tint: \.tint
+        case .sharpness: \.sharpness
+        case .noiseReduction: \.noiseReduction
+        case .vignette: \.vignette
         }
     }
 }
