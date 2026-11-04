@@ -3,6 +3,7 @@ import CoreImage
 import ImageIO
 import Photos
 import UIKit
+import UniformTypeIdentifiers
 import Vision
 
 struct ApplePhotoAnalysisResult {
@@ -47,14 +48,26 @@ enum ApplePhotoAnalysisService {
     }
 
     static func depthData(from image: UIImage) -> AVDepthData? {
-        guard let cgImage = image.cgImage,
-              let data = image.jpegData(compressionQuality: 1),
-              let source = CGImageSourceCreateWithData(data as CFData, nil),
-              let auxiliary = CGImageSourceCopyAuxiliaryDataInfoAtIndex(
-                source,
-                0,
-                kCGImageAuxiliaryDataTypeDisparity
-              ) as? [AnyHashable: Any] else {
+        guard let data = image.jpegData(compressionQuality: 1),
+              let source = CGImageSourceCreateWithData(data as CFData, nil) else {
+            return nil
+        }
+        return depthData(from: source)
+    }
+
+    static func depthData(from sourceURL: URL) -> AVDepthData? {
+        guard let source = CGImageSourceCreateWithURL(sourceURL as CFURL, nil) else {
+            return nil
+        }
+        return depthData(from: source)
+    }
+
+    private static func depthData(from source: CGImageSource) -> AVDepthData? {
+        guard let auxiliary = CGImageSourceCopyAuxiliaryDataInfoAtIndex(
+            source,
+            0,
+            kCGImageAuxiliaryDataTypeDisparity
+        ) as? [AnyHashable: Any] else {
             return nil
         }
         return try? AVDepthData(fromDictionaryRepresentation: auxiliary)
