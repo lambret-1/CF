@@ -12,32 +12,16 @@ struct DemoPhotoAutoEnhanceView: View {
     @State private var compareMode: PreviewMode = .result
     @State private var comparePosition: CGFloat = 0.5
     @State private var autoEnhanceEnabled = false
-    @State private var undoStack: [DemoEditSnapshot] = []
-    @State private var redoStack: [DemoEditSnapshot] = []
-    @State private var editingSnapshots: [String: DemoEditSnapshot] = [:]
+    @State private var undoStack: [DemoAdjustmentSettings] = []
+    @State private var redoStack: [DemoAdjustmentSettings] = []
+    @State private var editingSnapshot: DemoAdjustmentSettings?
     @State private var renderToken = UUID()
-    @State private var showAILab = false
-    @State private var isLoadingPhoto = false
-    @State private var alertTitle = "照片已保存"
-    @Environment(\.dismiss) private var dismiss
     @State private var isProcessing = false
-    @State private var isRenderPending = false
     @State private var isSaving = false
     @State private var alertMessage: String?
     @State private var showShareSheet = false
 
-    private let accent = DemoPhotoStudioTheme.accent
-    private static let presets: [DemoPhotoPreset] = [.original, .portrait, .landscape, .night, .food]
-    private static let sliderSpecs: [DemoSliderSpec] = [
-        DemoSliderSpec(title: "曝光", icon: "sun.max", keyPath: \.exposure, range: -2...2, usesSignedFormat: true),
-        DemoSliderSpec(title: "亮度", icon: "sun.min", keyPath: \.brightness, range: -0.5...0.5, usesSignedFormat: true),
-        DemoSliderSpec(title: "对比度", icon: "circle.lefthalf.filled", keyPath: \.contrast, range: 0.5...1.8, usesSignedFormat: false),
-        DemoSliderSpec(title: "饱和度", icon: "drop", keyPath: \.saturation, range: 0...2, usesSignedFormat: false),
-        DemoSliderSpec(title: "色温", icon: "thermometer.medium", keyPath: \.temperature, range: -100...100, usesSignedFormat: true),
-        DemoSliderSpec(title: "高光", icon: "sun.max.fill", keyPath: \.highlights, range: -1...1, usesSignedFormat: true),
-        DemoSliderSpec(title: "阴影", icon: "moon", keyPath: \.shadows, range: -1...1, usesSignedFormat: true),
-        DemoSliderSpec(title: "锐度", icon: "viewfinder", keyPath: \.sharpness, range: 0...2, usesSignedFormat: false)
-    ]
+    private let accent = Color(red: 0.43, green: 0.78, blue: 0.68)
 
     var body: some View {
         VStack(spacing: 0) {
@@ -52,7 +36,7 @@ struct DemoPhotoAutoEnhanceView: View {
                 .padding(.top, 12)
                 .padding(.bottom, 22)
             }
-            if originalImage != nil { bottomBar }
+            bottomBar
         }
         .background(Color(uiColor: .systemGroupedBackground))
         .toolbar(.hidden, for: .navigationBar)
@@ -60,7 +44,7 @@ struct DemoPhotoAutoEnhanceView: View {
             guard let item else { return }
             Task { await loadPhoto(item) }
         }
-        .alert(alertTitle, isPresented: Binding(
+        .alert("照片工作室", isPresented: Binding(
             get: { alertMessage != nil },
             set: { if !$0 { alertMessage = nil } }
         )) {
@@ -69,34 +53,34 @@ struct DemoPhotoAutoEnhanceView: View {
             Text(alertMessage ?? "")
         }
         .sheet(isPresented: $showShareSheet) {
-            if let image = editedImage ?? originalImage { DemoShareSheet(items: [image]) }
+            if let image = editedImage ?? originalImage {
+                DemoShareSheet(items: [image])
+            }
         }
-        .sheet(isPresented: $showAILab) { NavigationStack { DemoAILabView() } }
     }
 
     private var toolbar: some View {
-        HStack(spacing: 8) {
-            Button { dismiss() } label: { Image(systemName: "chevron.left").font(.body.weight(.semibold)).frame(width: 44, height: 44).contentShape(Rectangle()) }
-                .accessibilityLabel("返回照片功能")
+        HStack(spacing: 17) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("PHOTO STUDIO")
-                    .font(.caption.weight(.black))
+                    .font(.system(size: 12, weight: .black, design: .rounded))
                     .tracking(2)
                 Text("智能照片编辑")
-                    .font(.caption)
+                    .font(.system(size: 10))
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Button { undo() } label: { Image(systemName: "arrow.uturn.backward").frame(width: 44, height: 44).contentShape(Rectangle()) }
-                .disabled(undoStack.isEmpty).accessibilityLabel("撤销").accessibilityHint("恢复上一步编辑")
-            Button { redo() } label: { Image(systemName: "arrow.uturn.forward").frame(width: 44, height: 44).contentShape(Rectangle()) }
-                .disabled(redoStack.isEmpty).accessibilityLabel("重做").accessibilityHint("重新应用已撤销的编辑")
-            Menu { Button { showAILab = true } label: { Label("AI 实验室", systemImage: "sparkles") } } label: {
-                Image(systemName: "ellipsis.circle").frame(width: 44, height: 44).contentShape(Rectangle())
-            }.accessibilityLabel("更多功能")
-            Button("重置") { resetEdits() }.font(.body.weight(.semibold)).frame(minWidth: 44, minHeight: 44).disabled(originalImage == nil)
+            Button { undo() } label: { Image(systemName: "arrow.uturn.backward") }
+                .disabled(undoStack.isEmpty)
+                .accessibilityLabel("撤销")
+            Button { redo() } label: { Image(systemName: "arrow.uturn.forward") }
+                .disabled(redoStack.isEmpty)
+                .accessibilityLabel("重做")
+            Button("重置") { resetEdits() }
+                .font(.system(size: 12, weight: .semibold))
+                .disabled(originalImage == nil)
         }
-        .font(.body.weight(.medium))
+        .font(.system(size: 17, weight: .medium))
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
         .background(.bar)
@@ -108,17 +92,46 @@ struct DemoPhotoAutoEnhanceView: View {
                 RoundedRectangle(cornerRadius: 23, style: .continuous)
                     .fill(Color(red: 0.10, green: 0.12, blue: 0.13))
                 if let originalImage {
-                    DemoComparisonPreview(originalImage: originalImage, editedImage: editedImage ?? originalImage,
-                        mode: compareMode, position: $comparePosition)
-                        .padding(5)
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Image(uiImage: compareMode == .original ? originalImage : (editedImage ?? originalImage))
+                                .resizable().scaledToFit()
+                                .frame(width: geo.size.width, height: geo.size.height)
+                            if compareMode == .compare {
+                                Image(uiImage: originalImage)
+                                    .resizable().scaledToFit()
+                                    .frame(width: geo.size.width, height: geo.size.height)
+                                    .mask(alignment: .leading) {
+                                        Rectangle().frame(width: geo.size.width * comparePosition)
+                                    }
+                                Rectangle()
+                                    .fill(.white)
+                                    .frame(width: 2)
+                                    .overlay {
+                                        Image(systemName: "arrow.left.and.right")
+                                            .font(.system(size: 10, weight: .bold))
+                                            .foregroundStyle(.black)
+                                            .padding(7)
+                                            .background(.white, in: Circle())
+                                    }
+                                    .position(x: geo.size.width * comparePosition, y: geo.size.height / 2)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                        .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+                            guard compareMode == .compare else { return }
+                            comparePosition = min(max(value.location.x / max(geo.size.width, 1), 0.03), 0.97)
+                        })
+                    }
+                    .padding(5)
                 } else {
                     VStack(spacing: 13) {
                         Image(systemName: "photo.on.rectangle.angled")
                             .font(.system(size: 43, weight: .light)).foregroundStyle(accent)
                         Text("让每一张照片，都值得珍藏")
-                            .font(.subheadline.weight(.semibold)).foregroundStyle(.white)
+                            .font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
                         Text("导入照片，开始你的创作")
-                            .font(.caption).foregroundStyle(.white.opacity(0.7))
+                            .font(.system(size: 12)).foregroundStyle(.white.opacity(0.55))
                     }
                 }
                 if isProcessing {
@@ -134,13 +147,13 @@ struct DemoPhotoAutoEnhanceView: View {
                     }
                 }
             }
-            .aspectRatio(DemoPhotoStudioTheme.previewAspectRatio, contentMode: .fit)
-            .overlay(alignment: .bottomLeading) {
+            .aspectRatio(4 / 3, contentMode: .fit)
+            .overlay(alignment: .topLeading) {
                 if originalImage != nil {
                     Text(compareMode == .original ? "原图" : (compareMode == .compare ? "前后对比" : "编辑效果"))
-                        .font(.caption.weight(.semibold)).foregroundStyle(.white)
-                        .padding(.horizontal, 9).padding(.vertical, 6)
-                        .background(.black.opacity(0.65), in: Capsule()).padding(12).allowsHitTesting(false)
+                        .font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
+                        .padding(.horizontal, 10).padding(.vertical, 7)
+                        .background(.black.opacity(0.55), in: Capsule()).padding(15)
                 }
             }
             if originalImage != nil {
@@ -151,7 +164,7 @@ struct DemoPhotoAutoEnhanceView: View {
                     Spacer()
                     if let image = editedImage ?? originalImage {
                         Text("\(image.cgImage?.width ?? Int(image.size.width * image.scale)) × \(image.cgImage?.height ?? Int(image.size.height * image.scale))")
-                            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                            .font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
                     }
                 }
             }
@@ -162,20 +175,20 @@ struct DemoPhotoAutoEnhanceView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("开始编辑").font(.title2.weight(.bold))
-                    Text("从相册选择照片开始创作")
-                        .font(.subheadline).foregroundStyle(.secondary)
+                    Text("开始编辑").font(.system(size: 18, weight: .bold))
+                    Text("选择一张照片，解锁完整编辑工具")
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Image(systemName: "wand.and.stars").font(.system(size: 25)).foregroundStyle(accent)
             }
             PhotosPicker(selection: $pickerItem, matching: .images) {
-                Label(isLoadingPhoto ? "正在读取照片…" : "从相册导入照片", systemImage: "plus")
-                    .font(.headline)
+                Label("从相册导入照片", systemImage: "plus")
+                    .font(.system(size: 14, weight: .semibold))
                     .frame(maxWidth: .infinity).padding(.vertical, 14)
                     .background(accent, in: RoundedRectangle(cornerRadius: 14))
                     .foregroundStyle(.black.opacity(0.85))
-            }.disabled(isLoadingPhoto)
+            }
             HStack(spacing: 7) {
                 featurePill("原生增强", icon: "sparkles")
                 featurePill("精细调节", icon: "slider.horizontal.3")
@@ -193,14 +206,13 @@ struct DemoPhotoAutoEnhanceView: View {
                     Button { withAnimation(.easeInOut(duration: 0.2)) { activeTab = tab } } label: {
                         VStack(spacing: 6) {
                             Image(systemName: tab.icon).font(.system(size: 16, weight: .semibold))
-                            Text(tab.title).font(.caption.weight(.semibold))
+                            Text(tab.title).font(.system(size: 10, weight: .semibold))
                         }
-                        .foregroundStyle(activeTab == tab ? Color.primary : Color.secondary)
+                        .foregroundStyle(activeTab == tab ? accent : Color.secondary)
                         .frame(maxWidth: .infinity).padding(.vertical, 11)
                         .background(activeTab == tab ? accent.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 12))
                     }
                     .buttonStyle(.plain)
-                        .accessibilityAddTraits(activeTab == tab ? .isSelected : [])
                 }
             }
             switch activeTab {
@@ -221,8 +233,8 @@ struct DemoPhotoAutoEnhanceView: View {
                         .frame(width: 45, height: 45)
                         .background(.white.opacity(0.18), in: RoundedRectangle(cornerRadius: 12))
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("一键智能增强").font(.headline)
-                        Text("自动优化色彩、曝光与细节").font(.caption).opacity(0.8)
+                        Text("一键智能增强").font(.system(size: 15, weight: .bold))
+                        Text("自动优化色彩、曝光与细节").font(.system(size: 10)).opacity(0.8)
                     }
                     Spacer()
                     Image(systemName: "arrow.right")
@@ -233,16 +245,16 @@ struct DemoPhotoAutoEnhanceView: View {
             .buttonStyle(.plain).disabled(isProcessing)
 
             heading("风格预设", subtitle: "一键应用不同影调")
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 155), spacing: 9)], spacing: 9) {
-                ForEach(Self.presets) { preset in
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 9) {
+                ForEach(DemoPhotoPreset.allCases.filter { $0 != .custom }) { preset in
                     Button { applyPreset(preset) } label: {
                         HStack(spacing: 9) {
                             Image(systemName: preset.icon).font(.system(size: 17))
                                 .foregroundStyle(preset.tint).frame(width: 34, height: 34)
                                 .background(preset.tint.opacity(0.13), in: RoundedRectangle(cornerRadius: 10))
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(preset.title).font(.body.weight(.semibold))
-                                Text(preset.subtitle).font(.caption).foregroundStyle(.secondary)
+                                Text(preset.title).font(.system(size: 12, weight: .semibold))
+                                Text(preset.subtitle).font(.system(size: 9)).foregroundStyle(.secondary)
                             }
                             Spacer(minLength: 0)
                             if selectedPreset == preset {
@@ -253,11 +265,10 @@ struct DemoPhotoAutoEnhanceView: View {
                         .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 13))
                         .overlay(RoundedRectangle(cornerRadius: 13).stroke(selectedPreset == preset ? accent : .clear, lineWidth: 1.2))
                     }
-                    .buttonStyle(.plain).accessibilityElement(children: .combine)
-                        .accessibilityAddTraits(selectedPreset == preset ? .isSelected : [])
-                        .accessibilityHint("应用此照片风格")
+                    .buttonStyle(.plain)
                 }
             }
+
         }
     }
 
@@ -265,7 +276,14 @@ struct DemoPhotoAutoEnhanceView: View {
         VStack(alignment: .leading, spacing: 14) {
             heading("精细调整", subtitle: "拖动滑块实时查看画面变化")
             VStack(spacing: 17) {
-                ForEach(Self.sliderSpecs) { spec in slider(spec) }
+                slider("曝光", icon: "sun.max", keyPath: \.exposure, range: -2...2, display: signed(settings.exposure))
+                slider("亮度", icon: "sun.min", keyPath: \.brightness, range: -0.5...0.5, display: signed(settings.brightness))
+                slider("对比度", icon: "circle.lefthalf.filled", keyPath: \.contrast, range: 0.5...1.8, display: decimal(settings.contrast))
+                slider("饱和度", icon: "drop", keyPath: \.saturation, range: 0...2, display: decimal(settings.saturation))
+                slider("色温", icon: "thermometer.medium", keyPath: \.temperature, range: -100...100, display: signed(settings.temperature))
+                slider("高光", icon: "sun.max.fill", keyPath: \.highlights, range: -1...1, display: signed(settings.highlights))
+                slider("阴影", icon: "moon", keyPath: \.shadows, range: -1...1, display: signed(settings.shadows))
+                slider("锐度", icon: "viewfinder", keyPath: \.sharpness, range: 0...2, display: decimal(settings.sharpness))
             }
             .padding(15)
             .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 17))
@@ -274,7 +292,7 @@ struct DemoPhotoAutoEnhanceView: View {
 
     private var comparePanel: some View {
         VStack(alignment: .leading, spacing: 13) {
-            heading("前后对比", subtitle: "直接拖动预览中的把手调整对比位置")
+            heading("前后对比", subtitle: "拖动预览中的分割线查看增强前后差异")
         }
     }
 
@@ -292,14 +310,14 @@ struct DemoPhotoAutoEnhanceView: View {
             .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 15))
             Button { saveToPhotos() } label: {
                 Label(isSaving ? "正在保存…" : "保存到照片", systemImage: "square.and.arrow.down")
-                    .font(.headline.weight(.bold)).frame(maxWidth: .infinity).padding(14)
+                    .font(.system(size: 13, weight: .bold)).frame(maxWidth: .infinity).padding(14)
                     .background(accent, in: RoundedRectangle(cornerRadius: 13)).foregroundStyle(.black.opacity(0.85))
-            }.disabled(isSaving || isProcessing || isRenderPending)
+            }.disabled(isSaving)
             Button { showShareSheet = true } label: {
                 Label("分享作品", systemImage: "square.and.arrow.up")
-                    .font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity).padding(13)
+                    .font(.system(size: 13, weight: .semibold)).frame(maxWidth: .infinity).padding(13)
                     .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 13))
-            }.disabled(isProcessing || isRenderPending)
+            }
         }
     }
 
@@ -318,85 +336,98 @@ struct DemoPhotoAutoEnhanceView: View {
 
     private func previewModeButton(_ title: String, mode: PreviewMode, icon: String) -> some View {
         Button { compareMode = mode } label: {
-            Label(title, systemImage: icon).font(.caption.weight(.semibold))
-                .frame(minHeight: 44).padding(.horizontal, 10)
+            Label(title, systemImage: icon).font(.system(size: 10, weight: .semibold))
+                .padding(.horizontal, 10).padding(.vertical, 8)
                 .foregroundStyle(compareMode == mode ? Color.primary : Color.secondary)
                 .background(compareMode == mode ? Color(uiColor: .tertiarySystemFill) : .clear, in: Capsule())
         }.buttonStyle(.plain)
-            .accessibilityAddTraits(compareMode == mode ? .isSelected : [])
     }
 
     private func heading(_ title: String, subtitle: String) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(title).font(.headline)
-            Text(subtitle).font(.subheadline).foregroundStyle(.secondary)
+            Text(title).font(.system(size: 16, weight: .bold))
+            Text(subtitle).font(.system(size: 10)).foregroundStyle(.secondary)
         }
     }
 
-    private func slider(_ spec: DemoSliderSpec) -> some View {
-        let value = settings[keyPath: spec.keyPath]
-        let display = spec.usesSignedFormat ? signed(value) : decimal(value)
-        return VStack(spacing: 7) {
+    private func placeholder(_ title: String, detail: String, icon: String) -> some View {
+        HStack(spacing: 11) {
+            Image(systemName: icon).font(.system(size: 15)).foregroundStyle(.secondary)
+                .frame(width: 33, height: 33).background(Color(uiColor: .tertiarySystemFill), in: RoundedRectangle(cornerRadius: 9))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).font(.system(size: 12, weight: .semibold))
+                Text(detail).font(.system(size: 9)).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Text("规划中").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
+                .padding(.horizontal, 8).padding(.vertical, 5)
+                .background(Color(uiColor: .tertiarySystemFill), in: Capsule())
+        }.padding(.vertical, 9).opacity(0.78)
+    }
+
+    private func slider(_ title: String, icon: String, keyPath: WritableKeyPath<DemoAdjustmentSettings, Double>, range: ClosedRange<Double>, display: String) -> some View {
+        VStack(spacing: 7) {
             HStack {
-                Label(spec.title, systemImage: spec.icon).font(.subheadline.weight(.semibold))
+                Label(title, systemImage: icon).font(.system(size: 11, weight: .semibold))
                 Spacer()
-                Text(display).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                Text(display).font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
             }
             Slider(value: Binding(
-                get: { settings[keyPath: spec.keyPath] },
-                set: { settings[keyPath: spec.keyPath] = $0; selectedPreset = .custom; scheduleRender(debounced: true) }
-            ), in: spec.range, onEditingChanged: { editing in
-                if editing { editingSnapshots[spec.id] = currentSnapshot }
-                else if let snapshot = editingSnapshots.removeValue(forKey: spec.id) {
-                    if snapshot != currentSnapshot { undoStack.append(snapshot); redoStack.removeAll() }
+                get: { settings[keyPath: keyPath] },
+                set: { settings[keyPath: keyPath] = $0; selectedPreset = .custom; scheduleRender(debounced: true) }
+            ), in: range, onEditingChanged: { editing in
+                if editing { editingSnapshot = settings }
+                else if let snapshot = editingSnapshot {
+                    if snapshot != settings { undoStack.append(snapshot); redoStack.removeAll() }
+                    editingSnapshot = nil
                 }
             }).tint(accent)
-                .accessibilityLabel(spec.title)
-                .accessibilityValue(display)
-                .accessibilityHint("调整照片的\(spec.title)")
         }
     }
 
     private func featurePill(_ title: String, icon: String) -> some View {
-        Label(title, systemImage: icon).font(.caption2.weight(.medium))
+        Label(title, systemImage: icon).font(.system(size: 9, weight: .medium))
             .padding(.horizontal, 8).padding(.vertical, 7)
             .background(Color(uiColor: .tertiarySystemFill), in: Capsule())
+    }
+
+    private func infoCard(_ title: String, detail: String, icon: String) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Image(systemName: icon).font(.system(size: 18)).foregroundStyle(accent)
+            Text(title).font(.system(size: 12, weight: .semibold))
+            Text(detail).font(.system(size: 9)).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading).padding(13)
+        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
     }
 
     private func exportRow(_ title: String, value: String, icon: String) -> some View {
         HStack(spacing: 11) {
             Image(systemName: icon).foregroundStyle(accent).frame(width: 20)
-            Text(title).font(.subheadline.weight(.medium))
+            Text(title).font(.system(size: 11, weight: .medium))
             Spacer()
-            Text(value).font(.caption).foregroundStyle(.secondary)
+            Text(value).font(.system(size: 10)).foregroundStyle(.secondary)
         }.padding(.vertical, 12)
     }
 
     private var outputSize: String {
         guard let image = editedImage ?? originalImage else { return "—" }
-        return "\(image.cgImage?.width ?? Int(image.size.width * image.scale)) × \(image.cgImage?.height ?? Int(image.size.height * image.scale)) px"
+        return "\(Int(image.size.width)) × \(Int(image.size.height))"
     }
 
-    private var currentSnapshot: DemoEditSnapshot { DemoEditSnapshot(settings: settings, preset: selectedPreset, autoEnhanceEnabled: autoEnhanceEnabled) }
-    private func restore(_ snapshot: DemoEditSnapshot) { settings = snapshot.settings; selectedPreset = snapshot.preset; autoEnhanceEnabled = snapshot.autoEnhanceEnabled }
     private func signed(_ value: Double) -> String { String(format: "%+.2f", value) }
     private func decimal(_ value: Double) -> String { String(format: "%.2f", value) }
 
     @MainActor
     private func loadPhoto(_ item: PhotosPickerItem) async {
         do {
-            isLoadingPhoto = true
-            defer { isLoadingPhoto = false; pickerItem = nil }
             guard let data = try await item.loadTransferable(type: Data.self),
                   let image = UIImage(data: data) else {
-                alertTitle = "导入失败"
                 alertMessage = "无法读取所选照片，请重新选择。"
                 return
             }
             pickerItem = nil
             renderToken = UUID()
-            isRenderPending = false
-            isProcessing = false
             originalImage = image
             editedImage = image
             settings = DemoAdjustmentSettings()
@@ -406,7 +437,6 @@ struct DemoPhotoAutoEnhanceView: View {
             redoStack.removeAll()
             compareMode = .result
         } catch {
-            alertTitle = "导入失败"
             alertMessage = "读取照片失败：\(error.localizedDescription)"
         }
     }
@@ -414,6 +444,7 @@ struct DemoPhotoAutoEnhanceView: View {
     private func applyAutoEnhance() {
         guard originalImage != nil else { return }
         pushUndo()
+        settings = DemoAdjustmentSettings()
         autoEnhanceEnabled = true
         scheduleRender()
     }
@@ -427,62 +458,62 @@ struct DemoPhotoAutoEnhanceView: View {
     }
 
     private func pushUndo() {
-        undoStack.append(currentSnapshot)
-        if undoStack.count > DemoPhotoStudioTheme.undoHistoryLimit { undoStack.removeFirst() }
+        undoStack.append(settings)
+        if undoStack.count > 40 { undoStack.removeFirst() }
         redoStack.removeAll()
     }
 
     private func undo() {
         guard let previous = undoStack.popLast() else { return }
-        redoStack.append(currentSnapshot)
-        restore(previous)
+        redoStack.append(settings)
+        settings = previous
+        autoEnhanceEnabled = false
+        selectedPreset = .custom
         scheduleRender()
     }
 
     private func redo() {
         guard let next = redoStack.popLast() else { return }
-        undoStack.append(currentSnapshot)
-        restore(next)
+        undoStack.append(settings)
+        settings = next
+        autoEnhanceEnabled = false
+        selectedPreset = .custom
         scheduleRender()
     }
 
     private func resetEdits() {
         applyPreset(.original)
+        compareMode = .result
     }
 
     private func scheduleRender(debounced: Bool = false) {
         guard let originalImage else { return }
         let token = UUID()
         renderToken = token
-        isRenderPending = true
+        isProcessing = true
         let currentSettings = settings
         let useAutoEnhance = autoEnhanceEnabled
         Task {
-            if debounced { try? await Task.sleep(for: .milliseconds(DemoPhotoStudioTheme.renderDebounceMilliseconds)) }
+            if debounced { try? await Task.sleep(for: .milliseconds(100)) }
             guard renderToken == token else { return }
-            isProcessing = true
             let result = await Task.detached(priority: .userInitiated) {
                 DemoImageProcessor.render(originalImage, settings: currentSettings, autoEnhance: useAutoEnhance)
             }.value
             guard renderToken == token else { return }
             editedImage = result ?? originalImage
             isProcessing = false
-            isRenderPending = false
         }
     }
 
     private func saveToPhotos() {
-        guard !isProcessing && !isRenderPending else { alertTitle = "请稍候"; alertMessage = "照片仍在处理中，请等待预览更新后再保存。"; return }
         guard let image = editedImage ?? originalImage else { return }
-        guard let cgImage = image.cgImage else { alertTitle = "保存失败"; alertMessage = "无法读取当前图像，请重新导入照片。"; return }
+        guard let cgImage = image.cgImage else { alertMessage = "无法读取当前图像，请重新导入照片。"; return }
         isSaving = true
         Task {
             do {
                 try await PhotoLibraryService.shared.save(cgImage)
-                alertTitle = "保存成功"
                 alertMessage = "照片已成功保存到系统相册。"
             } catch {
-                alertTitle = "保存失败"
                 alertMessage = error.localizedDescription
             }
             isSaving = false
@@ -490,8 +521,7 @@ struct DemoPhotoAutoEnhanceView: View {
     }
 }
 
-enum PreviewMode { case result, compare, original }
-
+private enum PreviewMode { case result, compare, original }
 
 private enum EditorTab: String, CaseIterable, Identifiable {
     case enhance, adjust, compare, export

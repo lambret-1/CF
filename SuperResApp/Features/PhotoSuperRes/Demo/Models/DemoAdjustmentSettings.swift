@@ -65,18 +65,3 @@ enum DemoPhotoPreset: String, CaseIterable, Identifiable {
         }
     }
 }
-
-struct DemoSliderSpec: Identifiable {
-    let title: String
-    let icon: String
-    let keyPath: WritableKeyPath<DemoAdjustmentSettings, Double>
-    let range: ClosedRange<Double>
-    let usesSignedFormat: Bool
-    var id: String { title }
-}
-
-struct DemoEditSnapshot: Equatable {
-    let settings: DemoAdjustmentSettings
-    let preset: DemoPhotoPreset
-    let autoEnhanceEnabled: Bool
-}

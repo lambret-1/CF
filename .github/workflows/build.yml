@@ -7,55 +7,47 @@ on:
     branches: [main, master]
   workflow_dispatch:
 
-# 并发控制：同一分支的重复推送自动取消旧任务，避免浪费 macOS 配额
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 env:
   APP_NAME: SuperResApp
+  VERSION: 1.0.9  # ⭐️ 假设当前是 1.0.9，测试逢九进一
 
 jobs:
   build:
     name: 构建 iOS 未签名包
-    runs-on: macos-14  # 默认 Xcode 15.4；若项目需 Xcode 16+，请改用 macos-15
-    timeout-minutes: 45  # 缓存冷启动时首次仍可能较久，适当放宽
-
+    runs-on: macos-14
+    timeout-minutes: 30
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
-        with:
-          fetch-tags: true   # 必须拉取 tag，否则版本号永远从回退值开始
 
-      - name: 获取最新版本号并计算逢九进一
+      # ⭐️ 核心新增：计算逢九进一的版本号
+      - name: 计算新版本号 (逢九进一)
         id: version_bump
         run: |
-          # 获取最新 tag；若无 tag，从 1.0.0 起步
-          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)
-          if [ -z "$LATEST_TAG" ]; then
-            CURRENT="1.0.0"
-          else
-            CURRENT="$LATEST_TAG"
-          fi
-          echo "当前基础版本（来自 tag）: $CURRENT"
-
+          CURRENT="${{ env.VERSION }}"
+          echo "当前基础版本: $CURRENT"
+          
           IFS='.' read -r major minor patch <<< "$CURRENT"
+          
+          # 个位加 1
           patch=$((patch + 1))
-
-          # 逢九进一
+          
+          # 逢九进一逻辑
           if [ "$patch" -gt 9 ]; then
-            patch=0
-            minor=$((minor + 1))
+              patch=0
+              minor=$((minor + 1))
           fi
+          
           if [ "$minor" -gt 9 ]; then
-            minor=0
-            major=$((major + 1))
+              minor=0
+              major=$((major + 1))
           fi
-
+          
           NEW_VER="$major.$minor.$patch"
           echo "计算后的新版本: $NEW_VER"
+          
+          # 将新版本号写入环境变量，供后续步骤（编译、打包）使用
           echo "NEW_VERSION=$NEW_VER" >> $GITHUB_ENV
-          echo "NEW_VERSION=$NEW_VER" >> $GITHUB_OUTPUT
 
       - name: 配置 Xcode
         run: |
@@ -72,38 +64,24 @@ jobs:
           xcodegen generate
           /usr/bin/sed -i '' 's/objectVersion = [0-9]*;/objectVersion = 56;/' "${{ env.APP_NAME }}.xcodeproj/project.pbxproj"
           grep "objectVersion" "${{ env.APP_NAME }}.xcodeproj/project.pbxproj"
-
-      # 缓存 SwiftPM 包源码，跨运行复用，显著减少 resolve 和 checkout 时间
-      - name: 缓存 Swift Package 源码
-        uses: actions/cache@v4
-        with:
-          path: .ci-source-packages
-          key: ${{ runner.os }}-spm-${{ hashFiles('**/Package.resolved') }}
-          restore-keys: |
-            ${{ runner.os }}-spm-
+          echo "=== 内置模型列表 ==="
+          ls -lh SuperResApp/Models/Builtin/*.mlmodelc 2>/dev/null || echo "（未找到 .mlmodelc）"
 
       - name: 解析 Swift 包依赖
         run: |
-          SOURCE_PACKAGES_DIR="$PWD/.ci-source-packages"
-          mkdir -p "$SOURCE_PACKAGES_DIR"
           xcodebuild -project "${{ env.APP_NAME }}.xcodeproj" \
             -scheme "${{ env.APP_NAME }}" \
-            -clonedSourcePackagesDirPath "$SOURCE_PACKAGES_DIR" \
             -resolvePackageDependencies
 
       - name: 编译构建（未签名）
         run: |
           set -o pipefail
-          SOURCE_PACKAGES_DIR="$PWD/.ci-source-packages"
           xcodebuild build \
             -project "${{ env.APP_NAME }}.xcodeproj" \
             -scheme "${{ env.APP_NAME }}" \
             -configuration Release \
             -destination "generic/platform=iOS" \
             -derivedDataPath build/DerivedData \
-            -clonedSourcePackagesDirPath "$SOURCE_PACKAGES_DIR" \
-            -skipPackageUpdates \
-            -disableAutomaticPackageResolution \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
@@ -114,7 +92,6 @@ jobs:
             ONLY_ACTIVE_ARCH=NO \
             ARCHS=arm64 \
             MARKETING_VERSION="${{ env.NEW_VERSION }}" \
-            CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
             2>&1 | tee build.log
 
       - name: 导出未签名 IPA
@@ -122,17 +99,17 @@ jobs:
           APP_PATH="build/DerivedData/Build/Products/Release-iphoneos/${{ env.APP_NAME }}.app"
           mkdir -p build/Payload
           cp -R "$APP_PATH" build/Payload/
-          # 文件名加入 run_number 短哈希，避免同一版本号重复时互相覆盖
-          IPA_NAME="${{ env.APP_NAME }}-unsigned-v${{ env.NEW_VERSION }}-r${{ github.run_number }}.ipa"
-          cd build && zip -qr "$IPA_NAME" Payload
-          ls -lh "$IPA_NAME"
-          echo "IPA_PATH=build/$IPA_NAME" >> $GITHUB_ENV
+          cd build && zip -qr "${{ env.APP_NAME }}-unsigned-v${{ env.NEW_VERSION }}.ipa" Payload
+          ls -lh "${{ env.APP_NAME }}-unsigned-v${{ env.NEW_VERSION }}.ipa"
+          echo "=== App 内模型检查 ==="
+          find "Payload/${{ env.APP_NAME }}.app" -name "*.mlmodelc" -type d || echo "（未找到 .mlmodelc）"
 
       - name: 上传 IPA 产物
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.APP_NAME }}-unsigned-v${{ env.NEW_VERSION }}-r${{ github.run_number }}
-          path: ${{ env.IPA_PATH }}
+          # ⭐️ 这里换成新计算的版本号
+          name: ${{ env.APP_NAME }}-unsigned-v${{ env.NEW_VERSION }}.ipa
+          path: build/${{ env.APP_NAME }}-unsigned-v${{ env.NEW_VERSION }}.ipa
           retention-days: 30
 
       - name: 构建失败时输出日志
