@@ -81,3 +81,13 @@ enum DemoPhotoPreset: String, CaseIterable, Identifiable, Equatable {
 
     var settings: DemoAdjustmentSettings { DemoAdjustmentSettings() }
 }
+
+
+/// Image geometry operations are executed by Core Image.
+struct DemoImageTransform: Equatable {
+    var quarterTurnsClockwise = 0
+    var isHorizontallyFlipped = false
+    var usesSquareCrop = false
+
+    static let identity = DemoImageTransform()
+}
