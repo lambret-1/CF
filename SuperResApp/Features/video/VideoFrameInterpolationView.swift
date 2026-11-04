@@ -23,7 +23,11 @@ private struct FilledButtonStyle: ButtonStyle {
 }
 
 struct VideoFrameInterpolationView: View {
-    @StateObject private var viewModel = VideoSuperResViewModel()
+    @ObservedObject var viewModel: VideoSuperResViewModel
+
+    init(viewModel: VideoSuperResViewModel) {
+        self.viewModel = viewModel
+    }
 
     @State private var pickerItem: PhotosPickerItem?
     @State private var player: AVPlayer?
