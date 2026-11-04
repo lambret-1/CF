@@ -30,9 +30,7 @@ final class VideoFrameInterpolationProcessor: @unchecked Sendable {
         guard multiplier == 2 || multiplier == 4 else {
             throw FrameInterpolationError.unsupportedMultiplier
         }
-        cancelLock.lock()
-        cancelled = false
-        cancelLock.unlock()
+        cancelLock.withLock { cancelled = false }
 
         let model = try await ModelStore.shared.loadFrameInterpolationModel()
         guard let interpolator = FrameInterpolator(model: model) else {
@@ -90,14 +88,23 @@ final class VideoFrameInterpolationProcessor: @unchecked Sendable {
         var audioOutput: AVAssetReaderTrackOutput?
         var audioInput: AVAssetWriterInput?
         if let audioTrack {
-            let output = AVAssetReaderTrackOutput(track: audioTrack, outputSettings: nil)
-            output.alwaysCopiesSampleData = false
-            if reader.canAdd(output) { reader.add(output); audioOutput = output }
-
-            let formatHint = audioTrack.formatDescriptions.first as? CMFormatDescription
-            let input = AVAssetWriterInput(mediaType: .audio, outputSettings: nil, sourceFormatHint: formatHint)
+            let descriptions = try? await audioTrack.load(.formatDescriptions)
+            let input = AVAssetWriterInput(
+                mediaType: .audio,
+                outputSettings: nil,
+                sourceFormatHint: descriptions?.first
+            )
             input.expectsMediaDataInRealTime = false
-            if writer.canAdd(input) { writer.add(input); audioInput = input }
+            if writer.canAdd(input) {
+                let output = AVAssetReaderTrackOutput(track: audioTrack, outputSettings: nil)
+                output.alwaysCopiesSampleData = false
+                if reader.canAdd(output) {
+                    writer.add(input)
+                    reader.add(output)
+                    audioInput = input
+                    audioOutput = output
+                }
+            }
         }
 
         guard reader.startReading() else {
