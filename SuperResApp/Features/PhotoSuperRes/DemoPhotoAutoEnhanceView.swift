@@ -1099,6 +1099,7 @@ struct DemoPhotoAutoEnhanceView: View {
                 selectedAsset = refreshedAsset
                 editingInput = refreshedInput
                 renderSourceURL = refreshedInput.fullSizeImageURL
+                usesRAWResource = refreshedInput.uniformTypeIdentifier.flatMap { UTType($0) }?.conforms(to: .rawImage) == true
                 originalImage = image
                 editedImage = image
                 settings = DemoAdjustmentSettings()
