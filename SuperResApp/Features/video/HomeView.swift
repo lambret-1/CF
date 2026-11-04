@@ -28,7 +28,7 @@ struct HomeView: View {
                     // 1. 功能大入口 (AI 补帧 & 视频超分)
                     HStack(spacing: 16) {
                         // 左侧：AI 补帧
-                        NavigationLink(destination: FrameInterpolationView()) {
+                        NavigationLink(destination: VideoSuperResView(initialProcessingMode: .frameInterpolation)) {
                             FeatureCard(icon: "slowmo", title: "AI 补帧", color: .purple)
                         }
                         
@@ -171,24 +171,5 @@ struct RecentRecordCard: View {
                     .foregroundColor(.secondary)
             }
         }
-    }
-}
-
-// MARK: - ⭐️ AI 补帧占位页面
-// 因为你还没开发补帧的核心代码，这里先放一个占位图，防止点击报错。
-struct FrameInterpolationView: View {
-    var body: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "slowmo")
-                .font(.system(size: 60))
-                .foregroundColor(.purple)
-            Text("AI 补帧功能开发中...")
-                .font(.headline)
-                .foregroundColor(.gray)
-            Text("(需要引入 CoreML 的插帧模型，如 RIFE 或 FILM)")
-                .font(.caption)
-                .foregroundColor(.gray)
-        }
-        .navigationTitle("AI 补帧")
     }
 }
