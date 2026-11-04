@@ -189,6 +189,9 @@ actor PhotoKitEditingService {
         if let portraitMatte = image.portraitEffectsMatte {
             representationOptions[.avPortraitEffectsMatte] = portraitMatte
         }
+        if let semanticMatte = image.semanticSegmentationMatte {
+            representationOptions[.avSemanticSegmentationMattes] = [semanticMatte]
+        }
         try CIContext().writeHEIF10Representation(
             of: image,
             to: outputURL,
