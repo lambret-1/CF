@@ -442,11 +442,22 @@ struct DemoPhotoAutoEnhanceView: View {
             }
             Slider(value: Binding(
                 get: { settings[keyPath: keyPath] },
-                set: { settings[keyPath: keyPath] = $0; selectedPreset = .custom; scheduleRender(debounced: true) }
+                set: {
+                    settings[keyPath: keyPath] = $0
+                    selectedPreset = .custom
+                    autoEnhanceEnabled = false
+                    autoEnhanceBaseSettings = nil
+                    autoEnhanceBasePreset = nil
+                    scheduleRender(debounced: true)
+                }
             ), in: range, onEditingChanged: { editing in
-                if editing { editingSnapshot = settings }
-                else if let snapshot = editingSnapshot {
-                    if snapshot != captureSnapshot() { undoStack.append(snapshot); redoStack.removeAll() }
+                if editing {
+                    editingSnapshot = captureSnapshot()
+                } else if let snapshot = editingSnapshot {
+                    if snapshot != captureSnapshot() {
+                        undoStack.append(snapshot)
+                        redoStack.removeAll()
+                    }
                     editingSnapshot = nil
                 }
             }).tint(accent)
