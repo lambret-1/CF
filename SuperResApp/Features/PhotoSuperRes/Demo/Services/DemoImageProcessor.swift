@@ -11,7 +11,7 @@ enum DemoImageProcessor {
         if autoEnhance {
             let options: [CIImageAutoAdjustmentOption: Any] = [
                 .crop: false,
-                .imageOrientation: NSNumber(value: CGImagePropertyOrientation.up.rawValue)
+                CIImageAutoAdjustmentOption(rawValue: "CIDetectorImageOrientation"): NSNumber(value: CGImagePropertyOrientation.up.rawValue)
             ]
             for filter in input.autoAdjustmentFilters(options: options) {
                 filter.setValue(output, forKey: kCIInputImageKey)
