@@ -88,6 +88,37 @@ enum ApplePhotoAnalysisService {
         return request.results?.first?.angle
     }
 
+    static func foregroundCutout(from image: UIImage) throws -> UIImage? {
+        guard let cgImage = image.cgImage else {
+            throw ApplePhotoAnalysisError.imageUnavailable
+        }
+        let handler = VNImageRequestHandler(
+            cgImage: cgImage,
+            orientation: image.imageOrientation.cgImagePropertyOrientation,
+            options: [:]
+        )
+        let request = VNGenerateForegroundInstanceMaskRequest()
+        try handler.perform([request])
+        guard let observation = request.results?.first else { return nil }
+        let maskBuffer = try observation.generateScaledMaskForImage(
+            forInstances: observation.allInstances,
+            from: handler
+        )
+
+        let foreground = CIImage(cgImage: cgImage)
+        let mask = CIImage(cvPixelBuffer: maskBuffer)
+        let transparentBackground = CIImage(color: .clear).cropped(to: foreground.extent)
+        let blend = CIFilter(name: "CIBlendWithMask")
+        blend?.setValue(foreground, forKey: kCIInputImageKey)
+        blend?.setValue(transparentBackground, forKey: kCIInputBackgroundImageKey)
+        blend?.setValue(mask, forKey: "inputMaskImage")
+        guard let output = blend?.outputImage,
+              let rendered = CIContext().createCGImage(output, from: foreground.extent) else {
+            return nil
+        }
+        return UIImage(cgImage: rendered, scale: image.scale, orientation: .up)
+    }
+
     static func depthData(from image: UIImage) -> AVDepthData? {
         guard let data = image.jpegData(compressionQuality: 1),
               let source = CGImageSourceCreateWithData(data as CFData, nil) else {
