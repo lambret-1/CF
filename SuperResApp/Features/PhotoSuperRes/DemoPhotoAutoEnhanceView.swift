@@ -848,11 +848,13 @@ private struct TickMarkSlider: View {
         .accessibilityValue(String(format: "%.2f", value))
         .accessibilityAdjustableAction { direction in
             let step = (range.upperBound - range.lowerBound) / 100
+            onEditingChanged(true)
             switch direction {
             case .increment: value = min(value + step, range.upperBound)
             case .decrement: value = max(value - step, range.lowerBound)
             @unknown default: break
             }
+            onEditingChanged(false)
         }
     }
 }

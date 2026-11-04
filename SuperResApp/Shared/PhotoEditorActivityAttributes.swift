@@ -6,6 +6,19 @@ struct PhotoEditorActivityAttributes: ActivityAttributes {
         var status: String
         var selectedAction: String
         var canComplete: Bool
+
+        private enum CodingKeys: String, CodingKey {
+            case status
+            case selectedAction
+            case canComplete
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            status = try container.decode(String.self, forKey: .status)
+            selectedAction = try container.decode(String.self, forKey: .selectedAction)
+            canComplete = try container.decodeIfPresent(Bool.self, forKey: .canComplete) ?? false
+        }
     }
 
     let sessionID: String
