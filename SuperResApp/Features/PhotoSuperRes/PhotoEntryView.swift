@@ -1,6 +1,10 @@
 import SwiftUI
+import PhotosUI
 
 struct PhotoEntryView: View {
+    @State private var demoPickerItem: PhotosPickerItem?
+    @State private var showDemoEditor = false
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 20) {
@@ -25,16 +29,25 @@ struct PhotoEntryView: View {
                 }
                 .buttonStyle(.plain)
 
-                NavigationLink {
-                    DemoPhotoAutoEnhanceView()
-                } label: {
+                PhotosPicker(selection: $demoPickerItem, matching: .images) {
                     entryButton(
                         title: "Demo",
-                        subtitle: "使用 iOS 原生自动调整优化照片",
+                        subtitle: "选择照片，直接进入全屏编辑器",
                         icon: "wand.and.stars"
                     )
                 }
                 .buttonStyle(.plain)
+                .onChange(of: demoPickerItem) { _, item in
+                    guard item != nil else { return }
+                    showDemoEditor = true
+                }
+                .fullScreenCover(isPresented: $showDemoEditor, onDismiss: {
+                    demoPickerItem = nil
+                }) {
+                    if let item = demoPickerItem {
+                        DemoPhotoAutoEnhanceView(initialPickerItem: item)
+                    }
+                }
                 Spacer()
             }
             .padding(.horizontal, DesignTokens.pageMargin)
