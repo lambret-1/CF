@@ -493,7 +493,7 @@ struct DemoPhotoAutoEnhanceView: View {
     }
 
     private var hasChanges: Bool {
-        originalImage != nil && (settings != DemoAdjustmentSettings() || autoEnhanceEnabled)
+        originalImage != nil && (settings != DemoAdjustmentSettings() || autoEnhanceEnabled || selectedPreset != .original)
     }
 
     private var isCompleteEnabled: Bool {
@@ -694,7 +694,8 @@ struct DemoPhotoAutoEnhanceView: View {
         isProcessing = true
         let currentSettings = settings
         let useAutoEnhance = autoEnhanceEnabled
-        if currentSettings == DemoAdjustmentSettings() && !useAutoEnhance {
+        let currentFilterName = selectedPreset.filterName
+        if currentSettings == DemoAdjustmentSettings() && !useAutoEnhance && selectedPreset == .original {
             editedImage = originalImage
             isProcessing = false
             return
@@ -703,7 +704,7 @@ struct DemoPhotoAutoEnhanceView: View {
             if debounced { try? await Task.sleep(for: .milliseconds(100)) }
             guard renderToken == token else { return }
             let result = await Task.detached(priority: .userInitiated) {
-                DemoImageProcessor.render(originalImage, settings: currentSettings, autoEnhance: useAutoEnhance)
+                DemoImageProcessor.render(originalImage, settings: currentSettings, autoEnhance: useAutoEnhance, filterName: currentFilterName)
             }.value
             guard renderToken == token else { return }
             editedImage = result ?? originalImage
