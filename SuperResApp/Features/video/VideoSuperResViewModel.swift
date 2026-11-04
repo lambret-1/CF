@@ -31,6 +31,14 @@ struct SuperResModel: Identifiable, Hashable, Sendable {
     }
 }
 
+// MARK: - 视频处理模式
+enum VideoProcessingMode: String, CaseIterable, Identifiable {
+    case superResolution
+    case frameInterpolation
+    var id: String { rawValue }
+    var title: String { self == .superResolution ? "视频超分" : "AI 补帧" }
+}
+
 // MARK: - 主 ViewModel
 @MainActor
 final class VideoSuperResViewModel: ObservableObject {
@@ -71,9 +79,12 @@ final class VideoSuperResViewModel: ObservableObject {
     @Published var originalVideoURL: URL?
     @Published var resultVideoURL: URL?
     @Published var selectedModelID: String = SuperResModel.defaultModel.id
+    @Published var processingMode: VideoProcessingMode = .superResolution
+    @Published var interpolationMultiplier: Int = 2
 
     private let tempDirectory = FileManager.default.temporaryDirectory
     private var processor: VideoSuperResProcessor?
+    private var frameInterpolationProcessor: VideoFrameInterpolationProcessor?
     private var generation: Int = 0
 
     // ❗️后台任务句柄：beginBackgroundTask 返回值，必须与 endBackgroundTask 一一配对
@@ -187,30 +198,35 @@ final class VideoSuperResViewModel: ObservableObject {
         let gen = generation
         let outputURL = tempDirectory
             .appendingPathComponent("superres_\(Int(Date().timeIntervalSince1970)).mov")
-        let newProcessor = VideoSuperResProcessor()
-        self.processor = newProcessor
-
-        let scale = currentScaleFactor
+        let mode = processingMode
         let modelID = selectedModelID
+        let scale = currentScaleFactor
         AppLogger.shared.log(
-            "[视频控制] 调用超分引擎，模型: \(modelID)，倍数: \(scale)x",
+            mode == .frameInterpolation
+                ? "[视频控制] 调用 RIFE 补帧引擎，倍数：\(interpolationMultiplier)x"
+                : "[视频控制] 调用超分引擎，模型：\(modelID)，倍数：\(scale)x",
             isError: false
         )
 
         do {
-            try await newProcessor.processVideo(
-                inputURL: inputURL,
-                outputURL: outputURL,
-                modelID: modelID,
-                scaleFactor: scale,
-                progressHandler: { [weak self] p in
-                    Task { @MainActor [weak self] in
-                        guard let self, self.generation == gen else { return }
-                        let safe = p.isFinite ? min(max(p, 0), 1) : 0
-                        self.progress = safe
-                    }
+            let progress: @MainActor @Sendable (Double) -> Void = { [weak self] p in
+                Task { @MainActor [weak self] in
+                    guard let self, self.generation == gen else { return }
+                    let safe = p.isFinite ? min(max(p, 0), 1) : 0
+                    self.progress = safe
                 }
-            )
+            }
+            if mode == .frameInterpolation {
+                let newProcessor = VideoFrameInterpolationProcessor()
+                frameInterpolationProcessor = newProcessor
+                try await newProcessor.processVideo(inputURL: inputURL, outputURL: outputURL, multiplier: interpolationMultiplier, progressHandler: progress)
+                frameInterpolationProcessor = nil
+            } else {
+                let newProcessor = VideoSuperResProcessor()
+                processor = newProcessor
+                try await newProcessor.processVideo(inputURL: inputURL, outputURL: outputURL, modelID: modelID, scaleFactor: scale, progressHandler: progress)
+                processor = nil
+            }
 
             guard generation == gen else {
                 try? FileManager.default.removeItem(at: outputURL)
@@ -262,10 +278,10 @@ final class VideoSuperResViewModel: ObservableObject {
         generation += 1
         AppLogger.shared.log("[视频控制] 用户点击取消...", isError: false)
 
-        if let p = processor {
-            Task { await p.cancel() }
-        }
+        processor?.cancel()
+        frameInterpolationProcessor?.cancel()
         processor = nil
+        frameInterpolationProcessor = nil
         progress = 0.0
         state = originalVideoURL != nil ? .videoSelected : .empty
         endBackgroundTaskIfNeeded()
@@ -329,10 +345,10 @@ final class VideoSuperResViewModel: ObservableObject {
 
         generation += 1
 
-        if let p = processor {
-            Task { await p.cancel() }
-        }
+        processor?.cancel()
+        frameInterpolationProcessor?.cancel()
         processor = nil
+        frameInterpolationProcessor = nil
         endBackgroundTaskIfNeeded()
 
         if let url = originalVideoURL { try? FileManager.default.removeItem(at: url) }
