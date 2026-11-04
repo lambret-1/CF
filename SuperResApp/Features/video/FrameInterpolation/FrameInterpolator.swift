@@ -158,6 +158,10 @@ final class FrameInterpolator {
         encodePreprocess(commandBuffer: preprocessBuffer, source: tex1, dstBuffer: frame1Buffer)
         preprocessBuffer.commit()
         preprocessBuffer.waitUntilCompleted()
+        guard preprocessBuffer.status == .completed, preprocessBuffer.error == nil else {
+            logger.error("Metal 预处理执行失败")
+            return nil
+        }
 
         // 4. Core ML 推理（光流估计）或调试模式
         if Self.forceSimpleAverage {
@@ -192,9 +196,16 @@ final class FrameInterpolator {
                 debugDataTypeMask = maskArray.dataType.rawValue
             }
 
-            // 5. 将 MLMultiArray 拷贝到 MTLBuffer（含 Float32→Float16 转换）
-            copyToBuffer(multiArray: flowArray, buffer: flowBuffer)
-            copyToBuffer(multiArray: maskArray, buffer: maskBuffer)
+            // 5. 校验模型输出大小并拷贝（含 Float32→Float16 转换）。
+            let expectedFlowCount = flowBuffer.length / MemoryLayout<Float16>.size
+            let expectedMaskCount = maskBuffer.length / MemoryLayout<Float16>.size
+            guard flowArray.count == expectedFlowCount,
+                  maskArray.count == expectedMaskCount,
+                  copyToBuffer(multiArray: flowArray, buffer: flowBuffer),
+                  copyToBuffer(multiArray: maskArray, buffer: maskBuffer) else {
+                logger.error("RIFE 模型输出 shape 或数据类型不匹配")
+                return nil
+            }
 
             // 首次推理时收集 flow/mask 统计（sigmoid 前）
             if !didReportDebug {
@@ -265,6 +276,10 @@ final class FrameInterpolator {
 
         postprocessBuffer.commit()
         postprocessBuffer.waitUntilCompleted()
+        guard postprocessBuffer.status == .completed, postprocessBuffer.error == nil else {
+            logger.error("Metal 后处理执行失败")
+            return nil
+        }
 
         // 7. 从纹理拷贝到 PixelBuffer（原分辨率，无需再缩放）
         var outputBuffer: CVPixelBuffer?
@@ -458,26 +473,31 @@ final class FrameInterpolator {
 
     // MARK: - MLMultiArray <-> MTLBuffer
     private func makeMultiArray(from buffer: MTLBuffer, shape: [NSNumber]) -> MLMultiArray? {
-        guard let array = try? MLMultiArray(shape: shape, dataType: .float16) else { return nil }
-        memcpy(array.dataPointer, buffer.contents(), min(buffer.length, array.count * MemoryLayout<Float16>.size))
+        guard let array = try? MLMultiArray(shape: shape, dataType: .float16),
+              array.count * MemoryLayout<Float16>.size <= buffer.length else { return nil }
+        memcpy(array.dataPointer, buffer.contents(), array.count * MemoryLayout<Float16>.size)
         return array
     }
 
-    private func copyToBuffer(multiArray: MLMultiArray, buffer: MTLBuffer) {
+    private func copyToBuffer(multiArray: MLMultiArray, buffer: MTLBuffer) -> Bool {
         let count = multiArray.count
+        guard count <= buffer.length / MemoryLayout<Float16>.size else { return false }
         // 关键修复：coremltools TensorType 默认输出 Float32，而 MTLBuffer 是 Float16
         // 直接 memcpy 会将 Float32 字节错误解析为 Float16，导致光流/掩码值完全错误
         if multiArray.dataType == .float16 {
             let byteCount = count * MemoryLayout<Float16>.size
-            memcpy(buffer.contents(), multiArray.dataPointer, min(byteCount, buffer.length))
+            memcpy(buffer.contents(), multiArray.dataPointer, byteCount)
+            return true
         } else if multiArray.dataType == .float32 {
             let src = multiArray.dataPointer.assumingMemoryBound(to: Float32.self)
             let dst = buffer.contents().assumingMemoryBound(to: Float16.self)
             for i in 0..<count {
                 dst[i] = Float16(src[i])
             }
+            return true
         } else {
             logger.error("不支持的 MLMultiArray 数据类型: \(multiArray.dataType.rawValue, privacy: .public)")
+            return false
         }
     }
 
