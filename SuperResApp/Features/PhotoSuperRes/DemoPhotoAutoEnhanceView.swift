@@ -12,10 +12,11 @@ struct DemoPhotoAutoEnhanceView: View {
     @State private var activeTab: EditorTab = .adjust
     @State private var compareMode: PreviewMode = .result
     @State private var autoEnhanceEnabled = false
-    @State private var preAutoEnhanceSettings: DemoAdjustmentSettings?
-    @State private var undoStack: [DemoAdjustmentSettings] = []
-    @State private var redoStack: [DemoAdjustmentSettings] = []
-    @State private var editingSnapshot: DemoAdjustmentSettings?
+    @State private var autoEnhanceBaseSettings: DemoAdjustmentSettings?
+    @State private var autoEnhanceBasePreset: DemoPhotoPreset?
+    @State private var undoStack: [DemoEditorSnapshot] = []
+    @State private var redoStack: [DemoEditorSnapshot] = []
+    @State private var editingSnapshot: DemoEditorSnapshot?
     @State private var renderToken = UUID()
     @State private var isProcessing = false
     @State private var isSaving = false
@@ -23,7 +24,9 @@ struct DemoPhotoAutoEnhanceView: View {
     @State private var showShareSheet = false
     @State private var selectedAdjustment: AdjustmentControl = .exposure
     @State private var liveActivity: Activity<PhotoEditorActivityAttributes>?
+    @State private var liveActivitySessionID: String?
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
 
     init(initialPickerItem: PhotosPickerItem? = nil) {
         _pickerItem = State(initialValue: initialPickerItem)
@@ -84,6 +87,15 @@ struct DemoPhotoAutoEnhanceView: View {
             default: break
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .photoEditorIslandCommand)) { _ in
+            consumeIslandCommand()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { consumeIslandCommand() }
+        }
+        .onChange(of: isCompleteEnabled) { _, enabled in
+            Task { await updateLiveActivity(canComplete: enabled) }
+        }
         .onDisappear {
             Task { await endLiveActivity() }
         }
@@ -104,11 +116,11 @@ struct DemoPhotoAutoEnhanceView: View {
                 saveToPhotos()
             }
             .font(.system(size: 15, weight: .semibold))
-            .foregroundStyle(originalImage == nil ? Color.secondary : Color.black.opacity(0.65))
+            .foregroundStyle(isCompleteEnabled ? Color.black.opacity(0.85) : Color.secondary)
             .padding(.horizontal, 16)
             .padding(.vertical, 7)
-            .background(originalImage == nil ? Color(uiColor: .tertiarySystemFill) : Color(red: 1.0, green: 0.88, blue: 0.48), in: Capsule())
-            .disabled(originalImage == nil || isSaving)
+            .background(isCompleteEnabled ? Color(red: 1.0, green: 0.88, blue: 0.48) : Color(uiColor: .tertiarySystemFill), in: Capsule())
+            .disabled(!isCompleteEnabled)
         }
         .padding(.horizontal, 20)
         .padding(.top, 8)
@@ -230,9 +242,10 @@ struct DemoPhotoAutoEnhanceView: View {
                 .padding(.horizontal, 10)
                 TickMarkSlider(value: selectedAdjustmentBinding, range: selectedAdjustment.range) { editing in
                     if editing {
-                        editingSnapshot = settings
+                        editingSnapshot = captureSnapshot()
                     } else if let snapshot = editingSnapshot {
-                        if snapshot != settings {
+                        let current = captureSnapshot()
+                        if snapshot != current {
                             undoStack.append(snapshot)
                             if undoStack.count > 40 { undoStack.removeFirst() }
                             redoStack.removeAll()
@@ -299,6 +312,8 @@ struct DemoPhotoAutoEnhanceView: View {
                 settings[keyPath: selectedAdjustment.keyPath] = value
                 selectedPreset = .custom
                 autoEnhanceEnabled = false
+                autoEnhanceBaseSettings = nil
+                autoEnhanceBasePreset = nil
                 scheduleRender(debounced: true)
             }
         )
@@ -431,7 +446,7 @@ struct DemoPhotoAutoEnhanceView: View {
             ), in: range, onEditingChanged: { editing in
                 if editing { editingSnapshot = settings }
                 else if let snapshot = editingSnapshot {
-                    if snapshot != settings { undoStack.append(snapshot); redoStack.removeAll() }
+                    if snapshot != captureSnapshot() { undoStack.append(snapshot); redoStack.removeAll() }
                     editingSnapshot = nil
                 }
             }).tint(accent)
@@ -463,6 +478,14 @@ struct DemoPhotoAutoEnhanceView: View {
         }.padding(.vertical, 12)
     }
 
+    private var hasChanges: Bool {
+        originalImage != nil && (settings != DemoAdjustmentSettings() || autoEnhanceEnabled)
+    }
+
+    private var isCompleteEnabled: Bool {
+        hasChanges && !isProcessing && !isSaving
+    }
+
     private var outputSize: String {
         guard let image = editedImage ?? originalImage else { return "—" }
         return "\(Int(image.size.width)) × \(Int(image.size.height))"
@@ -485,7 +508,8 @@ struct DemoPhotoAutoEnhanceView: View {
             editedImage = image
             settings = DemoAdjustmentSettings()
             selectedPreset = .original
-            preAutoEnhanceSettings = nil
+            autoEnhanceBaseSettings = nil
+            autoEnhanceBasePreset = nil
             autoEnhanceEnabled = false
             undoStack.removeAll()
             redoStack.removeAll()
@@ -504,8 +528,14 @@ struct DemoPhotoAutoEnhanceView: View {
             await activity.end(nil, dismissalPolicy: .immediate)
         }
         liveActivity = nil
-        let attributes = PhotoEditorActivityAttributes(sessionID: UUID().uuidString)
-        let state = PhotoEditorActivityAttributes.ContentState(status: "正在编辑", selectedAction: "compare")
+        let sessionID = UUID().uuidString
+        liveActivitySessionID = sessionID
+        let attributes = PhotoEditorActivityAttributes(sessionID: sessionID)
+        let state = PhotoEditorActivityAttributes.ContentState(
+            status: "未修改",
+            selectedAction: "edit",
+            canComplete: false
+        )
         do {
             liveActivity = try Activity.request(
                 attributes: attributes,
@@ -514,7 +544,21 @@ struct DemoPhotoAutoEnhanceView: View {
             )
         } catch {
             liveActivity = nil
+            liveActivitySessionID = nil
         }
+    }
+
+    @MainActor
+    private func updateLiveActivity(canComplete: Bool) async {
+        guard let liveActivity else { return }
+        let state = PhotoEditorActivityAttributes.ContentState(
+            status: canComplete ? "已修改" : "未修改",
+            selectedAction: "edit",
+            canComplete: canComplete
+        )
+        await liveActivity.update(
+            ActivityContent(state: state, staleDate: Date().addingTimeInterval(3600))
+        )
     }
 
     @MainActor
@@ -522,18 +566,38 @@ struct DemoPhotoAutoEnhanceView: View {
         guard let liveActivity else { return }
         await liveActivity.end(nil, dismissalPolicy: .immediate)
         self.liveActivity = nil
+        liveActivitySessionID = nil
+    }
+
+    private func consumeIslandCommand() {
+        guard let defaults = UserDefaults(suiteName: PhotoEditorActivityAttributes.appGroupID),
+              let command = defaults.string(forKey: PhotoEditorActivityAttributes.commandKey),
+              let sessionID = defaults.string(forKey: PhotoEditorActivityAttributes.sessionKey),
+              sessionID == liveActivitySessionID else { return }
+        defaults.removeObject(forKey: PhotoEditorActivityAttributes.commandKey)
+        defaults.removeObject(forKey: PhotoEditorActivityAttributes.sessionKey)
+        switch command {
+        case "cancel":
+            dismiss()
+        case "complete":
+            saveToPhotos()
+        default:
+            break
+        }
     }
 
     private func applyAutoEnhance() {
         guard originalImage != nil else { return }
         pushUndo()
         if autoEnhanceEnabled {
-            settings = preAutoEnhanceSettings ?? DemoAdjustmentSettings()
-            preAutoEnhanceSettings = nil
+            settings = autoEnhanceBaseSettings ?? DemoAdjustmentSettings()
+            selectedPreset = autoEnhanceBasePreset ?? .original
+            autoEnhanceBaseSettings = nil
+            autoEnhanceBasePreset = nil
             autoEnhanceEnabled = false
-            selectedPreset = .custom
         } else {
-            preAutoEnhanceSettings = settings
+            autoEnhanceBaseSettings = settings
+            autoEnhanceBasePreset = selectedPreset
             autoEnhanceEnabled = true
             selectedPreset = .custom
         }
@@ -541,37 +605,56 @@ struct DemoPhotoAutoEnhanceView: View {
     }
 
     private func applyPreset(_ preset: DemoPhotoPreset) {
+        let next = DemoEditorSnapshot(
+            settings: preset.settings,
+            selectedPreset: preset,
+            autoEnhanceEnabled: false,
+            autoEnhanceBaseSettings: nil,
+            autoEnhanceBasePreset: nil
+        )
+        guard next != captureSnapshot() else { return }
         pushUndo()
-        settings = preset.settings
-        selectedPreset = preset
-        preAutoEnhanceSettings = nil
-        autoEnhanceEnabled = false
+        restoreSnapshot(next)
+    }
+
+    private func captureSnapshot() -> DemoEditorSnapshot {
+        DemoEditorSnapshot(
+            settings: settings,
+            selectedPreset: selectedPreset,
+            autoEnhanceEnabled: autoEnhanceEnabled,
+            autoEnhanceBaseSettings: autoEnhanceBaseSettings,
+            autoEnhanceBasePreset: autoEnhanceBasePreset
+        )
+    }
+
+    private func restoreSnapshot(_ snapshot: DemoEditorSnapshot) {
+        settings = snapshot.settings
+        selectedPreset = snapshot.selectedPreset
+        autoEnhanceEnabled = snapshot.autoEnhanceEnabled
+        autoEnhanceBaseSettings = snapshot.autoEnhanceBaseSettings
+        autoEnhanceBasePreset = snapshot.autoEnhanceBasePreset
         scheduleRender()
     }
 
     private func pushUndo() {
-        undoStack.append(settings)
-        if undoStack.count > 40 { undoStack.removeFirst() }
+        let snapshot = captureSnapshot()
+        if undoStack.last != snapshot {
+            undoStack.append(snapshot)
+            if undoStack.count > 40 { undoStack.removeFirst() }
+        }
         redoStack.removeAll()
     }
 
     private func undo() {
         guard let previous = undoStack.popLast() else { return }
-        redoStack.append(settings)
-        settings = previous
-        autoEnhanceEnabled = false
-        preAutoEnhanceSettings = nil
-        selectedPreset = .custom
-        scheduleRender()
+        redoStack.append(captureSnapshot())
+        restoreSnapshot(previous)
     }
 
     private func redo() {
         guard let next = redoStack.popLast() else { return }
-        undoStack.append(settings)
-        settings = next
-        autoEnhanceEnabled = false
-        selectedPreset = .custom
-        scheduleRender()
+        undoStack.append(captureSnapshot())
+        restoreSnapshot(next)
     }
 
     private func resetEdits() {
@@ -586,6 +669,11 @@ struct DemoPhotoAutoEnhanceView: View {
         isProcessing = true
         let currentSettings = settings
         let useAutoEnhance = autoEnhanceEnabled
+        if currentSettings == DemoAdjustmentSettings() && !useAutoEnhance {
+            editedImage = originalImage
+            isProcessing = false
+            return
+        }
         Task {
             if debounced { try? await Task.sleep(for: .milliseconds(100)) }
             guard renderToken == token else { return }
@@ -599,19 +687,28 @@ struct DemoPhotoAutoEnhanceView: View {
     }
 
     private func saveToPhotos() {
-        guard let image = editedImage ?? originalImage else { return }
+        guard isCompleteEnabled, let image = editedImage ?? originalImage else { return }
         guard let cgImage = image.cgImage else { alertMessage = "无法读取当前图像，请重新导入照片。"; return }
         isSaving = true
         Task {
             do {
                 try await PhotoLibraryService.shared.save(cgImage)
                 alertMessage = "照片已成功保存到系统相册。"
+                await endLiveActivity()
             } catch {
                 alertMessage = error.localizedDescription
             }
             isSaving = false
         }
     }
+}
+
+private struct DemoEditorSnapshot: Equatable {
+    let settings: DemoAdjustmentSettings
+    let selectedPreset: DemoPhotoPreset
+    let autoEnhanceEnabled: Bool
+    let autoEnhanceBaseSettings: DemoAdjustmentSettings?
+    let autoEnhanceBasePreset: DemoPhotoPreset?
 }
 
 private enum PreviewMode { case result, original }

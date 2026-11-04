@@ -11,7 +11,7 @@ struct DemoAdjustmentSettings: Equatable {
     var sharpness: Double = 0
 }
 
-enum DemoPhotoPreset: String, CaseIterable, Identifiable {
+enum DemoPhotoPreset: String, CaseIterable, Identifiable, Equatable {
     case original, portrait, landscape, night, food, custom
     var id: String { rawValue }
 

@@ -120,6 +120,7 @@ targets:
     sources:
       - path: SuperResApp/LiveActivityWidget
       - path: SuperResApp/Shared/PhotoEditorActivityAttributes.swift
+      - path: SuperResApp/Shared/PhotoEditorIntents.swift
     info:
       path: SuperResApp/LiveActivityWidget/Info.plist
       properties:
