@@ -5,13 +5,15 @@ import UIKit
 
 enum DemoImageProcessor {
     static func render(_ image: UIImage, settings: DemoAdjustmentSettings, autoEnhance: Bool = false) -> UIImage? {
-        guard let input = orientedCIImage(from: image) else { return nil }
+        guard let cgImage = image.cgImage else { return nil }
+        let imageOrientation = image.imageOrientation.cgImagePropertyOrientation
+        let input = CIImage(cgImage: cgImage)
         var output = input
 
         if autoEnhance {
             let options: [CIImageAutoAdjustmentOption: Any] = [
                 .crop: false,
-                CIImageAutoAdjustmentOption(rawValue: "CIDetectorImageOrientation"): NSNumber(value: CGImagePropertyOrientation.up.rawValue)
+                CIImageAutoAdjustmentOption(rawValue: "CIDetectorImageOrientation"): NSNumber(value: imageOrientation.rawValue)
             ]
             for filter in input.autoAdjustmentFilters(options: options) {
                 filter.setValue(output, forKey: kCIInputImageKey)
@@ -52,14 +54,13 @@ enum DemoImageProcessor {
             if let next = sharpen.outputImage { output = next }
         }
 
+        // Face detection receives the source image's real EXIF orientation above.
+        // Apply that orientation to the rendered pixels before creating the upright UIImage.
+        output = output.oriented(imageOrientation)
+
         let context = CIContext(options: [.useSoftwareRenderer: false])
         guard let cgImage = context.createCGImage(output, from: output.extent) else { return nil }
         return UIImage(cgImage: cgImage, scale: image.scale, orientation: .up)
-    }
-
-    private static func orientedCIImage(from image: UIImage) -> CIImage? {
-        guard let cgImage = image.cgImage else { return nil }
-        return CIImage(cgImage: cgImage).oriented(image.imageOrientation.cgImagePropertyOrientation)
     }
 }
 
