@@ -244,6 +244,12 @@ actor PhotoKitEditingService {
                 filter.saturation = Float(settings.saturation)
                 if let next = filter.outputImage { output = next }
             }
+            if abs(settings.vibrance) > 0.0001 {
+                let filter = CIFilter(name: "CIVibrance")
+                filter?.setValue(output, forKey: kCIInputImageKey)
+                filter?.setValue(settings.vibrance, forKey: "inputAmount")
+                if let next = filter?.outputImage { output = next }
+            }
             if abs(settings.highlights) > 0.0001 || abs(settings.shadows) > 0.0001 {
                 let filter = CIFilter(name: "CIHighlightShadowAdjust")
                 filter?.setValue(output, forKey: kCIInputImageKey)
