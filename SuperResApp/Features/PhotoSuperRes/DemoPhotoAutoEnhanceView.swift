@@ -917,6 +917,7 @@ struct DemoPhotoAutoEnhanceView: View {
             settings.brightness = values["brightness"] ?? 0
             settings.contrast = values["contrast"] ?? 1
             settings.saturation = values["saturation"] ?? 1
+            settings.vibrance = values["vibrance"] ?? 0
             settings.highlights = values["highlights"] ?? 0
             settings.shadows = values["shadows"] ?? 0
             settings.temperature = values["temperature"] ?? 6500
@@ -1087,6 +1088,7 @@ struct DemoPhotoAutoEnhanceView: View {
                             "brightness": settings.brightness,
                             "contrast": settings.contrast,
                             "saturation": settings.saturation,
+                            "vibrance": settings.vibrance,
                             "highlights": settings.highlights,
                             "shadows": settings.shadows,
                             "temperature": settings.temperature,
@@ -1189,7 +1191,7 @@ private enum EditorTab: String, CaseIterable, Identifiable {
 }
 
 private enum AdjustmentControl: String, CaseIterable, Identifiable {
-    case auto, exposure, contrast, saturation, brightness, highlights, shadows, temperature, tint, sharpness, noiseReduction, vignette
+    case auto, exposure, contrast, saturation, vibrance, brightness, highlights, shadows, temperature, tint, sharpness, noiseReduction, vignette
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -1197,6 +1199,7 @@ private enum AdjustmentControl: String, CaseIterable, Identifiable {
         case .exposure: "曝光"
         case .contrast: "对比度"
         case .saturation: "饱和度"
+        case .vibrance: "自然饱和度"
         case .brightness: "亮度"
         case .highlights: "高光"
         case .shadows: "阴影"
@@ -1213,6 +1216,7 @@ private enum AdjustmentControl: String, CaseIterable, Identifiable {
         case .exposure: "plusminus.circle"
         case .contrast: "circle.lefthalf.filled"
         case .saturation: "drop.fill"
+        case .vibrance: "drop"
         case .brightness: "sun.max"
         case .highlights: "sun.max.fill"
         case .shadows: "sun.haze"
@@ -1229,6 +1233,7 @@ private enum AdjustmentControl: String, CaseIterable, Identifiable {
         case .exposure: -2...2
         case .contrast: 0.5...1.8
         case .saturation: 0...2
+        case .vibrance: -1...1
         case .brightness: -0.5...0.5
         case .highlights: -1...1
         case .shadows: -1...1
@@ -1244,6 +1249,7 @@ private enum AdjustmentControl: String, CaseIterable, Identifiable {
         case .auto, .exposure: \.exposure
         case .contrast: \.contrast
         case .saturation: \.saturation
+        case .vibrance: \.vibrance
         case .brightness: \.brightness
         case .highlights: \.highlights
         case .shadows: \.shadows
