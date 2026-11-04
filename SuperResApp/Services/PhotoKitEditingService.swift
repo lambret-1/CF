@@ -84,7 +84,8 @@ actor PhotoKitEditingService {
         _ image: CGImage,
         asset: PHAsset,
         input: PHContentEditingInput,
-        adjustmentData: Data
+        adjustmentData: Data,
+        isHDR: Bool
     ) async throws {
         let output = PHContentEditingOutput(contentEditingInput: input)
         output.adjustmentData = PHAdjustmentData(
@@ -181,7 +182,10 @@ actor PhotoKitEditingService {
             data: adjustmentData
         )
         let outputURL = try output.renderedContentURL(for: .heic)
-        guard let pqColorSpace = CGColorSpace(name: CGColorSpace.itur_2100_PQ) else {
+        let outputColorSpace = isHDR
+            ? CGColorSpace(name: CGColorSpace.itur_2100_PQ)
+            : (image.colorSpace ?? CGColorSpace(name: CGColorSpace.displayP3))
+        guard let outputColorSpace else {
             throw PhotoKitEditingError.outputWriteFailed
         }
         var representationOptions: [CIImageRepresentationOption: Any] = [:]
@@ -197,7 +201,7 @@ actor PhotoKitEditingService {
         try CIContext().writeHEIF10Representation(
             of: image,
             to: outputURL,
-            colorSpace: pqColorSpace,
+            colorSpace: outputColorSpace,
             options: representationOptions
         )
 
