@@ -1099,6 +1099,7 @@ struct DemoPhotoAutoEnhanceView: View {
                 redoStack.removeAll()
                 analysisResult = nil
                 compareMode = .result
+                scheduleRender()
                 alertMessage = "已通过 PhotoKit 恢复照片原始版本。"
             } catch {
                 alertMessage = error.localizedDescription
