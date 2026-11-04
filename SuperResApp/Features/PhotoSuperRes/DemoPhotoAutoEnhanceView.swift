@@ -992,7 +992,10 @@ struct DemoPhotoAutoEnhanceView: View {
         imageTransform.straightenAngle = root["straightenAngle"] as? Double ?? 0
         imageTransform.usesPerspectiveCorrection = root["perspectiveCorrection"] as? Bool ?? false
         imageTransform.usesDepthBlur = root["depthBlur"] as? Bool ?? false
-        usesRAWResource = root["usesRAW"] as? Bool ?? usesRAWResource
+        if root["usesRAW"] as? Bool == true,
+           renderSourceURL?.lastPathComponent.hasPrefix("CF-RAW-") == true {
+            usesRAWResource = true
+        }
         let cropRatio = root["cropAspectRatio"] as? Double ?? 0
         imageTransform.cropAspectRatio = cropRatio > 0 ? cropRatio : nil
         if let crop = root["cropRect"] as? [Double], crop.count == 4 {
