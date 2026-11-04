@@ -76,5 +76,19 @@
     "license": "CC BY-NC-SA 4.0",
     "source": "https://huggingface.co/mlboydaisuke/SinSR-CoreML",
     "note": "扩散模型三件套：Encoder/Decoder 用 .all，Denoiser 必须 .cpuOnly。约 517MB，仅 Wi-Fi 下载。非商用许可证 CC BY-NC-SA 4.0，CPU 推理较慢。已打包为单一 zip 托管于 GitHub Releases。"
+  },
+  {
+    "id": "rife-lite",
+    "name": "RIFE Lite（AI 补帧）",
+    "size": 9095573,
+    "url": "https://github.com/lambret-1/CF/releases/download/model-rife-lite/RIFE_Lite.mlmodelc.zip",
+    "sha256": "0923d351b03a056632516c01497029a032b00f98ee1b7698c6042df8b99ed192",
+    "builtin": false,
+    "wifiOnly": false,
+    "computeUnits": "all",
+    "license": "待核验",
+    "source": "https://github.com/lambret-1/CF/releases/tag/model-rife-lite",
+    "task": "frameInterpolation",
+    "note": "RIFE Lite 预编译 Core ML 模型；下载后解压并直接安装 .mlmodelc，不进行二次编译。"
   }
 ]
