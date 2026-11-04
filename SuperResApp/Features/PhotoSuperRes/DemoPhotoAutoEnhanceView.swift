@@ -80,7 +80,7 @@ struct DemoPhotoAutoEnhanceView: View {
                 saveToPhotos()
             }
             .font(.system(size: 16, weight: .semibold))
-            .foregroundStyle(originalImage == nil ? .secondary : Color.black.opacity(0.65))
+            .foregroundStyle(originalImage == nil ? Color.secondary : Color.black.opacity(0.65))
             .padding(.horizontal, 19)
             .padding(.vertical, 8)
             .background(originalImage == nil ? Color(uiColor: .tertiarySystemFill) : Color(red: 1.0, green: 0.88, blue: 0.48), in: Capsule())
@@ -120,15 +120,14 @@ struct DemoPhotoAutoEnhanceView: View {
                     .frame(width: 46, height: 42)
             }
             .accessibilityLabel("查看原图")
-            Button { showShareSheet = true } label: {
-                Image(systemName: "pencil.tip.crop.circle")
-                    .font(.system(size: 25))
+            PhotosPicker(selection: $pickerItem, matching: .images) {
+                Image(systemName: "photo.badge.plus")
+                    .font(.system(size: 24))
                     .frame(width: 46, height: 42)
             }
-            .accessibilityLabel("标记")
+            .accessibilityLabel("更换照片")
             Menu {
                 Button("重置所有调整", systemImage: "arrow.counterclockwise") { resetEdits() }
-                Button("更换照片", systemImage: "photo") { pickerItem = nil }
                 Button("分享照片", systemImage: "square.and.arrow.up") { showShareSheet = true }
             } label: {
                 Image(systemName: "ellipsis.circle")
@@ -571,16 +570,13 @@ struct DemoPhotoAutoEnhanceView: View {
 private enum PreviewMode { case result, compare, original }
 
 private enum EditorTab: String, CaseIterable, Identifiable {
-    case adjust, filters, crop, enhance, portrait, repair
+    case adjust, filters, crop
     var id: String { rawValue }
     var title: String {
         switch self {
         case .adjust: "调整"
         case .filters: "滤镜"
         case .crop: "裁剪"
-        case .enhance: "AI增强"
-        case .portrait: "人像"
-        case .repair: "画质修复"
         }
     }
     var icon: String {
@@ -588,9 +584,6 @@ private enum EditorTab: String, CaseIterable, Identifiable {
         case .adjust: "slider.horizontal.3"
         case .filters: "camera.filters"
         case .crop: "crop"
-        case .enhance: "sparkles"
-        case .portrait: "person.crop.square"
-        case .repair: "wand.and.stars"
         }
     }
 }
@@ -618,7 +611,7 @@ private enum AdjustmentControl: String, CaseIterable, Identifiable {
     }
     var range: ClosedRange<Double> {
         switch self {
-        case .auto: 0...1
+        case .auto: -2...2
         case .exposure: -2...2
         case .contrast: 0.5...1.8
         case .saturation: 0...2
@@ -635,7 +628,7 @@ private enum AdjustmentControl: String, CaseIterable, Identifiable {
     }
 }
 
-private struct DemoShareSheet: UIViewControllerRepresentableprivate struct DemoShareSheet: UIViewControllerRepresentable {
+private struct DemoShareSheet: UIViewControllerRepresentable {
     let items: [Any]
     func makeUIViewController(context: Context) -> UIActivityViewController {
         UIActivityViewController(activityItems: items, applicationActivities: nil)
