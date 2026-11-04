@@ -1188,7 +1188,10 @@ struct DemoPhotoAutoEnhanceView: View {
                                 renderedCIImage,
                                 asset: asset,
                                 input: input,
-                                adjustmentData: data
+                                adjustmentData: data,
+                                isHDR: usesRAWResource || (renderSourceURL ?? input.fullSizeImageURL).map {
+                                    ApplePhotoAnalysisService.containsHDRGainMap(at: $0)
+                                } ?? false
                             )
                         } else {
                             try await PhotoKitEditingService.shared.saveRenderedImage(
