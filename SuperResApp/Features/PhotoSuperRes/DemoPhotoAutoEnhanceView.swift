@@ -35,6 +35,7 @@ struct DemoPhotoAutoEnhanceView: View {
     @State private var liveActivity: Activity<PhotoEditorActivityAttributes>?
     @State private var liveActivitySessionID: String?
     @Environment(\.dismiss) private var dismiss
+    @StateObject private var libraryObserver = PhotoLibraryChangeObserver.shared
     @Environment(\.scenePhase) private var scenePhase
 
     init(initialPickerItem: PhotosPickerItem? = nil) {
@@ -117,7 +118,14 @@ struct DemoPhotoAutoEnhanceView: View {
         .onChange(of: isCompleteEnabled) { _, enabled in
             Task { await updateLiveActivity(canComplete: enabled) }
         }
+        .onAppear {
+            libraryObserver.start()
+        }
+        .onChange(of: libraryObserver.changeCount) { _, _ in
+            refreshSelectedAsset()
+        }
         .onDisappear {
+            libraryObserver.stop()
             Task { await endLiveActivity() }
         }
     }
@@ -814,6 +822,15 @@ struct DemoPhotoAutoEnhanceView: View {
             let rendered = result ?? originalImage
             editedImage = imageWithMarkup(rendered, data: currentMarkupData) ?? rendered
             isProcessing = false
+        }
+    }
+
+    private func refreshSelectedAsset() {
+        guard let identifier = selectedAsset?.localIdentifier else { return }
+        Task {
+            if let refreshed = try? await PhotoKitEditingService.shared.fetchAsset(localIdentifier: identifier) {
+                selectedAsset = refreshed
+            }
         }
     }
 
