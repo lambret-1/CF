@@ -818,8 +818,9 @@ struct DemoPhotoAutoEnhanceView: View {
         isAnalyzing = true
         Task {
             do {
+                let sourceURL = editingInput?.fullSizeImageURL
                 let result = try await Task.detached(priority: .userInitiated) {
-                    try ApplePhotoAnalysisService.analyze(image)
+                    try ApplePhotoAnalysisService.analyze(image, sourceURL: sourceURL)
                 }.value
                 analysisResult = result
             } catch {
