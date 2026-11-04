@@ -127,9 +127,11 @@ final class VideoSuperResViewModel: ObservableObject {
             forName: Notification.Name("BzDebugInfoUpdated"),
             object: nil,
             queue: .main
-        ) { note in
+        ) { [weak self] note in
             guard let info = note.object as? String, !info.isEmpty else { return }
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
+                // 超分 ViewModel 也存在于首页；只允许补帧 ViewModel 接收 RIFE 诊断，避免重复日志。
+                guard let self, self.processingMode == .frameInterpolation else { return }
                 AppLogger.shared.log("[补帧模型诊断]\n\(info)", isError: false)
             }
         }
@@ -230,7 +232,7 @@ final class VideoSuperResViewModel: ObservableObject {
         }
     }
 
-        // MARK: - 视频元数据
+    // MARK: - 视频元数据
     private func loadVideoMetadata(from url: URL) async throws -> FrameInterpolationVideoMetadata {
         let asset = AVURLAsset(url: url)
         let duration = try await asset.load(.duration)
