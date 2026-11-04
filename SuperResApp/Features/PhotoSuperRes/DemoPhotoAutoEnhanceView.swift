@@ -486,6 +486,7 @@ struct DemoPhotoAutoEnhanceView: View {
         Button {
             var next = imageTransform
             next.cropAspectRatio = ratio
+            next.cropRect = nil
             next.usesSquareCrop = false
             guard next != imageTransform else { return }
             pushUndo()
