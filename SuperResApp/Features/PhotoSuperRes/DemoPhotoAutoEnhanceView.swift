@@ -409,7 +409,7 @@ struct DemoPhotoAutoEnhanceView: View {
             }
             Slider(value: Binding(
                 get: { settings[keyPath: keyPath] },
-                set: { settings[keyPath: keyPath] = $0; autoEnhanceEnabled = false; selectedPreset = .custom; scheduleRender() }
+                set: { settings[keyPath: keyPath] = $0; selectedPreset = .custom; scheduleRender() }
             ), in: range, onEditingChanged: { editing in
                 if editing { editingSnapshot = settings }
                 else if let snapshot = editingSnapshot {
