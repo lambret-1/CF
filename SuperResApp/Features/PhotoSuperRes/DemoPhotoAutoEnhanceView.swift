@@ -325,24 +325,36 @@ struct DemoPhotoAutoEnhanceView: View {
                 }
                 .frame(height: 82)
             } else if activeTab == .crop {
-                HStack(spacing: 18) {
-                    cropTool("还原", icon: "crop", action: .reset)
-                    cropTool("旋转", icon: "rotate.right", action: .rotate)
-                    cropTool("翻转", icon: "arrow.left.and.right.righttriangle.left.righttriangle.right", action: .flip)
-                    cropTool(imageTransform.usesSquareCrop ? "原比例" : "正方形", icon: "aspectratio", action: .toggleSquare)
-                    cropTool(imageTransform.usesPerspectiveCorrection ? "取消透视" : "透视", icon: "perspective", action: .perspective)
-                    Button {
-                        autoStraighten()
-                    } label: {
-                        VStack(spacing: 6) {
-                            Image(systemName: "level").font(.system(size: 22))
-                            Text("自动拉直").font(.system(size: 10))
+                VStack(spacing: 9) {
+                    HStack(spacing: 18) {
+                        cropTool("还原", icon: "crop", action: .reset)
+                        cropTool("旋转", icon: "rotate.right", action: .rotate)
+                        cropTool("翻转", icon: "arrow.left.and.right.righttriangle.left.righttriangle.right", action: .flip)
+                        cropTool(imageTransform.usesPerspectiveCorrection ? "取消透视" : "透视", icon: "perspective", action: .perspective)
+                        Button {
+                            autoStraighten()
+                        } label: {
+                            VStack(spacing: 6) {
+                                Image(systemName: "level").font(.system(size: 22))
+                                Text("自动拉直").font(.system(size: 10))
+                            }
+                            .foregroundStyle(.primary)
                         }
-                        .foregroundStyle(.primary)
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 18) {
+                            cropRatioTool("原比例", ratio: nil)
+                            cropRatioTool("1:1", ratio: 1)
+                            cropRatioTool("4:5", ratio: 0.8)
+                            cropRatioTool("3:4", ratio: 0.75)
+                            cropRatioTool("4:3", ratio: 4.0 / 3.0)
+                            cropRatioTool("16:9", ratio: 16.0 / 9.0)
+                        }
+                        .padding(.horizontal, 14)
+                    }
                 }
-                .frame(height: 78)
+                .frame(height: 112)
             } else if activeTab == .analysis {
                 VStack(spacing: 8) {
                     HStack(spacing: 18) {
@@ -445,6 +457,29 @@ struct DemoPhotoAutoEnhanceView: View {
                 scheduleRender(debounced: true)
             }
         )
+    }
+
+    private func cropRatioTool(_ title: String, ratio: Double?) -> some View {
+        Button {
+            var next = imageTransform
+            next.cropAspectRatio = ratio
+            next.usesSquareCrop = false
+            guard next != imageTransform else { return }
+            pushUndo()
+            imageTransform = next
+            scheduleRender()
+        } label: {
+            Text(title)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(imageTransform.cropAspectRatio == ratio ? .primary : .secondary)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 6)
+                .background(
+                    imageTransform.cropAspectRatio == ratio ? Color(uiColor: .tertiarySystemFill) : .clear,
+                    in: Capsule()
+                )
+        }
+        .buttonStyle(.plain)
     }
 
     private func autoStraighten() {
@@ -974,6 +1009,8 @@ struct DemoPhotoAutoEnhanceView: View {
         imageTransform.straightenAngle = root["straightenAngle"] as? Double ?? 0
         imageTransform.usesPerspectiveCorrection = root["perspectiveCorrection"] as? Bool ?? false
         imageTransform.usesDepthBlur = root["depthBlur"] as? Bool ?? false
+        let cropRatio = root["cropAspectRatio"] as? Double ?? 0
+        imageTransform.cropAspectRatio = cropRatio > 0 ? cropRatio : nil
         if let encodedMarkup = root["markupData"] as? String, !encodedMarkup.isEmpty {
             markupData = Data(base64Encoded: encodedMarkup)
         }
@@ -1137,7 +1174,8 @@ struct DemoPhotoAutoEnhanceView: View {
                         "squareCrop": imageTransform.usesSquareCrop,
                         "straightenAngle": imageTransform.straightenAngle,
                         "perspectiveCorrection": imageTransform.usesPerspectiveCorrection,
-                        "depthBlur": imageTransform.usesDepthBlur
+                        "depthBlur": imageTransform.usesDepthBlur,
+                        "cropAspectRatio": imageTransform.cropAspectRatio ?? 0
                     ]
                     let data = try JSONSerialization.data(withJSONObject: adjustment, options: [.sortedKeys])
                     if asset.mediaSubtypes.contains(.photoLive), input.livePhoto != nil {
