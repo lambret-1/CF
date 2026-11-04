@@ -1137,7 +1137,10 @@ struct DemoPhotoAutoEnhanceView: View {
                             filterName: selectedPreset.filterName,
                             autoEnhance: autoEnhanceEnabled,
                             transform: imageTransform,
-                            adjustmentData: data
+                            adjustmentData: data,
+                            markupData: markupData,
+                            markupSize: originalImage?.size ?? image.size,
+                            markupScale: originalImage?.scale ?? image.scale
                         )
                         alertMessage = "Live Photo 的照片帧与动态视频帧已作为非破坏性修改保存。"
                     } else {
