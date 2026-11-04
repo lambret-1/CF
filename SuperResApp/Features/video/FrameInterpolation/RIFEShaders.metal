@@ -143,7 +143,8 @@ kernel void upsample_flow_mask(
     constant uint &srcH [[buffer(5)]],
     constant uint &dstW [[buffer(6)]],
     constant uint &dstH [[buffer(7)]],
-    constant float &flowScale [[buffer(8)]],
+    constant float &flowScaleX [[buffer(8)]],
+    constant float &flowScaleY [[buffer(9)]],
     uint2 gid [[thread_position_in_grid]]
 ) {
     if (gid.x >= dstW || gid.y >= dstH) return;
@@ -172,7 +173,8 @@ kernel void upsample_flow_mask(
         float v10 = float(srcFlow[c * srcPlane + y1 * srcW + x0]);
         float v11 = float(srcFlow[c * srcPlane + y1 * srcW + x1]);
         float v = v00 * (1-wx) * (1-wy) + v01 * wx * (1-wy) + v10 * (1-wx) * wy + v11 * wx * wy;
-        dstFlow[c * dstPlane + dstIdx] = half(v * flowScale);
+        float componentScale = (c == 0 || c == 2) ? flowScaleX : flowScaleY;
+        dstFlow[c * dstPlane + dstIdx] = half(v * componentScale);
     }
 
     // 上采样 1 通道 mask
