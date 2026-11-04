@@ -1,66 +1,99 @@
 import CoreImage
-import CoreImage.CIFilterBuiltins
 import ImageIO
 import UIKit
 
+/// Image rendering backed exclusively by Apple's Core Image built-in filters.
 enum DemoImageProcessor {
-    static func render(_ image: UIImage, settings: DemoAdjustmentSettings, autoEnhance: Bool = false) -> UIImage? {
+    private static let context = CIContext(options: [.useSoftwareRenderer: false])
+
+    /// Auto enhancement uses only the adjustment filters returned by Core Image.
+    /// Manual controls are applied only in manual mode and map to built-in CIFilters.
+    static func render(
+        _ image: UIImage,
+        settings: DemoAdjustmentSettings,
+        autoEnhance: Bool = false
+    ) -> UIImage? {
         guard let cgImage = image.cgImage else { return nil }
-        let imageOrientation = image.imageOrientation.cgImagePropertyOrientation
+
+        let orientation = image.imageOrientation.cgImagePropertyOrientation
         let input = CIImage(cgImage: cgImage)
         var output = input
 
         if autoEnhance {
             let options: [CIImageAutoAdjustmentOption: Any] = [
                 .crop: false,
-                CIImageAutoAdjustmentOption(rawValue: "CIDetectorImageOrientation"): NSNumber(value: imageOrientation.rawValue)
+                CIImageAutoAdjustmentOption(rawValue: "CIDetectorImageOrientation"): NSNumber(value: orientation.rawValue)
             ]
+
             for filter in input.autoAdjustmentFilters(options: options) {
                 filter.setValue(output, forKey: kCIInputImageKey)
-                if let next = filter.outputImage { output = next }
+                guard let next = filter.outputImage else { continue }
+                output = next
             }
+        } else {
+            output = applyManualAdjustments(settings, to: output)
         }
 
-        let exposure = CIFilter.exposureAdjust()
-        exposure.inputImage = output
-        exposure.ev = Float(settings.exposure)
-        if let next = exposure.outputImage { output = next }
-
-        let controls = CIFilter.colorControls()
-        controls.inputImage = output
-        controls.brightness = Float(settings.brightness)
-        controls.contrast = Float(settings.contrast)
-        controls.saturation = Float(settings.saturation)
-        if let next = controls.outputImage { output = next }
-
-        if abs(settings.temperature) > 0.01 {
-            let temperature = CIFilter.temperatureAndTint()
-            temperature.inputImage = output
-            temperature.neutral = CIVector(x: 6500, y: 0)
-            temperature.targetNeutral = CIVector(x: CGFloat(6500 + settings.temperature * 22), y: 0)
-            if let next = temperature.outputImage { output = next }
+        // UIImage(cgImage:) does not retain UIImage's original orientation metadata.
+        // Normalize the rendered pixels exactly once before returning an upright image.
+        output = output.oriented(orientation)
+        let extent = output.extent.integral
+        guard !extent.isEmpty,
+              let renderedImage = context.createCGImage(output, from: extent) else {
+            return nil
         }
 
-        let highlightShadow = CIFilter.highlightShadowAdjust()
-        highlightShadow.inputImage = output
-        highlightShadow.highlightAmount = Float(1 - settings.highlights * 0.45)
-        highlightShadow.shadowAmount = Float(1 + settings.shadows * 0.85)
-        if let next = highlightShadow.outputImage { output = next }
+        return UIImage(cgImage: renderedImage, scale: image.scale, orientation: .up)
+    }
+
+    private static func applyManualAdjustments(
+        _ settings: DemoAdjustmentSettings,
+        to input: CIImage
+    ) -> CIImage {
+        var output = input
+
+        if abs(settings.exposure) > 0.0001 {
+            let filter = CIFilter.exposureAdjust()
+            filter.inputImage = output
+            filter.ev = Float(settings.exposure)
+            if let next = filter.outputImage { output = next }
+        }
+
+        if abs(settings.brightness) > 0.0001 ||
+            abs(settings.contrast - 1) > 0.0001 ||
+            abs(settings.saturation - 1) > 0.0001 {
+            let filter = CIFilter.colorControls()
+            filter.inputImage = output
+            filter.brightness = Float(settings.brightness)
+            filter.contrast = Float(settings.contrast)
+            filter.saturation = Float(settings.saturation)
+            if let next = filter.outputImage { output = next }
+        }
+
+        if abs(settings.temperature) > 0.0001 {
+            let filter = CIFilter.temperatureAndTint()
+            filter.inputImage = output
+            filter.neutral = CIVector(x: 6500, y: 0)
+            filter.targetNeutral = CIVector(x: CGFloat(6500 + settings.temperature * 22), y: 0)
+            if let next = filter.outputImage { output = next }
+        }
+
+        if abs(settings.highlights) > 0.0001 || abs(settings.shadows) > 0.0001 {
+            let filter = CIFilter.highlightShadowAdjust()
+            filter.inputImage = output
+            filter.highlightAmount = Float(1 - settings.highlights * 0.45)
+            filter.shadowAmount = Float(1 + settings.shadows * 0.85)
+            if let next = filter.outputImage { output = next }
+        }
 
         if settings.sharpness > 0.001 {
-            let sharpen = CIFilter.sharpenLuminance()
-            sharpen.inputImage = output
-            sharpen.sharpness = Float(settings.sharpness)
-            if let next = sharpen.outputImage { output = next }
+            let filter = CIFilter.sharpenLuminance()
+            filter.inputImage = output
+            filter.sharpness = Float(settings.sharpness)
+            if let next = filter.outputImage { output = next }
         }
 
-        // Face detection receives the source image's real EXIF orientation above.
-        // Apply that orientation to the rendered pixels before creating the upright UIImage.
-        output = output.oriented(imageOrientation)
-
-        let context = CIContext(options: [.useSoftwareRenderer: false])
-        guard let cgImage = context.createCGImage(output, from: output.extent) else { return nil }
-        return UIImage(cgImage: cgImage, scale: image.scale, orientation: .up)
+        return output
     }
 }
 
