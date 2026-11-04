@@ -74,3 +74,9 @@ struct DemoSliderSpec: Identifiable {
     let usesSignedFormat: Bool
     var id: String { title }
 }
+
+struct DemoEditSnapshot: Equatable {
+    let settings: DemoAdjustmentSettings
+    let preset: DemoPhotoPreset
+    let autoEnhanceEnabled: Bool
+}
