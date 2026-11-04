@@ -6,6 +6,7 @@ struct DemoAdjustmentSettings: Equatable {
     var brightness: Double = 0
     var contrast: Double = 1
     var saturation: Double = 1
+    var vibrance: Double = 0
     var highlights: Double = 0
     var shadows: Double = 0
     var temperature: Double = 6500
