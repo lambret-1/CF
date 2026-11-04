@@ -40,7 +40,7 @@ actor PhotoKitEditingService {
     }
 
     func requestEditingInput(for asset: PHAsset) async throws -> PHContentEditingInput {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<PHContentEditingInput, Error>) in
             let options = PHContentEditingInputRequestOptions()
             options.isNetworkAccessAllowed = true
             asset.requestContentEditingInput(with: options) { input, info in
