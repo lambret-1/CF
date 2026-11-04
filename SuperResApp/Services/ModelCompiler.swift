@@ -239,16 +239,27 @@ actor ModelCompiler {
         return candidates.count == 1 ? candidates.first : nil
     }
 
-    /// Core ML 编译目录的稳定特征文件。model.mil 是 ML Program 编译产物的主要标记。
+    /// Core ML 编译目录的结构特征。
+    /// 标准 .mlmodelc 通常包含 Manifest.json 和 Data/；不同 Core ML 版本
+    /// 的内部文件布局可能不同，因此不能只依赖 model.mil 等特定文件。
     private func isCompiledModelBundle(_ url: URL) -> Bool {
         guard isDirectory(url) else { return false }
         let fileManager = FileManager.default
-        let mil = url.appendingPathComponent("model.mil")
-        let espresso = url.appendingPathComponent("model.espresso.net")
-        let coreMLData = url.appendingPathComponent("coremldata.bin")
-        return fileManager.fileExists(atPath: mil.path) ||
-            fileManager.fileExists(atPath: espresso.path) ||
-            fileManager.fileExists(atPath: coreMLData.path)
+
+        let manifest = url.appendingPathComponent("Manifest.json")
+        let dataDirectory = url.appendingPathComponent("Data", isDirectory: true)
+        if fileManager.fileExists(atPath: manifest.path),
+           isDirectory(dataDirectory) {
+            return true
+        }
+
+        // 兼容其他 Core ML 编译格式。
+        for name in ["model.mil", "model.espresso.net", "coremldata.bin"] {
+            if fileManager.fileExists(atPath: url.appendingPathComponent(name).path) {
+                return true
+            }
+        }
+        return false
     }
 
     private func isDirectory(_ url: URL) -> Bool {
