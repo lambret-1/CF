@@ -2,9 +2,12 @@ import SwiftUI
 import PhotosUI
 import UIKit
 import ActivityKit
+import Photos
 
 struct DemoPhotoAutoEnhanceView: View {
     @State private var pickerItem: PhotosPickerItem?
+    @State private var selectedAsset: PHAsset?
+    @State private var editingInput: PHContentEditingInput?
     @State private var originalImage: UIImage?
     @State private var editedImage: UIImage?
     @State private var settings = DemoAdjustmentSettings()
@@ -522,13 +525,36 @@ struct DemoPhotoAutoEnhanceView: View {
     @MainActor
     private func loadPhoto(_ item: PhotosPickerItem) async {
         do {
-            guard let data = try await item.loadTransferable(type: Data.self),
-                  let image = UIImage(data: data) else {
+            var loadedImage: UIImage?
+            var loadedAsset: PHAsset?
+            var loadedInput: PHContentEditingInput?
+
+            if let identifier = item.itemIdentifier {
+                do {
+                    let asset = try await PhotoKitEditingService.shared.fetchAsset(localIdentifier: identifier)
+                    let input = try await PhotoKitEditingService.shared.requestEditingInput(for: asset)
+                    loadedImage = try await PhotoKitEditingService.shared.originalImage(from: input)
+                    loadedAsset = asset
+                    loadedInput = input
+                } catch {
+                    // Keep the system picker import path available when the asset is outside
+                    // the app's current PhotoKit authorization scope.
+                }
+            }
+
+            if loadedImage == nil,
+               let data = try await item.loadTransferable(type: Data.self) {
+                loadedImage = UIImage(data: data)
+            }
+            guard let image = loadedImage else {
                 alertMessage = "无法读取所选照片，请重新选择。"
                 return
             }
+
             pickerItem = nil
             renderToken = UUID()
+            selectedAsset = loadedAsset
+            editingInput = loadedInput
             originalImage = image
             editedImage = image
             settings = DemoAdjustmentSettings()
@@ -744,8 +770,32 @@ struct DemoPhotoAutoEnhanceView: View {
         isSaving = true
         Task {
             do {
-                try await PhotoLibraryService.shared.save(cgImage)
-                alertMessage = "照片已成功保存到系统相册。"
+                if let asset = selectedAsset, let input = editingInput {
+                    let adjustment: [String: Any] = [
+                        "settings": [
+                            "exposure": settings.exposure,
+                            "brightness": settings.brightness,
+                            "contrast": settings.contrast,
+                            "saturation": settings.saturation
+                        ],
+                        "preset": selectedPreset.rawValue,
+                        "autoEnhance": autoEnhanceEnabled,
+                        "rotation": imageTransform.quarterTurnsClockwise,
+                        "horizontalFlip": imageTransform.isHorizontallyFlipped,
+                        "squareCrop": imageTransform.usesSquareCrop
+                    ]
+                    let data = try JSONSerialization.data(withJSONObject: adjustment, options: [.sortedKeys])
+                    try await PhotoKitEditingService.shared.saveRenderedImage(
+                        cgImage,
+                        asset: asset,
+                        input: input,
+                        adjustmentData: data
+                    )
+                    alertMessage = "已将编辑作为非破坏性修改保存到原照片。"
+                } else {
+                    try await PhotoLibraryService.shared.save(cgImage)
+                    alertMessage = "照片已另存到系统相册。"
+                }
                 await endLiveActivity()
             } catch {
                 alertMessage = error.localizedDescription
