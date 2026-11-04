@@ -302,8 +302,15 @@ actor PhotoKitEditingService {
             if transform.isHorizontallyFlipped {
                 output = output.oriented(.upMirrored)
             }
-            if let aspectRatio = transform.cropAspectRatio, aspectRatio > 0 {
-                let bounds = output.extent.integral
+            let bounds = output.extent.integral
+            if let cropRect = transform.cropRect {
+                output = output.cropped(to: CGRect(
+                    x: bounds.minX + cropRect.minX * bounds.width,
+                    y: bounds.minY + (1 - cropRect.maxY) * bounds.height,
+                    width: cropRect.width * bounds.width,
+                    height: cropRect.height * bounds.height
+                ))
+            } else if let aspectRatio = transform.cropAspectRatio, aspectRatio > 0 {
                 let width = min(bounds.width, bounds.height * aspectRatio)
                 let height = min(bounds.height, bounds.width / aspectRatio)
                 output = output.cropped(to: CGRect(
