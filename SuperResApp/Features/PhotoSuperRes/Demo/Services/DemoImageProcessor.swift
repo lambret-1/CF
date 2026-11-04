@@ -129,16 +129,31 @@ enum DemoImageProcessor {
             output = output.oriented(.upMirrored)
         }
 
-        if transform.usesSquareCrop {
-            let bounds = output.extent.integral
+        let bounds = output.extent.integral
+        if let cropRect = transform.cropRect {
+            output = output.cropped(to: CGRect(
+                x: bounds.minX + cropRect.minX * bounds.width,
+                y: bounds.minY + (1 - cropRect.maxY) * bounds.height,
+                width: cropRect.width * bounds.width,
+                height: cropRect.height * bounds.height
+            ))
+        } else if let aspectRatio = transform.cropAspectRatio, aspectRatio > 0 {
+            let width = min(bounds.width, bounds.height * aspectRatio)
+            let height = min(bounds.height, bounds.width / aspectRatio)
+            output = output.cropped(to: CGRect(
+                x: bounds.midX - width / 2,
+                y: bounds.midY - height / 2,
+                width: width,
+                height: height
+            ))
+        } else if transform.usesSquareCrop {
             let side = min(bounds.width, bounds.height)
-            let cropRect = CGRect(
+            output = output.cropped(to: CGRect(
                 x: bounds.midX - side / 2,
                 y: bounds.midY - side / 2,
                 width: side,
                 height: side
-            )
-            output = output.cropped(to: cropRect)
+            ))
         }
 
         return output
