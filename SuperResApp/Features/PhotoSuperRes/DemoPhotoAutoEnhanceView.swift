@@ -195,7 +195,12 @@ struct DemoPhotoAutoEnhanceView: View {
                 Button("显示效果", systemImage: "eye.slash") {
                     compareMode = .result
                 }
-                Button("重置所有调整", systemImage: "arrow.counterclockwise") { resetEdits() }
+                Button("重置本次调整", systemImage: "arrow.counterclockwise") { resetEdits() }
+                if selectedAsset != nil, editingInput?.adjustmentData != nil {
+                    Button("恢复照片原始版本", systemImage: "arrow.uturn.backward", role: .destructive) {
+                        revertPhotoToOriginal()
+                    }
+                }
                 Button("分享照片", systemImage: "square.and.arrow.up") { showShareSheet = true }
             } label: {
                 Image(systemName: "ellipsis.circle")
@@ -984,6 +989,38 @@ struct DemoPhotoAutoEnhanceView: View {
     private func imageWithMarkup(_ image: UIImage, data: Data?) -> UIImage? {
         guard let data, let drawing = try? PKDrawing(data: data) else { return nil }
         return compositeMarkup(drawing, over: image)
+    }
+
+    private func revertPhotoToOriginal() {
+        guard let asset = selectedAsset else { return }
+        isSaving = true
+        Task {
+            do {
+                try await PhotoKitEditingService.shared.revertToOriginal(asset: asset)
+                let refreshedAsset = try await PhotoKitEditingService.shared.fetchAsset(localIdentifier: asset.localIdentifier)
+                let refreshedInput = try await PhotoKitEditingService.shared.requestEditingInput(for: refreshedAsset)
+                let image = try await PhotoKitEditingService.shared.originalImage(from: refreshedInput)
+                selectedAsset = refreshedAsset
+                editingInput = refreshedInput
+                originalImage = image
+                editedImage = image
+                settings = DemoAdjustmentSettings()
+                selectedPreset = .original
+                autoEnhanceEnabled = false
+                autoEnhanceBaseSettings = nil
+                autoEnhanceBasePreset = nil
+                imageTransform = .identity
+                markupData = nil
+                undoStack.removeAll()
+                redoStack.removeAll()
+                analysisResult = nil
+                compareMode = .result
+                alertMessage = "已通过 PhotoKit 恢复照片原始版本。"
+            } catch {
+                alertMessage = error.localizedDescription
+            }
+            isSaving = false
+        }
     }
 
     private func saveToPhotos() {
