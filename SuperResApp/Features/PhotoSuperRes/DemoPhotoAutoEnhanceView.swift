@@ -388,6 +388,11 @@ struct DemoPhotoAutoEnhanceView: View {
                                     }
                                 }
                         }
+                        if !result.semanticMatteTypes.isEmpty {
+                            Text("Apple 语义蒙版：\(result.semanticMatteTypes.joined(separator: "、"))")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                        }
                         HStack(spacing: 14) {
                             analysisMetric("人脸", value: "\(result.faceCount)")
                             analysisMetric("主体", value: "\(result.foregroundInstanceCount)")
