@@ -10,7 +10,6 @@ struct DemoPhotoAutoEnhanceView: View {
     @State private var selectedPreset: DemoPhotoPreset = .original
     @State private var activeTab: EditorTab = .adjust
     @State private var compareMode: PreviewMode = .result
-    @State private var comparePosition: CGFloat = 0.5
     @State private var autoEnhanceEnabled = false
     @State private var undoStack: [DemoAdjustmentSettings] = []
     @State private var redoStack: [DemoAdjustmentSettings] = []
@@ -57,8 +56,12 @@ struct DemoPhotoAutoEnhanceView: View {
         .statusBarHidden(true)
         .persistentSystemOverlays(.hidden)
         .toolbar(.hidden, for: .navigationBar)
+        .task {
+            guard let initialItem = pickerItem, originalImage == nil else { return }
+            await loadPhoto(initialItem)
+        }
         .onChange(of: pickerItem) { _, item in
-            guard let item else { return }
+            guard let item, originalImage != nil else { return }
             Task { await loadPhoto(item) }
         }
         .alert("照片编辑", isPresented: Binding(
@@ -139,8 +142,11 @@ struct DemoPhotoAutoEnhanceView: View {
             }
             .accessibilityLabel("更换照片")
             Menu {
-                Button("原图对比", systemImage: "rectangle.split.2x1") { compareMode = .compare }
-                Button("显示效果", systemImage: "eye") { compareMode = .result }
+                Button("切换原图预览", systemImage: "eye") { toggleOriginalPreview() }
+                Button("显示效果", systemImage: "eye.slash") {
+                    previewResetTask?.cancel()
+                    compareMode = .result
+                }
                 Button("重置所有调整", systemImage: "arrow.counterclockwise") { resetEdits() }
                 Button("分享照片", systemImage: "square.and.arrow.up") { showShareSheet = true }
             } label: {
@@ -253,7 +259,18 @@ struct DemoPhotoAutoEnhanceView: View {
                     }
                 }
                 .padding(.horizontal, 9)
-                TickMarkSlider(value: selectedAdjustmentBinding, range: selectedAdjustment.range)
+                TickMarkSlider(value: selectedAdjustmentBinding, range: selectedAdjustment.range) { editing in
+                    if editing {
+                        editingSnapshot = settings
+                    } else if let snapshot = editingSnapshot {
+                        if snapshot != settings {
+                            undoStack.append(snapshot)
+                            if undoStack.count > 40 { undoStack.removeFirst() }
+                            redoStack.removeAll()
+                        }
+                        editingSnapshot = nil
+                    }
+                }
                     .frame(height: 48)
                     .padding(.horizontal, 24)
                 Text(selectedAdjustment.title)
@@ -588,7 +605,7 @@ struct DemoPhotoAutoEnhanceView: View {
     }
 }
 
-private enum PreviewMode { case result, compare, original }
+private enum PreviewMode { case result, original }
 
 private enum EditorTab: String, CaseIterable, Identifiable {
     case adjust, filters, crop
@@ -661,6 +678,7 @@ private struct DemoShareSheet: UIViewControllerRepresentable {
 private struct TickMarkSlider: View {
     @Binding var value: Double
     let range: ClosedRange<Double>
+    var onEditingChanged: (Bool) -> Void = { _ in }
     @State private var dragStartValue: Double?
 
     private var progress: CGFloat {
@@ -694,12 +712,18 @@ private struct TickMarkSlider: View {
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { gesture in
-                        if dragStartValue == nil { dragStartValue = value }
+                        if dragStartValue == nil {
+                            dragStartValue = value
+                            onEditingChanged(true)
+                        }
                         let start = dragStartValue ?? value
                         let delta = Double(gesture.translation.width / max(width, 1)) * (range.upperBound - range.lowerBound)
                         value = min(max(start + delta, range.lowerBound), range.upperBound)
                     }
-                    .onEnded { _ in dragStartValue = nil }
+                    .onEnded { _ in
+                        dragStartValue = nil
+                        onEditingChanged(false)
+                    }
             )
         }
         .accessibilityElement()
