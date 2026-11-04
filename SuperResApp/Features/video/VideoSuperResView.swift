@@ -137,7 +137,7 @@ struct VideoSuperResView: View {
                     .tint(.blue)
                     .frame(width: 200)
 
-                Text("正在超分处理中 \(Int(viewModel.progress * 100))%")
+                Text("\(viewModel.processingMode == .frameInterpolation ? "正在 AI 补帧" : "正在视频超分") \(Int(viewModel.progress * 100))%")
                     .font(.subheadline)
                     .bold()
                     .foregroundColor(.white)
