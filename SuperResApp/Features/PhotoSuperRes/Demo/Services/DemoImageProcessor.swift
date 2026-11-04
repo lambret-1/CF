@@ -56,6 +56,13 @@ enum DemoImageProcessor {
 
     private static func applyGeometry(_ transform: DemoImageTransform, to input: CIImage) -> CIImage {
         var output = input
+        if abs(transform.straightenAngle) > 0.0001,
+           let filter = CIFilter(name: "CIStraightenFilter") {
+            filter.setValue(output, forKey: kCIInputImageKey)
+            filter.setValue(transform.straightenAngle, forKey: "inputAngle")
+            if let next = filter.outputImage { output = next }
+        }
+
         let turns = ((transform.quarterTurnsClockwise % 4) + 4) % 4
 
         switch turns {
