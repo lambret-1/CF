@@ -247,6 +247,7 @@ final class VideoSuperResViewModel: ObservableObject {
                 self.state = originalVideoURL != nil ? .videoSelected : .empty
                 self.progress = 0.0
                 self.processor = nil
+                self.frameInterpolationProcessor = nil
             }
             endBackgroundTaskIfNeeded()
             AppLogger.shared.log("[视频控制] 任务被取消。", isError: false)
@@ -260,6 +261,7 @@ final class VideoSuperResViewModel: ObservableObject {
             self.state = .failed("视频处理失败: \(error.localizedDescription)")
             self.progress = 0.0
             self.processor = nil
+            self.frameInterpolationProcessor = nil
             endBackgroundTaskIfNeeded()
             AppLogger.shared.log(
                 "[视频控制] 任务异常中止: \(error.localizedDescription)",
