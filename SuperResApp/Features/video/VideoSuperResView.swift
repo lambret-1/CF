@@ -23,6 +23,11 @@ private struct FilledButtonStyle: ButtonStyle {
 }
 
 struct VideoSuperResView: View {
+    let initialProcessingMode: VideoProcessingMode
+
+    init(initialProcessingMode: VideoProcessingMode = .superResolution) {
+        self.initialProcessingMode = initialProcessingMode
+    }
 
     // ❗️关键修复：使用单例 + @ObservedObject。
     // View 销毁重建时拿到的仍是同一个 ViewModel，处理任务永不被打断。
@@ -41,7 +46,7 @@ struct VideoSuperResView: View {
             if viewModel.processingMode == .superResolution { modelMenu }
             actionArea
         }
-        .navigationTitle("视频处理")
+        .navigationTitle(initialProcessingMode == .frameInterpolation ? "AI 补帧" : "视频处理")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbarContent }
         .alert("提示", isPresented: alertBinding) {
@@ -50,7 +55,12 @@ struct VideoSuperResView: View {
             Text(alertMessage ?? "")
         }
         // 进入页面：根据 ViewModel 当前状态恢复播放器（切 Tab 回来 / 返回时会触发）
-        .onAppear { restorePlayer() }
+        .onAppear {
+            if viewModel.state.canEditModel {
+                viewModel.processingMode = initialProcessingMode
+            }
+            restorePlayer()
+        }
         // ❗️关键修复：离开页面只暂停播放器，绝不动 ViewModel 的处理任务
         .onDisappear {
             player?.pause()
