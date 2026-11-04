@@ -54,13 +54,16 @@ actor ModelCompiler {
         }
 
         // 2. 优先识别预编译 .mlmodelc（RIFE Release 提供预编译模型）。
-        //    其他模型仍走 .mlpackage 编译流程，保持原有兼容性。
+        //    ZIP 有时只包含 .mlmodelc 内部文件，而没有保留外层目录名；
+        //    因此同时按 Core ML 编译产物特征识别，不能只依赖扩展名。
         let compiledURL: URL
         if let precompiledURL = findCompiledModel(in: tempDir, modelID: modelID) {
             compiledURL = precompiledURL
         } else {
             guard let packageURL = try findMLPackage(in: tempDir, modelID: modelID) else {
-                await manifestLoader.markFailed(id: modelID, reason: "未找到 .mlmodelc 或 .mlpackage 目录")
+                let contents = extractedContentsSummary(in: tempDir)
+                let reason = "解压成功，但未识别到 Core ML 模型目录。解压内容：\(contents)"
+                await manifestLoader.markFailed(id: modelID, reason: reason)
                 throw CompileError.packageNotFound
             }
             do {
@@ -170,65 +173,107 @@ actor ModelCompiler {
 
     // MARK: - 私有方法
 
-    /// 在目录中递归查找 .mlpackage
+    /// 查找 ZIP 中的 .mlpackage，包含 ZIP 根目录本身。
     private func findMLPackage(in directory: URL, modelID: String) throws -> URL? {
         let fileManager = FileManager.default
-        guard let enumerator = fileManager.enumerator(
-            at: directory,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsHiddenFiles]
-        ) else { return nil }
-
         var packages: [URL] = []
-        for case let fileURL as URL in enumerator {
-            if fileURL.pathExtension == "mlpackage" {
-                packages.append(fileURL)
+        if isDirectory(directory), directory.pathExtension.lowercased() == "mlpackage" {
+            packages.append(directory)
+        }
+
+        if let enumerator = fileManager.enumerator(
+            at: directory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) {
+            for case let fileURL as URL in enumerator {
+                if fileURL.pathExtension.lowercased() == "mlpackage", isDirectory(fileURL) {
+                    packages.append(fileURL)
+                    enumerator.skipDescendants()
+                }
             }
         }
 
-        if packages.isEmpty { return nil }
-
-        // 优先匹配模型 id
-        if let match = packages.first(where: {
-            $0.lastPathComponent.lowercased().contains(modelID.lowercased())
-        }) {
-            return match
-        }
-
-        return packages.first
+        let normalizedID = normalizedName(modelID)
+        return packages.first {
+            normalizedName($0.lastPathComponent).contains(normalizedID)
+        } ?? packages.first
     }
 
-    /// 查找 ZIP 中的预编译 Core ML 模型目录。
+    /// 查找预编译 Core ML 模型。
+    /// 支持标准的 *.mlmodelc 目录，也支持 ZIP 直接打包其内部文件的情况。
     private func findCompiledModel(in directory: URL, modelID: String) -> URL? {
         let fileManager = FileManager.default
-        guard let enumerator = fileManager.enumerator(
-            at: directory,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsHiddenFiles]
-        ) else { return nil }
-
         var candidates: [URL] = []
-        for case let fileURL as URL in enumerator {
-            guard fileURL.pathExtension == "mlmodelc",
-                  (try? fileURL.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else {
-                continue
-            }
-            candidates.append(fileURL)
-            enumerator.skipDescendants()
+
+        if isCompiledModelBundle(directory) {
+            candidates.append(directory)
         }
 
-        let normalizedModelID = modelID
-            .lowercased()
-            .filter { $0.isLetter || $0.isNumber }
+        if let enumerator = fileManager.enumerator(
+            at: directory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) {
+            for case let fileURL as URL in enumerator {
+                guard isDirectory(fileURL) else { continue }
+                if fileURL.pathExtension.lowercased() == "mlmodelc" ||
+                    isCompiledModelBundle(fileURL) {
+                    candidates.append(fileURL)
+                    enumerator.skipDescendants()
+                }
+            }
+        }
+
+        // 去重，避免根目录和遍历结果重复。
+        var seen = Set<String>()
+        candidates = candidates.filter { seen.insert($0.standardizedFileURL.path).inserted }
+
+        let normalizedID = normalizedName(modelID)
         if let match = candidates.first(where: {
-            let normalizedName = $0.lastPathComponent
-                .lowercased()
-                .filter { $0.isLetter || $0.isNumber }
-            return normalizedName.contains(normalizedModelID)
+            normalizedName($0.lastPathComponent).contains(normalizedID)
         }) {
             return match
         }
+        // ZIP 只包含一个模型时允许使用唯一候选；多个候选则拒绝猜测。
         return candidates.count == 1 ? candidates.first : nil
+    }
+
+    /// Core ML 编译目录的稳定特征文件。model.mil 是 ML Program 编译产物的主要标记。
+    private func isCompiledModelBundle(_ url: URL) -> Bool {
+        guard isDirectory(url) else { return false }
+        let fileManager = FileManager.default
+        let mil = url.appendingPathComponent("model.mil")
+        let espresso = url.appendingPathComponent("model.espresso.net")
+        let coreMLData = url.appendingPathComponent("coremldata.bin")
+        return fileManager.fileExists(atPath: mil.path) ||
+            fileManager.fileExists(atPath: espresso.path) ||
+            fileManager.fileExists(atPath: coreMLData.path)
+    }
+
+    private func isDirectory(_ url: URL) -> Bool {
+        var isDir: ObjCBool = false
+        return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) && isDir.boolValue
+    }
+
+    private func normalizedName(_ value: String) -> String {
+        value.lowercased().filter { $0.isLetter || $0.isNumber }
+    }
+
+    /// 安装失败时记录有限的解压目录结构，便于定位 Release ZIP 的实际布局。
+    private func extractedContentsSummary(in directory: URL) -> String {
+        guard let urls = try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return "(无法读取解压目录)"
+        }
+        let names = urls.prefix(20).map { url -> String in
+            let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+            return isDir ? "\(url.lastPathComponent)/" : url.lastPathComponent
+        }
+        return names.isEmpty ? "(目录为空)" : names.joined(separator: ", ")
     }
 
     /// 查找 SinSR 子模型包
