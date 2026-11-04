@@ -253,7 +253,8 @@ struct DemoPhotoAutoEnhanceView: View {
     private var parameterPanel: some View {
         VStack(spacing: 6) {
             if activeTab == .adjust {
-                HStack(spacing: 0) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 0) {
                     ForEach(AdjustmentControl.allCases) { control in
                         Button {
                             if control == .auto { applyAutoEnhance() }
@@ -269,12 +270,13 @@ struct DemoPhotoAutoEnhanceView: View {
                                     .font(.system(size: 12, weight: (control == .auto ? autoEnhanceEnabled : selectedAdjustment == control) ? .semibold : .regular))
                                     .foregroundStyle(.primary)
                             }
-                            .frame(maxWidth: .infinity)
+                            .frame(width: 62)
                         }
                         .buttonStyle(.plain)
                     }
+                    .padding(.horizontal, 10)
                 }
-                .padding(.horizontal, 10)
+                .frame(height: 70)
                 TickMarkSlider(value: selectedAdjustmentBinding, range: selectedAdjustment.range) { editing in
                     if editing {
                         editingSnapshot = captureSnapshot()
