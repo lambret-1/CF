@@ -13,6 +13,12 @@ struct PhotoEditorActivityAttributes: ActivityAttributes {
             case canComplete
         }
 
+        init(status: String, selectedAction: String, canComplete: Bool) {
+            self.status = status
+            self.selectedAction = selectedAction
+            self.canComplete = canComplete
+        }
+
         init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             status = try container.decode(String.self, forKey: .status)
