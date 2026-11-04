@@ -13,7 +13,8 @@ enum DemoImageProcessor {
         _ image: UIImage,
         settings: DemoAdjustmentSettings,
         autoEnhance: Bool = false,
-        filterName: String? = nil
+        filterName: String? = nil,
+        transform: DemoImageTransform = .identity
     ) -> UIImage? {
         guard let cgImage = image.cgImage else { return nil }
 
@@ -43,6 +44,7 @@ enum DemoImageProcessor {
         // UIImage(cgImage:) does not retain UIImage's original orientation metadata.
         // Normalize the rendered pixels exactly once before returning an upright image.
         output = output.oriented(orientation)
+        output = applyGeometry(transform, to: output)
         let extent = output.extent.integral
         guard !extent.isEmpty,
               let renderedImage = context.createCGImage(output, from: extent) else {
@@ -50,6 +52,36 @@ enum DemoImageProcessor {
         }
 
         return UIImage(cgImage: renderedImage, scale: image.scale, orientation: .up)
+    }
+
+    private static func applyGeometry(_ transform: DemoImageTransform, to input: CIImage) -> CIImage {
+        var output = input
+        let turns = ((transform.quarterTurnsClockwise % 4) + 4) % 4
+
+        switch turns {
+        case 1: output = output.oriented(.right)
+        case 2: output = output.oriented(.down)
+        case 3: output = output.oriented(.left)
+        default: break
+        }
+
+        if transform.isHorizontallyFlipped {
+            output = output.oriented(.upMirrored)
+        }
+
+        if transform.usesSquareCrop {
+            let bounds = output.extent.integral
+            let side = min(bounds.width, bounds.height)
+            let cropRect = CGRect(
+                x: bounds.midX - side / 2,
+                y: bounds.midY - side / 2,
+                width: side,
+                height: side
+            )
+            output = output.cropped(to: cropRect)
+        }
+
+        return output
     }
 
     private static func applyManualAdjustments(
