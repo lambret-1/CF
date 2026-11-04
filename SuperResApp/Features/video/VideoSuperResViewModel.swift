@@ -39,6 +39,31 @@ enum VideoProcessingMode: String, CaseIterable, Identifiable {
     var title: String { self == .superResolution ? "视频超分" : "AI 补帧" }
 }
 
+// MARK: - 补帧视频元数据
+struct FrameInterpolationVideoMetadata: Equatable {
+    let fileName: String
+    let duration: TimeInterval
+    let width: Int
+    let height: Int
+    let frameRate: Double
+    let fileSizeBytes: Int64
+    let codec: String
+    let bitRateMbps: Double
+
+    var durationText: String {
+        let total = max(0, Int(duration.rounded()))
+        let hours = total / 3600
+        let minutes = (total % 3600) / 60
+        let seconds = total % 60
+        return hours > 0 ? String(format: "%d:%02d:%02d", hours, minutes, seconds) : String(format: "%d:%02d", minutes, seconds)
+    }
+    var fileSizeText: String {
+        let megabytes = Double(fileSizeBytes) / 1_048_576
+        return megabytes < 1 ? String(format: "%.0f KB", Double(fileSizeBytes) / 1024) : String(format: "%.1f MB", megabytes)
+    }
+    var resolutionText: String { "\(width) × \(height)" }
+}
+
 // MARK: - 主 ViewModel
 @MainActor
 final class VideoSuperResViewModel: ObservableObject {
@@ -80,11 +105,14 @@ final class VideoSuperResViewModel: ObservableObject {
     @Published var selectedModelID: String = SuperResModel.defaultModel.id
     @Published var processingMode: VideoProcessingMode = .superResolution
     @Published var interpolationMultiplier: Int = 2
+    @Published var fastMode: Bool = false
+    @Published var videoMetadata: FrameInterpolationVideoMetadata?
 
     private let tempDirectory = FileManager.default.temporaryDirectory
     private var processor: VideoSuperResProcessor?
     private var frameInterpolationProcessor: VideoFrameInterpolationProcessor?
     private var generation: Int = 0
+    private var interpolationDebugObserver: NSObjectProtocol?
 
     // ❗️后台任务句柄：beginBackgroundTask 返回值，必须与 endBackgroundTask 一一配对
     private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
@@ -93,7 +121,19 @@ final class VideoSuperResViewModel: ObservableObject {
         SuperResModel.scaleFactor(for: selectedModelID)
     }
 
-    init() {}
+    init() {
+        // 将 RIFE 模型诊断通知转发到应用内「调试」Tab。
+        interpolationDebugObserver = NotificationCenter.default.addObserver(
+            forName: Notification.Name("BzDebugInfoUpdated"),
+            object: nil,
+            queue: .main
+        ) { note in
+            guard let info = note.object as? String, !info.isEmpty else { return }
+            Task { @MainActor in
+                AppLogger.shared.log("[补帧模型诊断]\\n\(info)", isError: false)
+            }
+        }
+    }
 
     // MARK: - 后台任务管理
     private func beginBackgroundTaskIfNeeded() {
@@ -165,21 +205,72 @@ final class VideoSuperResViewModel: ObservableObject {
             if let old = resultVideoURL { try? FileManager.default.removeItem(at: old) }
             resultVideoURL = nil
 
+            let metadata = try await loadVideoMetadata(from: movie.url)
             self.originalVideoURL = movie.url
+            self.videoMetadata = metadata
             self.state = .videoSelected
             AppLogger.shared.log(
-                "[视频控制] 视频读取成功，准备就绪: \(movie.url.lastPathComponent)",
+                "[AI补帧] 视频读取成功：\(metadata.fileName)，\(metadata.resolutionText)，\(String(format: "%.2f", metadata.frameRate))fps，时长 \(metadata.durationText)，\(metadata.fileSizeText)，编码 \(metadata.codec)，码率 \(String(format: "%.2f", metadata.bitRateMbps))Mbps",
                 isError: false
             )
         } catch {
             guard state == .loading else { return }
             self.originalVideoURL = nil
             self.resultVideoURL = nil
+            self.videoMetadata = nil
             self.state = .failed("视频读取失败: \(error.localizedDescription)")
             AppLogger.shared.log(
                 "[视频控制] 视频读取失败: \(error.localizedDescription)",
                 isError: true
             )
+        }
+    }
+
+        // MARK: - 视频元数据
+    private func loadVideoMetadata(from url: URL) async throws -> FrameInterpolationVideoMetadata {
+        let asset = AVURLAsset(url: url)
+        let duration = try await asset.load(.duration)
+        guard let track = try await asset.loadTracks(withMediaType: .video).first else {
+            throw NSError(domain: "VideoFrameInterpolation", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "找不到视频轨道"])
+        }
+
+        async let fpsValue = track.load(.nominalFrameRate)
+        async let naturalSizeValue = track.load(.naturalSize)
+        async let transformValue = track.load(.preferredTransform)
+        async let bitRateValue = track.load(.estimatedDataRate)
+        async let descriptionsValue = track.load(.formatDescriptions)
+        let (fps, naturalSize, transform, bitRate, descriptions) = try await (
+            fpsValue, naturalSizeValue, transformValue, bitRateValue, descriptionsValue
+        )
+        let displaySize = naturalSize.applying(transform)
+        let fileSize = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map { Int64($0) } ?? 0
+        let codec = descriptions.first.map { Self.codecName(for: CMFormatDescriptionGetMediaSubType($0)) } ?? "未知"
+        let seconds = CMTimeGetSeconds(duration)
+
+        return FrameInterpolationVideoMetadata(
+            fileName: url.lastPathComponent,
+            duration: seconds.isFinite ? seconds : 0,
+            width: Int(abs(displaySize.width)),
+            height: Int(abs(displaySize.height)),
+            frameRate: Double(fps),
+            fileSizeBytes: fileSize,
+            codec: codec,
+            bitRateMbps: Double(bitRate) / 1_000_000
+        )
+    }
+
+    private static func codecName(for code: FourCharCode) -> String {
+        let bytes: [UInt8] = [
+            UInt8((code >> 24) & 0xFF), UInt8((code >> 16) & 0xFF),
+            UInt8((code >> 8) & 0xFF), UInt8(code & 0xFF)
+        ]
+        let value = String(bytes: bytes, encoding: .ascii) ?? "未知"
+        switch value {
+        case "avc1", "AVC1": return "H.264"
+        case "hvc1", "hev1": return "HEVC"
+        case "mp4v": return "MPEG-4"
+        default: return value.uppercased()
         }
     }
 
@@ -200,9 +291,10 @@ final class VideoSuperResViewModel: ObservableObject {
         let mode = processingMode
         let modelID = selectedModelID
         let scale = currentScaleFactor
+        let fastModeEnabled = fastMode
         AppLogger.shared.log(
             mode == .frameInterpolation
-                ? "[视频控制] 调用 RIFE 补帧引擎，倍数：\(interpolationMultiplier)x"
+                ? "[AI补帧] 调用 RIFE 引擎，倍数：\(interpolationMultiplier)x，快速模式：\(fastModeEnabled ? "开启（静态混合/运动AI）" : "关闭（全帧AI）")"
                 : "[视频控制] 调用超分引擎，模型：\(modelID)，倍数：\(scale)x",
             isError: false
         )
@@ -218,7 +310,11 @@ final class VideoSuperResViewModel: ObservableObject {
             if mode == .frameInterpolation {
                 let newProcessor = VideoFrameInterpolationProcessor()
                 frameInterpolationProcessor = newProcessor
-                try await newProcessor.processVideo(inputURL: inputURL, outputURL: outputURL, multiplier: interpolationMultiplier, progressHandler: progress)
+                try await newProcessor.processVideo(
+                    inputURL: inputURL, outputURL: outputURL,
+                    multiplier: interpolationMultiplier, fastMode: fastModeEnabled,
+                    progressHandler: progress
+                )
                 frameInterpolationProcessor = nil
             } else {
                 let newProcessor = VideoSuperResProcessor()
@@ -357,6 +453,7 @@ final class VideoSuperResViewModel: ObservableObject {
 
         originalVideoURL = nil
         resultVideoURL = nil
+        videoMetadata = nil
         state = .empty
         progress = 0.0
     }

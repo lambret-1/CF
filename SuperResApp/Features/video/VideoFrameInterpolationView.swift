@@ -34,12 +34,16 @@ struct VideoFrameInterpolationView: View {
     @State private var alertMessage: String?
 
     var body: some View {
-        VStack(spacing: 20) {
-            previewArea
-            errorBanner
-            Spacer(minLength: 0)
-            interpolationOptions
-            actionArea
+        ScrollView {
+            VStack(spacing: 16) {
+                previewArea
+                errorBanner
+                videoMetadataCard
+                interpolationOptions
+                fastModeOption
+                actionArea
+            }
+            .padding(.vertical, 12)
         }
         .navigationTitle("AI 补帧")
         .navigationBarTitleDisplayMode(.inline)
@@ -169,6 +173,63 @@ struct VideoFrameInterpolationView: View {
         }
         .pickerStyle(.segmented)
         .disabled(!viewModel.state.canEditModel)
+        .padding(.horizontal)
+    }
+
+    // MARK: - 视频基础信息（对照 BZ 参数页）
+    @ViewBuilder
+    private var videoMetadataCard: some View {
+        if let info = viewModel.videoMetadata {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("视频信息").font(.headline)
+                    Spacer()
+                    Text(info.fileName).font(.caption).foregroundColor(.secondary).lineLimit(1)
+                }
+                LazyVGrid(
+                    columns: [GridItem(.flexible(), alignment: .leading), GridItem(.flexible(), alignment: .leading)],
+                    alignment: .leading, spacing: 10
+                ) {
+                    metadataItem("时长", value: info.durationText)
+                    metadataItem("分辨率", value: info.resolutionText)
+                    metadataItem("原始帧率", value: String(format: "%.2f fps", info.frameRate))
+                    metadataItem("文件大小", value: info.fileSizeText)
+                    metadataItem("编码格式", value: info.codec)
+                    if info.bitRateMbps > 0 {
+                        metadataItem("视频码率", value: String(format: "%.2f Mbps", info.bitRateMbps))
+                    }
+                }
+            }
+            .padding(14)
+            .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+            .padding(.horizontal)
+        }
+    }
+
+    private func metadataItem(_ title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(.caption).foregroundColor(.secondary)
+            Text(value).font(.subheadline.weight(.medium)).lineLimit(1).minimumScaleFactor(0.8)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: - BZ 原版快速模式
+    private var fastModeOption: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("快速模式").font(.headline)
+                Text("静态画面自动帧混合，运动画面 AI 插值")
+                    .font(.caption).foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            Toggle("快速模式", isOn: $viewModel.fastMode)
+                .labelsHidden()
+                .disabled(!viewModel.state.canEditModel)
+        }
+        .padding(14)
+        .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
         .padding(.horizontal)
     }
 
