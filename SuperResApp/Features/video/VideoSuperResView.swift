@@ -41,7 +41,7 @@ struct VideoSuperResView: View {
             modelMenu
             actionArea
         }
-        .navigationTitle("视频超分")
+        .navigationTitle("视频处理")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbarContent }
         .alert("提示", isPresented: alertBinding) {
