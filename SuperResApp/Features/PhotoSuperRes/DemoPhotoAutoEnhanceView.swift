@@ -133,6 +133,7 @@ struct DemoPhotoAutoEnhanceView: View {
         }
         .onDisappear {
             libraryObserver.stop()
+            cleanupTemporaryRAWResource()
             Task { await endLiveActivity() }
         }
     }
@@ -657,6 +658,7 @@ struct DemoPhotoAutoEnhanceView: View {
             }
 
             pickerItem = nil
+            cleanupTemporaryRAWResource()
             renderToken = UUID()
             selectedAsset = loadedAsset
             editingInput = loadedInput
@@ -952,6 +954,13 @@ struct DemoPhotoAutoEnhanceView: View {
             .contains(where: ApplePhotoAnalysisService.isRawResource)
     }
 
+    private func cleanupTemporaryRAWResource() {
+        guard let url = renderSourceURL,
+              url.lastPathComponent.hasPrefix("CF-RAW-") else { return }
+        try? FileManager.default.removeItem(at: url)
+        renderSourceURL = nil
+    }
+
     private func loadRAWOriginal() {
         guard let asset = selectedAsset else { return }
         isLoadingRAW = true
@@ -961,6 +970,7 @@ struct DemoPhotoAutoEnhanceView: View {
                 let rawImage = try await Task.detached(priority: .userInitiated) {
                     try ApplePhotoAnalysisService.renderRawImage(at: url)
                 }.value
+                cleanupTemporaryRAWResource()
                 undoStack.removeAll()
                 redoStack.removeAll()
                 renderSourceURL = url
