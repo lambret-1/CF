@@ -136,7 +136,6 @@ actor PhotoKitEditingService {
                 kCGImageAuxiliaryDataTypeSemanticSegmentationSkyMatte,
                 kCGImageAuxiliaryDataTypeSemanticSegmentationTeethMatte,
                 kCGImageAuxiliaryDataTypeSemanticSegmentationGlassesMatte,
-                kCGImageAuxiliaryDataTypeSemanticSegmentationFaceMatte,
                 kCGImageAuxiliaryDataTypeHDRGainMap
             ]
             for auxiliaryType in auxiliaryTypes {
