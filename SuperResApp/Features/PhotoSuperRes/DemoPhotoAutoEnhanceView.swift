@@ -992,8 +992,9 @@ struct DemoPhotoAutoEnhanceView: View {
         isExtractingSubject = true
         Task {
             do {
+                let sourceURL = editingInput?.fullSizeImageURL
                 foregroundCutout = try await Task.detached(priority: .userInitiated) {
-                    try ApplePhotoAnalysisService.foregroundCutout(from: image)
+                    try ApplePhotoAnalysisService.foregroundCutout(from: image, sourceURL: sourceURL)
                 }.value
                 if foregroundCutout == nil {
                     alertMessage = "Vision 未检测到可分离的前景主体。"
