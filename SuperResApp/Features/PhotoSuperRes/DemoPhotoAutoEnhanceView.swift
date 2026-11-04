@@ -13,6 +13,8 @@ private enum DemoPhotoTheme {
     static let previewAspectMin: CGFloat = 0.6
     static let previewAspectMax: CGFloat = 2.0
     static let minPreviewHeight: CGFloat = 200
+    // 新增：限制预览图最大高度，避免长图占满全屏
+    static let maxPreviewHeight: CGFloat = UIScreen.main.bounds.height * 0.45
 
     static let handleDiameter: CGFloat = 32
     static let handleHitSize: CGFloat = 44
@@ -135,6 +137,7 @@ struct DemoPhotoAutoEnhanceView: View {
             }
         }
         .background(Color(uiColor: .systemGroupedBackground))
+        .tint(accent) // 统一全局按钮颜色为主题薄荷绿
         .toolbar(.hidden, for: .navigationBar)
         .onChange(of: pickerItem) { _, item in
             guard let item else { return }
@@ -174,7 +177,7 @@ struct DemoPhotoAutoEnhanceView: View {
     // MARK: - Layout Components
     
     private var scrollContent: some View {
-        ScrollView(showsIndicators: false) {
+        ScrollView(showsIndicators: true) { // 开启滚动条，提示用户可滑动
             VStack(spacing: 20) {
                 previewSection
                 if originalImage == nil {
@@ -266,7 +269,8 @@ struct DemoPhotoAutoEnhanceView: View {
             }
         }
         .aspectRatio(previewAspect, contentMode: .fit)
-        .frame(minHeight: DemoPhotoTheme.minPreviewHeight)
+        // 核心修复：增加 maxHeight 限制，防止竖长图撑爆屏幕把下面的功能挤出视野
+        .frame(minHeight: DemoPhotoTheme.minPreviewHeight, maxHeight: DemoPhotoTheme.maxPreviewHeight)
         .clipShape(RoundedRectangle(cornerRadius: DemoPhotoTheme.cornerRadiusLarge, style: .continuous))
         .overlay(alignment: .bottomLeading) {
             if originalImage != nil {
