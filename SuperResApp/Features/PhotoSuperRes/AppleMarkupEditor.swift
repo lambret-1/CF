@@ -13,13 +13,23 @@ struct AppleMarkupEditor: View {
     var body: some View {
         NavigationStack {
             GeometryReader { geometry in
+                let fitScale = min(
+                    geometry.size.width / max(image.size.width, 1),
+                    geometry.size.height / max(image.size.height, 1)
+                )
+                let fittedSize = CGSize(
+                    width: image.size.width * fitScale,
+                    height: image.size.height * fitScale
+                )
                 ZStack {
                     Color.black
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFit()
-                    PencilCanvas(drawing: $drawing)
-                        .frame(width: geometry.size.width, height: geometry.size.height)
+                    ZStack {
+                        Image(uiImage: image)
+                            .resizable()
+                            .scaledToFit()
+                        PencilCanvas(drawing: $drawing)
+                    }
+                    .frame(width: fittedSize.width, height: fittedSize.height)
                 }
             }
             .navigationTitle("标注")
