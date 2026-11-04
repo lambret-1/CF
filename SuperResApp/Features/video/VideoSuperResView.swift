@@ -23,15 +23,7 @@ private struct FilledButtonStyle: ButtonStyle {
 }
 
 struct VideoSuperResView: View {
-    let initialProcessingMode: VideoProcessingMode
-
-    init(initialProcessingMode: VideoProcessingMode = .superResolution) {
-        self.initialProcessingMode = initialProcessingMode
-    }
-
-    // ❗️关键修复：使用单例 + @ObservedObject。
-    // View 销毁重建时拿到的仍是同一个 ViewModel，处理任务永不被打断。
-    @ObservedObject private var viewModel = VideoSuperResViewModel.shared
+    @StateObject private var viewModel = VideoSuperResViewModel()
 
     @State private var pickerItem: PhotosPickerItem?
     @State private var player: AVPlayer?
@@ -42,11 +34,10 @@ struct VideoSuperResView: View {
             previewArea
             errorBanner
             Spacer(minLength: 0)
-            processingOptions
-            if viewModel.processingMode == .superResolution { modelMenu }
+            modelMenu
             actionArea
         }
-        .navigationTitle(initialProcessingMode == .frameInterpolation ? "AI 补帧" : "视频处理")
+        .navigationTitle("视频超分")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbarContent }
         .alert("提示", isPresented: alertBinding) {
@@ -56,9 +47,7 @@ struct VideoSuperResView: View {
         }
         // 进入页面：根据 ViewModel 当前状态恢复播放器（切 Tab 回来 / 返回时会触发）
         .onAppear {
-            if viewModel.state.canEditModel {
-                viewModel.processingMode = initialProcessingMode
-            }
+            viewModel.processingMode = .superResolution
             restorePlayer()
         }
         // ❗️关键修复：离开页面只暂停播放器，绝不动 ViewModel 的处理任务
@@ -147,7 +136,7 @@ struct VideoSuperResView: View {
                     .tint(.blue)
                     .frame(width: 200)
 
-                Text("\(viewModel.processingMode == .frameInterpolation ? "正在 AI 补帧" : "正在视频超分") \(Int(viewModel.progress * 100))%")
+                Text("正在视频超分 \(Int(viewModel.progress * 100))%")
                     .font(.subheadline)
                     .bold()
                     .foregroundColor(.white)
@@ -166,29 +155,6 @@ struct VideoSuperResView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal)
         }
-    }
-
-    // MARK: - 处理模式与补帧倍数
-    private var processingOptions: some View {
-        VStack(spacing: 10) {
-            Picker("处理模式", selection: $viewModel.processingMode) {
-                ForEach(VideoProcessingMode.allCases) { mode in
-                    Text(mode.title).tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-            .disabled(!viewModel.state.canEditModel)
-
-            if viewModel.processingMode == .frameInterpolation {
-                Picker("补帧倍数", selection: $viewModel.interpolationMultiplier) {
-                    Text("2 倍帧率").tag(2)
-                    Text("4 倍帧率").tag(4)
-                }
-                .pickerStyle(.segmented)
-                .disabled(!viewModel.state.canEditModel)
-            }
-        }
-        .padding(.horizontal)
     }
 
     // MARK: - 模型菜单
@@ -234,7 +200,7 @@ struct VideoSuperResView: View {
                 loadingIndicator("正在加载视频…")
 
             case .videoSelected:
-                Button(viewModel.processingMode == .frameInterpolation ? "开始 AI 补帧" : "开始超分") {
+                Button("开始超分") {
                     Task { await viewModel.startProcessing() }
                 }
                 .buttonStyle(FilledButtonStyle(color: .blue))
@@ -255,7 +221,7 @@ struct VideoSuperResView: View {
 
             case .failed:
                 if viewModel.originalVideoURL != nil {
-                    Button(viewModel.processingMode == .frameInterpolation ? "重试补帧" : "重试超分") {
+                    Button("重试超分") {
                         Task { await viewModel.startProcessing() }
                     }
                     .buttonStyle(FilledButtonStyle(color: .blue))
