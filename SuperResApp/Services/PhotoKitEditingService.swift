@@ -296,7 +296,17 @@ actor PhotoKitEditingService {
             if transform.isHorizontallyFlipped {
                 output = output.oriented(.upMirrored)
             }
-            if transform.usesSquareCrop {
+            if let aspectRatio = transform.cropAspectRatio, aspectRatio > 0 {
+                let bounds = output.extent.integral
+                let width = min(bounds.width, bounds.height * aspectRatio)
+                let height = min(bounds.height, bounds.width / aspectRatio)
+                output = output.cropped(to: CGRect(
+                    x: bounds.midX - width / 2,
+                    y: bounds.midY - height / 2,
+                    width: width,
+                    height: height
+                ))
+            } else if transform.usesSquareCrop {
                 let bounds = output.extent.integral
                 let side = min(bounds.width, bounds.height)
                 output = output.cropped(to: CGRect(
