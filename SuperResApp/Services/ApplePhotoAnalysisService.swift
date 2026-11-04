@@ -142,6 +142,15 @@ enum ApplePhotoAnalysisService {
         return UIImage(cgImage: rendered, scale: scale, orientation: .up)
     }
 
+    static func containsHDRGainMap(at sourceURL: URL) -> Bool {
+        guard let source = CGImageSourceCreateWithURL(sourceURL as CFURL, nil) else { return false }
+        return CGImageSourceCopyAuxiliaryDataInfoAtIndex(
+            source,
+            0,
+            kCGImageAuxiliaryDataTypeHDRGainMap
+        ) != nil
+    }
+
     static func semanticMatteTypes(from sourceURL: URL) -> [String] {
         guard let source = CGImageSourceCreateWithURL(sourceURL as CFURL, nil) else { return [] }
         let candidates: [(CFString, String)] = [
