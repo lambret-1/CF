@@ -43,7 +43,6 @@ enum VideoProcessingMode: String, CaseIterable, Identifiable {
 @MainActor
 final class VideoSuperResViewModel: ObservableObject {
 
-    static let shared = VideoSuperResViewModel()
 
     enum State: Equatable {
         case empty
@@ -94,7 +93,7 @@ final class VideoSuperResViewModel: ObservableObject {
         SuperResModel.scaleFactor(for: selectedModelID)
     }
 
-    private init() {}
+    init() {}
 
     // MARK: - 后台任务管理
     private func beginBackgroundTaskIfNeeded() {
