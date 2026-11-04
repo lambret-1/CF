@@ -182,11 +182,18 @@ actor PhotoKitEditingService {
         guard let pqColorSpace = CGColorSpace(name: CGColorSpace.itur_2100_PQ) else {
             throw PhotoKitEditingError.outputWriteFailed
         }
+        var representationOptions: [CIImageRepresentationOption: Any] = [:]
+        if let depthData = image.depthData {
+            representationOptions[.avDepthData] = depthData
+        }
+        if let portraitMatte = image.portraitEffectsMatte {
+            representationOptions[.avPortraitEffectsMatte] = portraitMatte
+        }
         try CIContext().writeHEIF10Representation(
             of: image,
             to: outputURL,
             colorSpace: pqColorSpace,
-            options: [:]
+            options: representationOptions
         )
 
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
