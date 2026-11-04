@@ -938,13 +938,26 @@ struct DemoPhotoAutoEnhanceView: View {
                         "squareCrop": imageTransform.usesSquareCrop
                     ]
                     let data = try JSONSerialization.data(withJSONObject: adjustment, options: [.sortedKeys])
-                    try await PhotoKitEditingService.shared.saveRenderedImage(
-                        cgImage,
-                        asset: asset,
-                        input: input,
-                        adjustmentData: data
-                    )
-                    alertMessage = "已将编辑作为非破坏性修改保存到原照片。"
+                    if asset.mediaSubtypes.contains(.photoLive), input.livePhoto != nil {
+                        try await PhotoKitEditingService.shared.saveLivePhoto(
+                            asset: asset,
+                            input: input,
+                            settings: settings,
+                            filterName: selectedPreset.filterName,
+                            autoEnhance: autoEnhanceEnabled,
+                            transform: imageTransform,
+                            adjustmentData: data
+                        )
+                        alertMessage = "Live Photo 的照片帧与动态视频帧已作为非破坏性修改保存。"
+                    } else {
+                        try await PhotoKitEditingService.shared.saveRenderedImage(
+                            cgImage,
+                            asset: asset,
+                            input: input,
+                            adjustmentData: data
+                        )
+                        alertMessage = "已将编辑作为非破坏性修改保存到原照片。"
+                    }
                 } else {
                     try await PhotoLibraryService.shared.save(cgImage)
                     alertMessage = "照片已另存到系统相册。"
