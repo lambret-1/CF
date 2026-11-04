@@ -2,13 +2,13 @@ import CoreImage
 import CoreImage.CIFilterBuiltins
 import ImageIO
 import UIKit
+import UniformTypeIdentifiers
 
 /// Image rendering backed exclusively by Apple's Core Image built-in filters.
 enum DemoImageProcessor {
     private static let context = CIContext(options: [.useSoftwareRenderer: false])
 
-    /// Auto enhancement uses only the adjustment filters returned by Core Image.
-    /// Manual controls are applied only in manual mode and map to built-in CIFilters.
+    /// Renders with Apple's Core Image filters while retaining the CIImage graph for HDR export.
     static func render(
         _ image: UIImage,
         settings: DemoAdjustmentSettings,
@@ -17,10 +17,43 @@ enum DemoImageProcessor {
         transform: DemoImageTransform = .identity,
         sourceURL: URL? = nil
     ) -> UIImage? {
+        guard let output = renderCIImage(
+            image,
+            settings: settings,
+            autoEnhance: autoEnhance,
+            filterName: filterName,
+            transform: transform,
+            sourceURL: sourceURL
+        ) else { return nil }
+        return makePreviewImage(from: output, scale: image.scale)
+    }
+
+    static func renderCIImage(
+        _ image: UIImage,
+        settings: DemoAdjustmentSettings,
+        autoEnhance: Bool = false,
+        filterName: String? = nil,
+        transform: DemoImageTransform = .identity,
+        sourceURL: URL? = nil
+    ) -> CIImage? {
         guard let cgImage = image.cgImage else { return nil }
 
-        let orientation = image.imageOrientation.cgImagePropertyOrientation
-        let input = CIImage(cgImage: cgImage)
+        let sourceType = sourceURL.flatMap { UTType(filenameExtension: $0.pathExtension) }
+        let isRaw = sourceType?.conforms(to: .rawImage) == true
+        let sourceImage: CIImage?
+        if let sourceURL, isRaw {
+            sourceImage = CIRAWFilter(imageURL: sourceURL)?.outputImage
+        } else if let sourceURL {
+            sourceImage = CIImage(
+                contentsOf: sourceURL,
+                options: [.applyOrientationProperty: true, .expandToHDR: true]
+            )
+        } else {
+            sourceImage = nil
+        }
+
+        let orientation = sourceURL == nil ? image.imageOrientation.cgImagePropertyOrientation : CGImagePropertyOrientation.up
+        let input = sourceImage ?? CIImage(cgImage: cgImage)
         var output = input
 
         if transform.usesDepthBlur, let sourceURL,
@@ -48,17 +81,25 @@ enum DemoImageProcessor {
             output = applyManualAdjustments(settings, to: output)
         }
 
-        // UIImage(cgImage:) does not retain UIImage's original orientation metadata.
-        // Normalize the rendered pixels exactly once before returning an upright image.
-        output = output.oriented(orientation)
+        if sourceURL == nil {
+            output = output.oriented(orientation)
+        }
         output = applyGeometry(transform, to: output)
-        let extent = output.extent.integral
+        return output
+    }
+
+    static func makePreviewImage(from image: CIImage, scale: CGFloat = 1) -> UIImage? {
+        let extent = image.extent.integral
         guard !extent.isEmpty,
-              let renderedImage = context.createCGImage(output, from: extent) else {
+              let rendered = context.createCGImage(
+                image,
+                from: extent,
+                format: .RGBAh,
+                colorSpace: image.colorSpace
+              ) else {
             return nil
         }
-
-        return UIImage(cgImage: renderedImage, scale: image.scale, orientation: .up)
+        return UIImage(cgImage: rendered, scale: scale, orientation: .up)
     }
 
     private static func applyGeometry(_ transform: DemoImageTransform, to input: CIImage) -> CIImage {
