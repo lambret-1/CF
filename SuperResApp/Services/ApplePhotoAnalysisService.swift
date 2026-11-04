@@ -146,7 +146,6 @@ enum ApplePhotoAnalysisService {
             (kCGImageAuxiliaryDataTypeSemanticSegmentationSkyMatte, "天空"),
             (kCGImageAuxiliaryDataTypeSemanticSegmentationTeethMatte, "牙齿"),
             (kCGImageAuxiliaryDataTypeSemanticSegmentationGlassesMatte, "眼镜"),
-            (kCGImageAuxiliaryDataTypeSemanticSegmentationFaceMatte, "面部")
         ]
         return candidates.compactMap { type, name in
             guard let dictionary = CGImageSourceCopyAuxiliaryDataInfoAtIndex(
