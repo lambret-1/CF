@@ -11,7 +11,8 @@ enum DemoImageProcessor {
     static func render(
         _ image: UIImage,
         settings: DemoAdjustmentSettings,
-        autoEnhance: Bool = false
+        autoEnhance: Bool = false,
+        filterName: String? = nil
     ) -> UIImage? {
         guard let cgImage = image.cgImage else { return nil }
 
@@ -31,6 +32,10 @@ enum DemoImageProcessor {
                 output = next
             }
         } else {
+            if let filterName, let filter = CIFilter(name: filterName) {
+                filter.setValue(output, forKey: kCIInputImageKey)
+                if let next = filter.outputImage { output = next }
+            }
             output = applyManualAdjustments(settings, to: output)
         }
 
@@ -67,29 +72,6 @@ enum DemoImageProcessor {
             filter.brightness = Float(settings.brightness)
             filter.contrast = Float(settings.contrast)
             filter.saturation = Float(settings.saturation)
-            if let next = filter.outputImage { output = next }
-        }
-
-        if abs(settings.temperature) > 0.0001 {
-            let filter = CIFilter.temperatureAndTint()
-            filter.inputImage = output
-            filter.neutral = CIVector(x: 6500, y: 0)
-            filter.targetNeutral = CIVector(x: CGFloat(6500 + settings.temperature * 22), y: 0)
-            if let next = filter.outputImage { output = next }
-        }
-
-        if abs(settings.highlights) > 0.0001 || abs(settings.shadows) > 0.0001 {
-            let filter = CIFilter.highlightShadowAdjust()
-            filter.inputImage = output
-            filter.highlightAmount = Float(1 - settings.highlights * 0.45)
-            filter.shadowAmount = Float(1 + settings.shadows * 0.85)
-            if let next = filter.outputImage { output = next }
-        }
-
-        if settings.sharpness > 0.001 {
-            let filter = CIFilter.sharpenLuminance()
-            filter.inputImage = output
-            filter.sharpness = Float(settings.sharpness)
             if let next = filter.outputImage { output = next }
         }
 
