@@ -32,7 +32,7 @@ enum DemoImageProcessor {
             let temperature = CIFilter.temperatureAndTint()
             temperature.inputImage = output
             temperature.neutral = CIVector(x: 6500, y: 0)
-            temperature.targetNeutral = CIVector(x: 6500 + settings.temperature * 22, y: 0)
+            temperature.targetNeutral = CIVector(x: CGFloat(6500 + settings.temperature * 22), y: 0)
             if let next = temperature.outputImage { output = next }
         }
 
