@@ -65,9 +65,6 @@ struct DemoPhotoAutoEnhanceView: View {
     private var navigationBar: some View {
         HStack {
             Button("取消") {
-                if settings != DemoAdjustmentSettings() || selectedPreset != .original {
-                    alertMessage = "已退出照片编辑。未保存的修改不会写入相册。"
-                }
                 dismiss()
             }
             .font(.system(size: 16, weight: .medium))
@@ -127,6 +124,8 @@ struct DemoPhotoAutoEnhanceView: View {
             }
             .accessibilityLabel("更换照片")
             Menu {
+                Button("原图对比", systemImage: "rectangle.split.2x1") { compareMode = .compare }
+                Button("显示效果", systemImage: "eye") { compareMode = .result }
                 Button("重置所有调整", systemImage: "arrow.counterclockwise") { resetEdits() }
                 Button("分享照片", systemImage: "square.and.arrow.up") { showShareSheet = true }
             } label: {
@@ -232,7 +231,18 @@ struct DemoPhotoAutoEnhanceView: View {
                     }
                 }
                 .padding(.horizontal, 8)
-                Slider(value: selectedAdjustmentBinding, in: selectedAdjustment.range)
+                Slider(value: selectedAdjustmentBinding, in: selectedAdjustment.range, onEditingChanged: { editing in
+                    if editing {
+                        editingSnapshot = settings
+                    } else if let snapshot = editingSnapshot {
+                        if snapshot != settings {
+                            undoStack.append(snapshot)
+                            if undoStack.count > 40 { undoStack.removeFirst() }
+                            redoStack.removeAll()
+                        }
+                        editingSnapshot = nil
+                    }
+                })
                     .tint(.primary)
                     .padding(.horizontal, 26)
                     .accessibilityLabel(selectedAdjustment.title)
