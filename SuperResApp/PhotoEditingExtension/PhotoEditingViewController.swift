@@ -32,7 +32,8 @@ final class PhotoEditingViewController: UIViewController, PHContentEditingContro
             return false
         }
         let markup = root["markupData"] as? String ?? ""
-        return markup.isEmpty
+        let usesRAW = root["usesRAW"] as? Bool ?? false
+        return markup.isEmpty && !usesRAW
     }
 
     func startContentEditing(
