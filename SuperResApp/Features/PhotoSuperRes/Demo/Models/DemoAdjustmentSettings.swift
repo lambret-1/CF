@@ -98,6 +98,7 @@ struct DemoImageTransform: Equatable {
     var straightenAngle = 0.0
     var usesPerspectiveCorrection = false
     var usesDepthBlur = false
+    var cropAspectRatio: Double?
 
     static let identity = DemoImageTransform()
 }
