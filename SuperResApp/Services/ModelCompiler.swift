@@ -205,29 +205,40 @@ actor ModelCompiler {
     private func findCompiledModel(in directory: URL, modelID: String) -> URL? {
         let fileManager = FileManager.default
         var candidates: [URL] = []
+        var pendingDirectories = [directory]
 
-        if isCompiledModelBundle(directory) {
-            candidates.append(directory)
-        }
+        // 不使用 FileManager.enumerator：.mlmodelc 是 package 目录，
+        // 不同系统版本/文件提供器对 package descendants 的枚举行为可能不同。
+        // 逐层读取目录可确保先拿到 RIFE_Lite.mlmodelc 本身。
+        while let currentDirectory = pendingDirectories.popLast() {
+            guard let children = try? fileManager.contentsOfDirectory(
+                at: currentDirectory,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            ) else {
+                continue
+            }
 
-        if let enumerator = fileManager.enumerator(
-            at: directory,
-            includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles]
-        ) {
-            for case let fileURL as URL in enumerator {
-                guard isDirectory(fileURL) else { continue }
-                if fileURL.pathExtension.lowercased() == "mlmodelc" ||
-                    isCompiledModelBundle(fileURL) {
-                    candidates.append(fileURL)
-                    enumerator.skipDescendants()
+            for child in children where isDirectory(child) {
+                if child.pathExtension.lowercased() == "mlmodelc" ||
+                    isCompiledModelBundle(child) {
+                    candidates.append(child)
+                    // 模型包内部的 Data/ 不是独立模型，不再向下搜索。
+                } else {
+                    pendingDirectories.append(child)
                 }
             }
         }
 
-        // 去重，避免根目录和遍历结果重复。
+        // ZIP 根目录本身也可能就是模型包内容。
+        if isCompiledModelBundle(directory) {
+            candidates.append(directory)
+        }
+
         var seen = Set<String>()
-        candidates = candidates.filter { seen.insert($0.standardizedFileURL.path).inserted }
+        candidates = candidates.filter {
+            seen.insert($0.standardizedFileURL.path).inserted
+        }
 
         let normalizedID = normalizedName(modelID)
         if let match = candidates.first(where: {
@@ -235,7 +246,6 @@ actor ModelCompiler {
         }) {
             return match
         }
-        // ZIP 只包含一个模型时允许使用唯一候选；多个候选则拒绝猜测。
         return candidates.count == 1 ? candidates.first : nil
     }
 
