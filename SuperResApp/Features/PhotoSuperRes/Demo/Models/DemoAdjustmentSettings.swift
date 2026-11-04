@@ -97,6 +97,7 @@ struct DemoImageTransform: Equatable {
     var usesSquareCrop = false
     var straightenAngle = 0.0
     var usesPerspectiveCorrection = false
+    var usesDepthBlur = false
 
     static let identity = DemoImageTransform()
 }
