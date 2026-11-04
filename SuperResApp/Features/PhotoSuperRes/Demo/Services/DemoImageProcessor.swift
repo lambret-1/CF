@@ -56,6 +56,12 @@ enum DemoImageProcessor {
 
     private static func applyGeometry(_ transform: DemoImageTransform, to input: CIImage) -> CIImage {
         var output = input
+        if transform.usesPerspectiveCorrection,
+           let corrected = try? ApplePhotoAnalysisService.perspectiveCorrect(output),
+           let corrected {
+            output = corrected
+        }
+
         if abs(transform.straightenAngle) > 0.0001,
            let filter = CIFilter(name: "CIStraightenFilter") {
             filter.setValue(output, forKey: kCIInputImageKey)
