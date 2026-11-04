@@ -717,7 +717,8 @@ struct DemoPhotoAutoEnhanceView: View {
             autoEnhanceEnabled: false,
             autoEnhanceBaseSettings: nil,
             autoEnhanceBasePreset: nil,
-            imageTransform: imageTransform
+            imageTransform: imageTransform,
+            markupData: markupData
         )
         guard next != captureSnapshot() else { return }
         pushUndo()
@@ -863,8 +864,16 @@ struct DemoPhotoAutoEnhanceView: View {
                             "exposure": settings.exposure,
                             "brightness": settings.brightness,
                             "contrast": settings.contrast,
-                            "saturation": settings.saturation
+                            "saturation": settings.saturation,
+                            "highlights": settings.highlights,
+                            "shadows": settings.shadows,
+                            "temperature": settings.temperature,
+                            "tint": settings.tint,
+                            "sharpness": settings.sharpness,
+                            "noiseReduction": settings.noiseReduction,
+                            "vignette": settings.vignette
                         ],
+                        "markupData": markupData?.base64EncodedString() ?? "",
                         "preset": selectedPreset.rawValue,
                         "autoEnhance": autoEnhanceEnabled,
                         "rotation": imageTransform.quarterTurnsClockwise,
