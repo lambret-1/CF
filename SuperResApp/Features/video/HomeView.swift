@@ -28,7 +28,7 @@ struct HomeView: View {
                     // 1. 功能大入口 (AI 补帧 & 视频超分)
                     HStack(spacing: 16) {
                         // 左侧：AI 补帧
-                        NavigationLink(destination: VideoSuperResView(initialProcessingMode: .frameInterpolation)) {
+                        NavigationLink(destination: VideoFrameInterpolationView()) {
                             FeatureCard(icon: "slowmo", title: "AI 补帧", color: .purple)
                         }
                         
