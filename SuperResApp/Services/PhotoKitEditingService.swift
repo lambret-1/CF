@@ -107,13 +107,43 @@ actor PhotoKitEditingService {
         }
 
         var properties: [CFString: Any] = [:]
+        var sourceForAuxiliaryData: CGImageSource?
         if let sourceURL = input.fullSizeImageURL,
            let source = CGImageSourceCreateWithURL(sourceURL as CFURL, nil),
            let sourceProperties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] {
             properties = sourceProperties
+            sourceForAuxiliaryData = source
         }
         properties[kCGImagePropertyOrientation] = 1
         CGImageDestinationAddImage(destination, image, properties as CFDictionary)
+
+        if let source = sourceForAuxiliaryData,
+           let original = CGImageSourceCreateImageAtIndex(source, 0, nil),
+           original.width == image.width,
+           original.height == image.height {
+            let auxiliaryTypes: [CFString] = [
+                kCGImageAuxiliaryDataTypeDepth,
+                kCGImageAuxiliaryDataTypeDisparity,
+                kCGImageAuxiliaryDataTypePortraitEffectsMatte,
+                kCGImageAuxiliaryDataTypeSemanticSegmentationHairMatte,
+                kCGImageAuxiliaryDataTypeSemanticSegmentationSkinMatte,
+                kCGImageAuxiliaryDataTypeSemanticSegmentationSkyMatte,
+                kCGImageAuxiliaryDataTypeSemanticSegmentationTeethMatte,
+                kCGImageAuxiliaryDataTypeSemanticSegmentationGlassesMatte,
+                kCGImageAuxiliaryDataTypeSemanticSegmentationFaceMatte,
+                kCGImageAuxiliaryDataTypeHDRGainMap
+            ]
+            for auxiliaryType in auxiliaryTypes {
+                if let auxiliaryInfo = CGImageSourceCopyAuxiliaryDataInfoAtIndex(
+                    source,
+                    0,
+                    auxiliaryType
+                ) {
+                    CGImageDestinationAddAuxiliaryDataInfo(destination, auxiliaryType, auxiliaryInfo)
+                }
+            }
+        }
+
         guard CGImageDestinationFinalize(destination) else {
             throw PhotoKitEditingError.outputWriteFailed
         }
