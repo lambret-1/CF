@@ -72,6 +72,7 @@ private struct PencilCanvas: UIViewRepresentable {
         let canvas = PKCanvasView()
         canvas.backgroundColor = .clear
         canvas.isOpaque = false
+        canvas.isScrollEnabled = false
         canvas.drawingPolicy = .anyInput
         canvas.tool = PKInkingTool(.pen, color: .systemRed, width: 5)
         canvas.delegate = context.coordinator
