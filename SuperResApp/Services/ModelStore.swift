@@ -66,8 +66,9 @@ actor ModelStore {
         do {
             model = try MLModel(contentsOf: modelURL, configuration: config)
         } catch {
-            // 加载失败，尝试回退到内置 PiperSR
-            if modelID != "piper-sr-2x" {
+            // 补帧模型与超分模型的输入输出契约不同，禁止回退到 PiperSR。
+            let manifest = await manifestLoader.manifestItem(for: modelID)
+            if manifest?.task != "frameInterpolation", modelID != "piper-sr-2x" {
                 NSLog("模型 \(modelID) 加载失败，尝试回退到内置 PiperSR：\(error.localizedDescription)")
                 return try await fallbackToPiperSR()
             }
@@ -80,6 +81,14 @@ actor ModelStore {
         evictIfNeeded()
 
         return model
+    }
+
+    /// 专门加载 RIFE 补帧模型；校验用途并禁止超分 fallback。
+    func loadFrameInterpolationModel(modelID: String = "rife-lite") async throws -> MLModel {
+        guard let item = await manifestLoader.manifestItem(for: modelID), item.task == "frameInterpolation" else {
+            throw ModelStoreError.invalidModelTask(modelID)
+        }
+        return try await load(modelID: modelID, computeUnits: ModelDescriptor.computeUnits(from: item.computeUnits))
     }
 
     /// 加载 SinSR 三件套
@@ -220,6 +229,7 @@ enum ModelStoreError: LocalizedError {
     case insufficientMemory
     case loadFailed(String)
     case fallbackModelNotFound
+    case invalidModelTask(String)
 
     var errorDescription: String? {
         switch self {
@@ -231,6 +241,8 @@ enum ModelStoreError: LocalizedError {
             return "模型加载失败：\(detail)"
         case .fallbackModelNotFound:
             return "回退模型 PiperSR 未找到"
+        case .invalidModelTask(let id):
+            return "模型用途不匹配，不能作为补帧模型加载：\(id)"
         }
     }
 }
