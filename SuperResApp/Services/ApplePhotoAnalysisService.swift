@@ -88,10 +88,23 @@ enum ApplePhotoAnalysisService {
         return request.results?.first?.angle
     }
 
-    static func foregroundCutout(from image: UIImage) throws -> UIImage? {
+    static func foregroundCutout(from image: UIImage, sourceURL: URL? = nil) throws -> UIImage? {
         guard let cgImage = image.cgImage else {
             throw ApplePhotoAnalysisError.imageUnavailable
         }
+        if let sourceURL,
+           let source = CGImageSourceCreateWithURL(sourceURL as CFURL, nil),
+           let auxiliary = CGImageSourceCopyAuxiliaryDataInfoAtIndex(
+                source,
+                0,
+                kCGImageAuxiliaryDataTypePortraitEffectsMatte
+           ) as? [AnyHashable: Any],
+           let matte = try? AVPortraitEffectsMatte(fromDictionaryRepresentation: auxiliary),
+           let matteImage = CIImage(portraitEffectsMatte: matte) {
+            let foreground = CIImage(cgImage: cgImage)
+            return makeCutout(foreground: foreground, mask: matteImage, scale: image.scale)
+        }
+
         let handler = VNImageRequestHandler(
             cgImage: cgImage,
             orientation: image.imageOrientation.cgImagePropertyOrientation,
@@ -107,6 +120,10 @@ enum ApplePhotoAnalysisService {
 
         let foreground = CIImage(cgImage: cgImage)
         let mask = CIImage(cvPixelBuffer: maskBuffer)
+        return makeCutout(foreground: foreground, mask: mask, scale: image.scale)
+    }
+
+    private static func makeCutout(foreground: CIImage, mask: CIImage, scale: CGFloat) -> UIImage? {
         let transparentBackground = CIImage(color: .clear).cropped(to: foreground.extent)
         let blend = CIFilter(name: "CIBlendWithMask")
         blend?.setValue(foreground, forKey: kCIInputImageKey)
@@ -116,7 +133,7 @@ enum ApplePhotoAnalysisService {
               let rendered = CIContext().createCGImage(output, from: foreground.extent) else {
             return nil
         }
-        return UIImage(cgImage: rendered, scale: image.scale, orientation: .up)
+        return UIImage(cgImage: rendered, scale: scale, orientation: .up)
     }
 
     static func depthData(from image: UIImage) -> AVDepthData? {
@@ -135,13 +152,16 @@ enum ApplePhotoAnalysisService {
     }
 
     private static func depthData(from source: CGImageSource) -> AVDepthData? {
-        guard let auxiliary = CGImageSourceCopyAuxiliaryDataInfoAtIndex(
+        let auxiliary = (CGImageSourceCopyAuxiliaryDataInfoAtIndex(
             source,
             0,
             kCGImageAuxiliaryDataTypeDisparity
-        ) as? [AnyHashable: Any] else {
-            return nil
-        }
+        ) as? [AnyHashable: Any]) ?? (CGImageSourceCopyAuxiliaryDataInfoAtIndex(
+            source,
+            0,
+            kCGImageAuxiliaryDataTypeDepth
+        ) as? [AnyHashable: Any])
+        guard let auxiliary else { return nil }
         return try? AVDepthData(fromDictionaryRepresentation: auxiliary)
             .converting(toDepthDataType: kCVPixelFormatType_DepthFloat32)
     }
