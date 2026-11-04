@@ -6,6 +6,13 @@ struct DemoAdjustmentSettings: Equatable {
     var brightness: Double = 0
     var contrast: Double = 1
     var saturation: Double = 1
+    var highlights: Double = 0
+    var shadows: Double = 0
+    var temperature: Double = 6500
+    var tint: Double = 0
+    var sharpness: Double = 0
+    var noiseReduction: Double = 0
+    var vignette: Double = 0
 }
 
 enum DemoPhotoPreset: String, CaseIterable, Identifiable, Equatable {
