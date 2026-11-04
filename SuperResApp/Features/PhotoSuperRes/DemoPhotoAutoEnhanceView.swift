@@ -952,8 +952,14 @@ struct DemoPhotoAutoEnhanceView: View {
     private func refreshSelectedAsset() {
         guard let identifier = selectedAsset?.localIdentifier else { return }
         Task {
-            if let refreshed = try? await PhotoKitEditingService.shared.fetchAsset(localIdentifier: identifier) {
-                selectedAsset = refreshed
+            guard let refreshed = try? await PhotoKitEditingService.shared.fetchAsset(localIdentifier: identifier),
+                  let refreshedInput = try? await PhotoKitEditingService.shared.requestEditingInput(for: refreshed) else {
+                return
+            }
+            selectedAsset = refreshed
+            editingInput = refreshedInput
+            if !usesRAWResource {
+                renderSourceURL = refreshedInput.fullSizeImageURL
             }
         }
     }
