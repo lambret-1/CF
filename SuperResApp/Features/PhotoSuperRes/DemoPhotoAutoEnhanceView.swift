@@ -147,7 +147,7 @@ struct DemoPhotoAutoEnhanceView: View {
                     }
                 }
             }
-            .frame(height: 305)
+            .aspectRatio(4 / 3, contentMode: .fit)
             .overlay(alignment: .topLeading) {
                 if originalImage != nil {
                     Text(compareMode == .original ? "原图" : (compareMode == .compare ? "前后对比" : "编辑效果"))
@@ -163,7 +163,7 @@ struct DemoPhotoAutoEnhanceView: View {
                     previewModeButton("原图", mode: .original, icon: "photo")
                     Spacer()
                     if let image = editedImage ?? originalImage {
-                        Text("\(Int(image.size.width)) × \(Int(image.size.height))")
+                        Text("\(image.cgImage?.width ?? Int(image.size.width * image.scale)) × \(image.cgImage?.height ?? Int(image.size.height * image.scale))")
                             .font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
                     }
                 }
@@ -269,18 +269,6 @@ struct DemoPhotoAutoEnhanceView: View {
                 }
             }
 
-            heading("AI 实验室", subtitle: "高级智能修复能力，后续版本开放")
-            VStack(spacing: 0) {
-                placeholder("AI 人像修复", detail: "面部细节与肤质优化", icon: "face.smiling")
-                Divider().padding(.leading, 48)
-                placeholder("智能去噪", detail: "降低高 ISO 颗粒与噪点", icon: "circle.lefthalf.filled")
-                Divider().padding(.leading, 48)
-                placeholder("运动去模糊", detail: "恢复运动场景清晰度", icon: "viewfinder")
-                Divider().padding(.leading, 48)
-                placeholder("老照片修复", detail: "划痕修复与褪色还原", icon: "clock.arrow.circlepath")
-            }
-            .padding(.horizontal, 13)
-            .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 15))
         }
     }
 
@@ -299,28 +287,12 @@ struct DemoPhotoAutoEnhanceView: View {
             }
             .padding(15)
             .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 17))
-            Button("恢复默认参数") { applyPreset(.original) }
-                .font(.system(size: 12, weight: .semibold)).foregroundStyle(accent)
-                .frame(maxWidth: .infinity)
         }
     }
 
     private var comparePanel: some View {
         VStack(alignment: .leading, spacing: 13) {
             heading("前后对比", subtitle: "拖动预览中的分割线查看增强前后差异")
-            HStack(spacing: 9) {
-                infoCard("原始照片", detail: "保留导入版本", icon: "photo")
-                infoCard("编辑结果", detail: "当前调整效果", icon: "sparkles")
-            }
-            Text("在上方预览区选择「对比」，左右拖动分割线即可查看差异。")
-                .font(.system(size: 11)).foregroundStyle(.secondary)
-                .padding(13).frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 13))
-            Button { compareMode = .compare } label: {
-                Label("开启滑动对比", systemImage: "arrow.left.and.right")
-                    .font(.system(size: 13, weight: .semibold)).frame(maxWidth: .infinity).padding(13)
-                    .background(accent.opacity(0.16), in: RoundedRectangle(cornerRadius: 12))
-            }.buttonStyle(.plain)
         }
     }
 
@@ -351,20 +323,13 @@ struct DemoPhotoAutoEnhanceView: View {
 
     private var bottomBar: some View {
         HStack(spacing: 11) {
-            PhotosPicker(selection: $pickerItem, matching: .images) {
-                Label(originalImage == nil ? "导入照片" : "更换照片", systemImage: "photo.badge.plus")
-                    .font(.system(size: 12, weight: .semibold)).frame(maxWidth: .infinity).padding(.vertical, 13)
-                    .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 13))
-            }
-            Button { saveToPhotos() } label: {
-                HStack(spacing: 7) {
-                    if isSaving { ProgressView().tint(.black) }
-                    else { Image(systemName: "square.and.arrow.down") }
-                    Text("保存")
+            if originalImage != nil {
+                PhotosPicker(selection: $pickerItem, matching: .images) {
+                    Label("更换照片", systemImage: "photo.badge.plus")
+                        .font(.body.weight(.semibold)).frame(maxWidth: .infinity).padding(.vertical, 13)
+                        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 13))
                 }
-                .font(.system(size: 12, weight: .bold)).frame(maxWidth: .infinity).padding(.vertical, 13)
-                .background(accent, in: RoundedRectangle(cornerRadius: 13)).foregroundStyle(.black.opacity(0.85))
-            }.disabled(originalImage == nil || isSaving)
+            }
         }
         .padding(.horizontal, 18).padding(.top, 10).padding(.bottom, 9).background(.bar)
     }
@@ -409,7 +374,7 @@ struct DemoPhotoAutoEnhanceView: View {
             }
             Slider(value: Binding(
                 get: { settings[keyPath: keyPath] },
-                set: { settings[keyPath: keyPath] = $0; selectedPreset = .custom; scheduleRender() }
+                set: { settings[keyPath: keyPath] = $0; selectedPreset = .custom; scheduleRender(debounced: true) }
             ), in: range, onEditingChanged: { editing in
                 if editing { editingSnapshot = settings }
                 else if let snapshot = editingSnapshot {
@@ -461,6 +426,7 @@ struct DemoPhotoAutoEnhanceView: View {
                 alertMessage = "无法读取所选照片，请重新选择。"
                 return
             }
+            pickerItem = nil
             renderToken = UUID()
             originalImage = image
             editedImage = image
@@ -520,7 +486,7 @@ struct DemoPhotoAutoEnhanceView: View {
         compareMode = .result
     }
 
-    private func scheduleRender() {
+    private func scheduleRender(debounced: Bool = false) {
         guard let originalImage else { return }
         let token = UUID()
         renderToken = token
@@ -528,6 +494,8 @@ struct DemoPhotoAutoEnhanceView: View {
         let currentSettings = settings
         let useAutoEnhance = autoEnhanceEnabled
         Task {
+            if debounced { try? await Task.sleep(for: .milliseconds(100)) }
+            guard renderToken == token else { return }
             let result = await Task.detached(priority: .userInitiated) {
                 DemoImageProcessor.render(originalImage, settings: currentSettings, autoEnhance: useAutoEnhance)
             }.value
@@ -538,7 +506,8 @@ struct DemoPhotoAutoEnhanceView: View {
     }
 
     private func saveToPhotos() {
-        guard let image = editedImage ?? originalImage, let cgImage = image.cgImage else { return }
+        guard let image = editedImage ?? originalImage else { return }
+        guard let cgImage = image.cgImage else { alertMessage = "无法读取当前图像，请重新导入照片。"; return }
         isSaving = true
         Task {
             do {
