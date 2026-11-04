@@ -43,9 +43,17 @@ struct PhotoEditorLiveActivityWidget: Widget {
                     .padding(.bottom, 4)
                 }
             } compactLeading: {
-                Image(systemName: "slider.horizontal.3").foregroundStyle(.mint)
+                Link(destination: URL(string: "cfphotoeditor://cancel")!) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.white)
+                }
             } compactTrailing: {
-                Image(systemName: "photo").font(.system(size: 12)).foregroundStyle(.white)
+                Link(destination: URL(string: "cfphotoeditor://complete")!) {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.mint)
+                }
             } minimal: {
                 Image(systemName: "slider.horizontal.3").foregroundStyle(.mint)
             }
