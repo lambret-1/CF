@@ -1,6 +1,7 @@
 import CoreImage
 import CoreImage.CIFilterBuiltins
 import ImageIO
+import PencilKit
 import UIKit
 import UniformTypeIdentifiers
 
@@ -15,7 +16,8 @@ enum DemoImageProcessor {
         autoEnhance: Bool = false,
         filterName: String? = nil,
         transform: DemoImageTransform = .identity,
-        sourceURL: URL? = nil
+        sourceURL: URL? = nil,
+        markupData: Data? = nil
     ) -> UIImage? {
         guard let output = renderCIImage(
             image,
@@ -23,7 +25,8 @@ enum DemoImageProcessor {
             autoEnhance: autoEnhance,
             filterName: filterName,
             transform: transform,
-            sourceURL: sourceURL
+            sourceURL: sourceURL,
+            markupData: markupData
         ) else { return nil }
         return makePreviewImage(from: output, scale: image.scale)
     }
@@ -34,7 +37,8 @@ enum DemoImageProcessor {
         autoEnhance: Bool = false,
         filterName: String? = nil,
         transform: DemoImageTransform = .identity,
-        sourceURL: URL? = nil
+        sourceURL: URL? = nil,
+        markupData: Data? = nil
     ) -> CIImage? {
         guard let cgImage = image.cgImage else { return nil }
 
@@ -84,6 +88,20 @@ enum DemoImageProcessor {
 
         if !hasDecodedSourceURL {
             output = output.oriented(orientation)
+        }
+        if let markupData,
+           let drawing = try? PKDrawing(data: markupData) {
+            let drawingImage = drawing.image(
+                from: CGRect(origin: .zero, size: image.size),
+                scale: image.scale
+            )
+            if let overlay = CIImage(image: drawingImage) {
+                let alignedOverlay = overlay.transformed(by: CGAffineTransform(
+                    translationX: output.extent.minX,
+                    y: output.extent.minY
+                ))
+                output = alignedOverlay.composited(over: output)
+            }
         }
         output = applyGeometry(transform, to: output)
         return output
