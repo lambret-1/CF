@@ -91,7 +91,10 @@ struct DemoPhotoAutoEnhanceView: View {
             consumeIslandCommand()
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { consumeIslandCommand() }
+            if phase == .active {
+                restoreLiveActivity()
+                consumeIslandCommand()
+            }
         }
         .onChange(of: isCompleteEnabled) { _, enabled in
             Task { await updateLiveActivity(canComplete: enabled) }
@@ -556,7 +559,18 @@ struct DemoPhotoAutoEnhanceView: View {
         } catch {
             liveActivity = nil
             liveActivitySessionID = nil
+            alertMessage = "无法启动灵动岛活动：\(error.localizedDescription)"
         }
+    }
+
+    @MainActor
+    private func restoreLiveActivity() {
+        guard let activity = Activity<PhotoEditorActivityAttributes>.activities.first(where: {
+            $0.attributes.sessionID == liveActivitySessionID
+        }) ?? Activity<PhotoEditorActivityAttributes>.activities.first else { return }
+        liveActivity = activity
+        liveActivitySessionID = activity.attributes.sessionID
+        Task { await updateLiveActivity(canComplete: isCompleteEnabled) }
     }
 
     @MainActor

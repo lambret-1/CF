@@ -4,6 +4,7 @@ import Foundation
 
 struct CancelPhotoEditorIntent: LiveActivityIntent {
     static var title: LocalizedStringResource = "取消照片编辑"
+    static var openAppWhenRun: Bool = true
     @Parameter(title: "编辑会话") var sessionID: String
 
     init() { sessionID = "" }
@@ -22,6 +23,7 @@ struct CancelPhotoEditorIntent: LiveActivityIntent {
 
 struct CompletePhotoEditorIntent: LiveActivityIntent {
     static var title: LocalizedStringResource = "完成照片编辑"
+    static var openAppWhenRun: Bool = true
     @Parameter(title: "编辑会话") var sessionID: String
 
     init() { sessionID = "" }

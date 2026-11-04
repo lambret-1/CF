@@ -9,7 +9,10 @@ enum DemoImageProcessor {
         var output = input
 
         if autoEnhance {
-            let options: [CIImageAutoAdjustmentOption: Any] = [.crop: false]
+            let options: [CIImageAutoAdjustmentOption: Any] = [
+                .crop: false,
+                .imageOrientation: NSNumber(value: CGImagePropertyOrientation.up.rawValue)
+            ]
             for filter in input.autoAdjustmentFilters(options: options) {
                 filter.setValue(output, forKey: kCIInputImageKey)
                 if let next = filter.outputImage { output = next }

@@ -39,9 +39,14 @@ struct PhotoEditorLiveActivityWidget: Widget {
                         .foregroundStyle(.mint)
                 }
                 DynamicIslandExpandedRegion(.center) {
-                    Text("CF 照片编辑")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.white)
+                    VStack(spacing: 2) {
+                        Text("CF 照片编辑")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.white)
+                        Text("长按查看取消与完成")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.white.opacity(0.7))
+                    }
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     HStack(spacing: 10) {
