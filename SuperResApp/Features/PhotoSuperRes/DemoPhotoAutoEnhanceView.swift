@@ -299,7 +299,7 @@ struct DemoPhotoAutoEnhanceView: View {
             }
             .padding(15)
             .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 17))
-            Button("恢复默认参数") { applySettings(DemoAdjustmentSettings(), preset: .original) }
+            Button("恢复默认参数") { applyPreset(.original) }
                 .font(.system(size: 12, weight: .semibold)).foregroundStyle(accent)
                 .frame(maxWidth: .infinity)
         }
