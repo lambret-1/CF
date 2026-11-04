@@ -11,6 +11,8 @@ struct ModelManifestItem: Codable, Identifiable, Hashable {
     let id: String
     /// 显示名称，如 "PiperSR 2x (ANE)"
     let name: String
+    /// 模型用途：superResolution / frameInterpolation
+    let task: String
     /// 模型体积（字节）
     let size: Int64
     /// 下载地址（zip 包），内置模型可为空
@@ -32,13 +34,14 @@ struct ModelManifestItem: Codable, Identifiable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case id, name, size, url, sha256, builtin, wifiOnly
-        case computeUnits, license, source, note
+        case computeUnits, license, source, note, task
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
         name = try container.decode(String.self, forKey: .name)
+        task = try container.decodeIfPresent(String.self, forKey: .task) ?? "superResolution"
         size = try container.decode(Int64.self, forKey: .size)
         url = try container.decodeIfPresent(String.self, forKey: .url) ?? ""
         sha256 = try container.decodeIfPresent(String.self, forKey: .sha256) ?? ""
@@ -88,6 +91,8 @@ struct ModelRuntimeInfo: Identifiable, Hashable {
     var failureReason: String?
 
     var name: String { manifest.name }
+    var task: String { manifest.task }
+    var isFrameInterpolation: Bool { manifest.task == "frameInterpolation" }
     var size: Int64 { manifest.size }
     var isBuiltin: Bool { manifest.builtin }
     var wifiOnly: Bool { manifest.wifiOnly }
