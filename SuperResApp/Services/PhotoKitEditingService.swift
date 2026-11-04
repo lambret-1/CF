@@ -208,6 +208,9 @@ actor PhotoKitEditingService {
                 if let next = filter?.outputImage { output = next }
             }
 
+            if abs(transform.straightenAngle) > 0.0001 {
+                output = output.applyingFilter("CIStraightenFilter", parameters: ["inputAngle": transform.straightenAngle])
+            }
             let turns = ((transform.quarterTurnsClockwise % 4) + 4) % 4
             switch turns {
             case 1: output = output.oriented(.right)
