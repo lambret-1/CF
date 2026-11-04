@@ -140,13 +140,21 @@ final class VideoFrameInterpolationProcessor: @unchecked Sendable {
             var previousBuffer = firstBuffer
             var previousTime = CMSampleBufferGetPresentationTimeStamp(firstSample)
             var processedFrames = 0
-            let estimatedFrames = max(1, Int((CMTimeGetSeconds(duration) * Double(try await videoTrack.load(.nominalFrameRate))).rounded(.up)))
+            let nominalFrameRate = Double((try? await videoTrack.load(.nominalFrameRate)) ?? 0)
+            let durationSeconds = CMTimeGetSeconds(duration)
+            let estimatedFrames = nominalFrameRate.isFinite && nominalFrameRate > 0 && durationSeconds.isFinite && durationSeconds > 0
+                ? max(1, Int((durationSeconds * nominalFrameRate).rounded(.up)))
+                : 1
 
             while let sample = videoOutput.copyNextSampleBuffer() {
                 try checkCancellation()
                 guard let currentBuffer = CMSampleBufferGetImageBuffer(sample) else { continue }
                 let currentTime = CMSampleBufferGetPresentationTimeStamp(sample)
                 let delta = CMTimeSubtract(currentTime, previousTime)
+                let deltaSeconds = CMTimeGetSeconds(delta)
+                guard currentTime.isValid, delta.isValid, deltaSeconds.isFinite, deltaSeconds > 0 else {
+                    throw FrameInterpolationError.invalidFrameTimestamp
+                }
 
                 try await append(previousBuffer, at: previousTime, adaptor: adaptor, input: videoInput, writer: writer)
 
@@ -239,6 +247,7 @@ private enum FrameInterpolationError: LocalizedError {
     case readerStartFailed
     case writerStartFailed
     case noVideoFrames
+    case invalidFrameTimestamp
     case inferenceFailed
     case writeFailed
 
@@ -252,6 +261,7 @@ private enum FrameInterpolationError: LocalizedError {
         case .readerStartFailed: return "视频读取启动失败"
         case .writerStartFailed: return "视频写入启动失败"
         case .noVideoFrames: return "视频没有可读取的帧"
+        case .invalidFrameTimestamp: return "视频帧时间戳无效或不连续，无法安全补帧"
         case .inferenceFailed: return "RIFE 补帧推理失败"
         case .writeFailed: return "补帧视频写入失败"
         }
