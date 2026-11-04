@@ -22,6 +22,17 @@
 	<string>1</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.superres.app.photoeditor</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>cfphotoeditor</string>
+			</array>
+		</dict>
+	</array>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>

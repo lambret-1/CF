@@ -22,9 +22,7 @@ struct DemoPhotoAutoEnhanceView: View {
     @State private var alertMessage: String?
     @State private var showShareSheet = false
     @State private var selectedAdjustment: AdjustmentControl = .exposure
-    @State private var previewResetTask: Task<Void, Never>?
     @State private var liveActivity: Activity<PhotoEditorActivityAttributes>?
-    @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dismiss) private var dismiss
 
     init(initialPickerItem: PhotosPickerItem? = nil) {
@@ -78,17 +76,15 @@ struct DemoPhotoAutoEnhanceView: View {
                 DemoShareSheet(items: [image])
             }
         }
-        .task {
-            while !Task.isCancelled {
-                consumeIslandCommand()
-                try? await Task.sleep(for: .milliseconds(450))
+        .onOpenURL { url in
+            guard url.scheme == "cfphotoeditor" else { return }
+            switch url.host {
+            case "cancel": dismiss()
+            case "complete": saveToPhotos()
+            default: break
             }
         }
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .active { consumeIslandCommand() }
-        }
         .onDisappear {
-            previewResetTask?.cancel()
             Task { await endLiveActivity() }
         }
     }
@@ -155,7 +151,6 @@ struct DemoPhotoAutoEnhanceView: View {
             Menu {
                 Button("切换原图预览", systemImage: "eye") { toggleOriginalPreview() }
                 Button("显示效果", systemImage: "eye.slash") {
-                    previewResetTask?.cancel()
                     compareMode = .result
                 }
                 Button("重置所有调整", systemImage: "arrow.counterclockwise") { resetEdits() }
@@ -193,19 +188,6 @@ struct DemoPhotoAutoEnhanceView: View {
                             Spacer().frame(height: 12)
                         }
                     }
-                    if compareMode == .original {
-                        VStack {
-                            Spacer()
-                            Text("原图")
-                                .font(.system(size: 14, weight: .medium))
-                                .foregroundStyle(.primary)
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 7)
-                                .background(.ultraThinMaterial, in: Capsule())
-                                .padding(.bottom, 10)
-                        }
-                        .allowsHitTesting(false)
-                    }
                 } else {
                     ProgressView("正在打开照片…")
                         .font(.system(size: 14))
@@ -218,19 +200,7 @@ struct DemoPhotoAutoEnhanceView: View {
     }
 
     private func toggleOriginalPreview() {
-        previewResetTask?.cancel()
-        if compareMode == .original {
-            withAnimation(.easeInOut(duration: 0.18)) { compareMode = .result }
-            return
-        }
-        withAnimation(.easeInOut(duration: 0.18)) { compareMode = .original }
-        previewResetTask = Task {
-            try? await Task.sleep(for: .milliseconds(950))
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                withAnimation(.easeInOut(duration: 0.2)) { compareMode = .result }
-            }
-        }
+        compareMode = compareMode == .original ? .result : .original
     }
 
     private var parameterPanel: some View {
@@ -552,19 +522,6 @@ struct DemoPhotoAutoEnhanceView: View {
         guard let liveActivity else { return }
         await liveActivity.end(nil, dismissalPolicy: .immediate)
         self.liveActivity = nil
-    }
-
-    @MainActor
-    private func consumeIslandCommand() {
-        guard let defaults = UserDefaults(suiteName: PhotoEditorActivityAttributes.appGroupID),
-              let action = defaults.string(forKey: PhotoEditorActivityAttributes.commandKey) else { return }
-        defaults.removeObject(forKey: PhotoEditorActivityAttributes.commandKey)
-        switch action {
-        case "compare": toggleOriginalPreview()
-        case "undo": undo()
-        case "redo": redo()
-        default: break
-        }
     }
 
     private func applyAutoEnhance() {
