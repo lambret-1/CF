@@ -1,6 +1,7 @@
 import Foundation
 import Photos
 import CoreImage
+import CoreImage.CIFilterBuiltins
 import ImageIO
 import UniformTypeIdentifiers
 import UIKit
