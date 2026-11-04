@@ -57,8 +57,7 @@ enum DemoImageProcessor {
     private static func applyGeometry(_ transform: DemoImageTransform, to input: CIImage) -> CIImage {
         var output = input
         if transform.usesPerspectiveCorrection,
-           let corrected = try? ApplePhotoAnalysisService.perspectiveCorrect(output),
-           let corrected {
+           let corrected = try? ApplePhotoAnalysisService.perspectiveCorrect(output) {
             output = corrected
         }
 
