@@ -121,7 +121,10 @@ targets:
     type: app-extension
     platform: iOS
     sources:
-      - path: SuperResApp/PhotoEditingExtension
+      - path: SuperResApp/PhotoEditingExtension/PhotoEditingViewController.swift
+      - path: SuperResApp/Features/PhotoSuperRes/Demo/Models/DemoAdjustmentSettings.swift
+      - path: SuperResApp/Features/PhotoSuperRes/Demo/Services/DemoImageProcessor.swift
+      - path: SuperResApp/Services/ApplePhotoAnalysisService.swift
     info:
       path: SuperResApp/PhotoEditingExtension/Info.plist
       properties:
