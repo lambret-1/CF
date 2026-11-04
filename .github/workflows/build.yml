@@ -1,5 +1,4 @@
 name: 构建未签名 IPA
-
 on:
   push:
     branches: [main, master]
@@ -9,44 +8,71 @@ on:
 
 env:
   APP_NAME: SuperResApp
-  VERSION: 1.0.9  # ⭐️ 假设当前是 1.0.9，测试逢九进一
 
 jobs:
   build:
-    name: 构建 iOS 未签名包
-    runs-on: macos-14
+    name: ${{ matrix.runner }} 构建未签名IPA
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        runner: [macos-15, macos-26]
     timeout-minutes: 30
+
     steps:
+      - name: 取消同工作流其它竞争Job
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const runId = context.runId;
+            const jobs = await github.rest.actions.listJobsForWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: runId
+            });
+            for(const job of jobs.data.jobs){
+              if(job.id !== context.jobId && job.status === 'queued'){
+                try{
+                  await github.rest.actions.cancelWorkflowRun({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    run_id: runId
+                  });
+                }catch(e){}
+              }
+            }
+
       - name: 检出代码
         uses: actions/checkout@v4
+        with:
+          fetch-tags: true
 
-      # ⭐️ 核心新增：计算逢九进一的版本号
       - name: 计算新版本号 (逢九进一)
         id: version_bump
         run: |
-          CURRENT="${{ env.VERSION }}"
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')
+          if [ -z "$LATEST_TAG" ]; then
+            CURRENT="1.0.9"
+          else
+            CURRENT="$LATEST_TAG"
+          fi
           echo "当前基础版本: $CURRENT"
-          
+
           IFS='.' read -r major minor patch <<< "$CURRENT"
-          
-          # 个位加 1
           patch=$((patch + 1))
-          
-          # 逢九进一逻辑
+
           if [ "$patch" -gt 9 ]; then
               patch=0
               minor=$((minor + 1))
           fi
-          
           if [ "$minor" -gt 9 ]; then
-              minor=0
-              major=$((major + 1))
+            minor=0
+            major=$((major + 1))
           fi
-          
+
           NEW_VER="$major.$minor.$patch"
           echo "计算后的新版本: $NEW_VER"
-          
-          # 将新版本号写入环境变量，供后续步骤（编译、打包）使用
           echo "NEW_VERSION=$NEW_VER" >> $GITHUB_ENV
 
       - name: 配置 Xcode
@@ -107,7 +133,6 @@ jobs:
       - name: 上传 IPA 产物
         uses: actions/upload-artifact@v4
         with:
-          # ⭐️ 这里换成新计算的版本号
           name: ${{ env.APP_NAME }}-unsigned-v${{ env.NEW_VERSION }}.ipa
           path: build/${{ env.APP_NAME }}-unsigned-v${{ env.NEW_VERSION }}.ipa
           retention-days: 30
