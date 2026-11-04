@@ -17,6 +17,7 @@ struct DemoPhotoAutoEnhanceView: View {
     @State private var isAnalyzing = false
     @State private var isLoadingRAW = false
     @State private var showMarkupEditor = false
+    @State private var showFreeCropEditor = false
     @State private var markupData: Data?
     @State private var originalImage: UIImage?
     @State private var editedImage: UIImage?
@@ -102,6 +103,17 @@ struct DemoPhotoAutoEnhanceView: View {
                     markupData = drawing.dataRepresentation()
                     editedImage = compositeMarkup(drawing, over: editedImage ?? image)
                     renderedCIImage = editedImage.flatMap { CIImage(image: $0) }
+                })
+            }
+        }
+        .sheet(isPresented: $showFreeCropEditor) {
+            if let image = editedImage ?? originalImage {
+                AppleFreeCropEditor(image: image, onCancel: {}, onApply: { rect in
+                    pushUndo()
+                    imageTransform.cropRect = rect
+                    imageTransform.cropAspectRatio = nil
+                    imageTransform.usesSquareCrop = false
+                    scheduleRender()
                 })
             }
         }
@@ -331,6 +343,16 @@ struct DemoPhotoAutoEnhanceView: View {
                         cropTool("还原", icon: "crop", action: .reset)
                         cropTool("旋转", icon: "rotate.right", action: .rotate)
                         cropTool("翻转", icon: "arrow.left.and.right.righttriangle.left.righttriangle.right", action: .flip)
+                        Button {
+                            showFreeCropEditor = true
+                        } label: {
+                            VStack(spacing: 6) {
+                                Image(systemName: "crop.rotate").font(.system(size: 22))
+                                Text("自由裁剪").font(.system(size: 10))
+                            }
+                            .foregroundStyle(.primary)
+                        }
+                        .buttonStyle(.plain)
                         cropTool(imageTransform.usesPerspectiveCorrection ? "取消透视" : "透视", icon: "perspective", action: .perspective)
                         Button {
                             autoStraighten()
@@ -943,6 +965,11 @@ struct DemoPhotoAutoEnhanceView: View {
         imageTransform.usesDepthBlur = root["depthBlur"] as? Bool ?? false
         let cropRatio = root["cropAspectRatio"] as? Double ?? 0
         imageTransform.cropAspectRatio = cropRatio > 0 ? cropRatio : nil
+        if let crop = root["cropRect"] as? [Double], crop.count == 4 {
+            imageTransform.cropRect = CGRect(x: crop[0], y: crop[1], width: crop[2], height: crop[3])
+        } else {
+            imageTransform.cropRect = nil
+        }
         if let encodedMarkup = root["markupData"] as? String, !encodedMarkup.isEmpty {
             markupData = Data(base64Encoded: encodedMarkup)
         }
@@ -1116,7 +1143,8 @@ struct DemoPhotoAutoEnhanceView: View {
                         "straightenAngle": imageTransform.straightenAngle,
                         "perspectiveCorrection": imageTransform.usesPerspectiveCorrection,
                         "depthBlur": imageTransform.usesDepthBlur,
-                        "cropAspectRatio": imageTransform.cropAspectRatio ?? 0
+                        "cropAspectRatio": imageTransform.cropAspectRatio ?? 0,
+                        "cropRect": imageTransform.cropRect.map { [$0.origin.x, $0.origin.y, $0.size.width, $0.size.height] } ?? []
                     ]
                     let data = try JSONSerialization.data(withJSONObject: adjustment, options: [.sortedKeys])
                     if asset.mediaSubtypes.contains(.photoLive), input.livePhoto != nil {
