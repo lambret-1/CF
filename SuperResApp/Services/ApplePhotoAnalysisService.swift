@@ -47,6 +47,20 @@ enum ApplePhotoAnalysisService {
         )
     }
 
+    static func horizonAngle(for image: UIImage) throws -> CGFloat? {
+        guard let cgImage = image.cgImage else {
+            throw ApplePhotoAnalysisError.imageUnavailable
+        }
+        let request = VNDetectHorizonRequest()
+        let handler = VNImageRequestHandler(
+            cgImage: cgImage,
+            orientation: image.imageOrientation.cgImagePropertyOrientation,
+            options: [:]
+        )
+        try handler.perform([request])
+        return request.results?.first?.angle
+    }
+
     static func depthData(from image: UIImage) -> AVDepthData? {
         guard let data = image.jpegData(compressionQuality: 1),
               let source = CGImageSourceCreateWithData(data as CFData, nil) else {
