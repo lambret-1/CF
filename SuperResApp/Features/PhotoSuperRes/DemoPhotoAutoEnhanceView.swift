@@ -1,6 +1,7 @@
 import SwiftUI
 import PhotosUI
 import UIKit
+import ActivityKit
 
 struct DemoPhotoAutoEnhanceView: View {
     @State private var pickerItem: PhotosPickerItem?
@@ -21,6 +22,8 @@ struct DemoPhotoAutoEnhanceView: View {
     @State private var showShareSheet = false
     @State private var selectedAdjustment: AdjustmentControl = .exposure
     @State private var previewResetTask: Task<Void, Never>?
+    @State private var liveActivity: Activity<PhotoEditorActivityAttributes>?
+    @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dismiss) private var dismiss
 
     init(initialPickerItem: PhotosPickerItem? = nil) {
@@ -47,14 +50,11 @@ struct DemoPhotoAutoEnhanceView: View {
                         .padding(.bottom, 18)
                 }
             }
-            .padding(.top, max(geometry.safeAreaInsets.top, 48))
-            .padding(.bottom, max(geometry.safeAreaInsets.bottom, 14))
+            .padding(.top, 4)
+            .padding(.bottom, max(geometry.safeAreaInsets.bottom, 8))
             .frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
             .background(Color(uiColor: .systemBackground))
         }
-        .ignoresSafeArea(.container, edges: .all)
-        .statusBarHidden(true)
-        .persistentSystemOverlays(.hidden)
         .toolbar(.hidden, for: .navigationBar)
         .task {
             guard let initialItem = pickerItem, originalImage == nil else { return }
@@ -77,8 +77,18 @@ struct DemoPhotoAutoEnhanceView: View {
                 DemoShareSheet(items: [image])
             }
         }
+        .task {
+            while !Task.isCancelled {
+                consumeIslandCommand()
+                try? await Task.sleep(for: .milliseconds(450))
+            }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { consumeIslandCommand() }
+        }
         .onDisappear {
             previewResetTask?.cancel()
+            Task { await endLiveActivity() }
         }
     }
 
@@ -87,19 +97,19 @@ struct DemoPhotoAutoEnhanceView: View {
             Button("取消") {
                 dismiss()
             }
-            .font(.system(size: 16, weight: .medium))
+            .font(.system(size: 15, weight: .medium))
             .foregroundStyle(.primary)
-            .padding(.horizontal, 17)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 15)
+            .padding(.vertical, 7)
             .background(Color(uiColor: .tertiarySystemFill), in: Capsule())
             Spacer()
             Button("完成") {
                 saveToPhotos()
             }
-            .font(.system(size: 16, weight: .semibold))
+            .font(.system(size: 15, weight: .semibold))
             .foregroundStyle(originalImage == nil ? Color.secondary : Color.black.opacity(0.65))
-            .padding(.horizontal, 19)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 7)
             .background(originalImage == nil ? Color(uiColor: .tertiarySystemFill) : Color(red: 1.0, green: 0.88, blue: 0.48), in: Capsule())
             .disabled(originalImage == nil || isSaving)
         }
@@ -112,8 +122,8 @@ struct DemoPhotoAutoEnhanceView: View {
         HStack(spacing: 0) {
             Button { undo() } label: {
                 Image(systemName: "arrow.uturn.backward.circle")
-                    .font(.system(size: 27, weight: .regular))
-                    .frame(width: 48, height: 42)
+                    .font(.system(size: 21, weight: .regular))
+                    .frame(width: 42, height: 38)
             }
             .disabled(undoStack.isEmpty)
             .accessibilityLabel("撤销")
@@ -126,19 +136,19 @@ struct DemoPhotoAutoEnhanceView: View {
             .accessibilityLabel("重做")
             Spacer(minLength: 8)
             Text(activeTab.title)
-                .font(.system(size: 17, weight: .semibold))
+                .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(.secondary)
             Spacer(minLength: 8)
             Button { toggleOriginalPreview() } label: {
                 Image(systemName: compareMode == .original ? "eye" : "eye.slash")
-                    .font(.system(size: 25))
-                    .frame(width: 46, height: 42)
+                    .font(.system(size: 21))
+                    .frame(width: 42, height: 38)
             }
             .accessibilityLabel("原图与效果图切换")
             PhotosPicker(selection: $pickerItem, matching: .images) {
                 Image(systemName: "photo.badge.plus")
-                    .font(.system(size: 24))
-                    .frame(width: 46, height: 42)
+                    .font(.system(size: 20))
+                    .frame(width: 40, height: 38)
             }
             .accessibilityLabel("更换照片")
             Menu {
@@ -151,14 +161,14 @@ struct DemoPhotoAutoEnhanceView: View {
                 Button("分享照片", systemImage: "square.and.arrow.up") { showShareSheet = true }
             } label: {
                 Image(systemName: "ellipsis.circle")
-                    .font(.system(size: 26))
-                    .frame(width: 42, height: 42)
+                    .font(.system(size: 21))
+                    .frame(width: 38, height: 38)
             }
             .accessibilityLabel("更多操作")
         }
         .foregroundStyle(Color(uiColor: .secondaryLabel))
-        .padding(.horizontal, 18)
-        .padding(.bottom, 8)
+        .padding(.horizontal, 14)
+        .padding(.bottom, 5)
     }
 
     private var preview: some View {
@@ -235,7 +245,7 @@ struct DemoPhotoAutoEnhanceView: View {
     }
 
     private var parameterPanel: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 6) {
             if activeTab == .adjust {
                 HStack(spacing: 0) {
                     ForEach(AdjustmentControl.allCases) { control in
@@ -243,14 +253,14 @@ struct DemoPhotoAutoEnhanceView: View {
                             if control == .auto { applyAutoEnhance() }
                             else { selectedAdjustment = control }
                         } label: {
-                            VStack(spacing: 7) {
+                            VStack(spacing: 4) {
                                 Image(systemName: control.icon)
-                                    .font(.system(size: 29, weight: .regular))
-                                    .frame(width: 78, height: 78)
+                                    .font(.system(size: 19, weight: .regular))
+                                    .frame(width: 48, height: 48)
                                     .background(selectedAdjustment == control ? Color(uiColor: .tertiarySystemFill) : .clear, in: Circle())
-                                    .overlay(Circle().stroke(Color(uiColor: .systemGray4), lineWidth: selectedAdjustment == control ? 0 : 1.8))
+                                    .overlay(Circle().stroke(Color(uiColor: .systemGray4), lineWidth: selectedAdjustment == control ? 0 : 1))
                                 Text(control.title)
-                                    .font(.system(size: 14, weight: selectedAdjustment == control ? .semibold : .regular))
+                                    .font(.system(size: 11, weight: selectedAdjustment == control ? .semibold : .regular))
                                     .foregroundStyle(.primary)
                             }
                             .frame(maxWidth: .infinity)
@@ -258,7 +268,7 @@ struct DemoPhotoAutoEnhanceView: View {
                         .buttonStyle(.plain)
                     }
                 }
-                .padding(.horizontal, 9)
+                .padding(.horizontal, 10)
                 TickMarkSlider(value: selectedAdjustmentBinding, range: selectedAdjustment.range) { editing in
                     if editing {
                         editingSnapshot = settings
@@ -271,24 +281,24 @@ struct DemoPhotoAutoEnhanceView: View {
                         editingSnapshot = nil
                     }
                 }
-                    .frame(height: 48)
-                    .padding(.horizontal, 24)
+                    .frame(height: 38)
+                    .padding(.horizontal, 22)
                 Text(selectedAdjustment.title)
-                    .font(.system(size: 14, weight: .medium))
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
-                    .frame(height: 22)
+                    .frame(height: 16)
             } else if activeTab == .filters {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 15) {
                         ForEach(DemoPhotoPreset.allCases.filter { $0 != .custom }) { preset in
                             Button { applyPreset(preset) } label: {
-                                VStack(spacing: 7) {
+                                VStack(spacing: 5) {
                                     Circle()
                                         .fill(preset.tint.opacity(0.18))
-                                        .frame(width: 76, height: 76)
-                                        .overlay(Image(systemName: preset.icon).font(.system(size: 27)).foregroundStyle(.primary))
+                                        .frame(width: 54, height: 54)
+                                        .overlay(Image(systemName: preset.icon).font(.system(size: 20)).foregroundStyle(.primary))
                                         .overlay(Circle().stroke(selectedPreset == preset ? Color.primary : Color(uiColor: .systemGray4), lineWidth: selectedPreset == preset ? 2.5 : 1.5))
-                                    Text(preset.title).font(.system(size: 13, weight: .medium)).foregroundStyle(.primary)
+                                    Text(preset.title).font(.system(size: 11, weight: .medium)).foregroundStyle(.primary)
                                 }
                             }
                             .buttonStyle(.plain)
@@ -296,7 +306,7 @@ struct DemoPhotoAutoEnhanceView: View {
                     }
                     .padding(.horizontal, 20)
                 }
-                .frame(height: 108)
+                .frame(height: 82)
             } else if activeTab == .crop {
                 HStack(spacing: 30) {
                     cropTool("自由", icon: "crop")
@@ -304,7 +314,7 @@ struct DemoPhotoAutoEnhanceView: View {
                     cropTool("翻转", icon: "arrow.left.and.right.righttriangle.left.righttriangle.right")
                     cropTool("比例", icon: "aspectratio")
                 }
-                .frame(height: 104)
+                .frame(height: 78)
             } else {
                 HStack(spacing: 18) {
                     Image(systemName: activeTab.icon).font(.system(size: 26))
@@ -319,8 +329,8 @@ struct DemoPhotoAutoEnhanceView: View {
                 .frame(height: 104)
             }
         }
-        .padding(.top, 12)
-        .padding(.bottom, 5)
+        .padding(.top, 8)
+        .padding(.bottom, 2)
     }
 
     private var selectedAdjustmentBinding: Binding<Double> {
@@ -357,15 +367,15 @@ struct DemoPhotoAutoEnhanceView: View {
                     } label: {
                         VStack(spacing: 6) {
                             Image(systemName: tab.icon)
-                                .font(.system(size: 23, weight: activeTab == tab ? .semibold : .regular))
-                                .frame(height: 27)
+                                .font(.system(size: 20, weight: activeTab == tab ? .semibold : .regular))
+                                .frame(height: 23)
                             Text(tab.title)
-                                .font(.system(size: 11, weight: activeTab == tab ? .semibold : .regular))
+                                .font(.system(size: 10, weight: activeTab == tab ? .semibold : .regular))
                         }
                         .foregroundStyle(activeTab == tab ? .primary : Color(uiColor: .tertiaryLabel))
-                        .frame(minWidth: 88)
-                        .padding(.top, 9)
-                        .padding(.bottom, 7)
+                        .frame(minWidth: 72)
+                        .padding(.top, 7)
+                        .padding(.bottom, 5)
                         .overlay(alignment: .top) {
                             if activeTab == tab {
                                 Capsule().fill(Color(red: 1.0, green: 0.72, blue: 0.12)).frame(width: 7, height: 7).offset(y: -1)
@@ -377,7 +387,7 @@ struct DemoPhotoAutoEnhanceView: View {
             }
             .padding(.horizontal, 12)
         }
-        .padding(.bottom, 8)
+        .padding(.bottom, 4)
         .background(Color(uiColor: .systemBackground))
     }
 
@@ -520,8 +530,47 @@ struct DemoPhotoAutoEnhanceView: View {
             undoStack.removeAll()
             redoStack.removeAll()
             compareMode = .result
+            await startLiveActivity()
         } catch {
             alertMessage = "读取照片失败：\(error.localizedDescription)"
+        }
+    }
+
+
+    @MainActor
+    private func startLiveActivity() async {
+        guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
+        if let liveActivity { await liveActivity.end(nil, dismissalPolicy: .immediate) }
+        let attributes = PhotoEditorActivityAttributes(sessionID: UUID().uuidString)
+        let state = PhotoEditorActivityAttributes.ContentState(status: "正在编辑", selectedAction: "compare")
+        do {
+            liveActivity = try Activity.request(
+                attributes: attributes,
+                content: ActivityContent(state: state, staleDate: Date().addingTimeInterval(3600)),
+                pushType: nil
+            )
+        } catch {
+            liveActivity = nil
+        }
+    }
+
+    @MainActor
+    private func endLiveActivity() async {
+        guard let liveActivity else { return }
+        await liveActivity.end(nil, dismissalPolicy: .immediate)
+        self.liveActivity = nil
+    }
+
+    @MainActor
+    private func consumeIslandCommand() {
+        guard let defaults = UserDefaults(suiteName: PhotoEditorActivityAttributes.appGroupID),
+              let action = defaults.string(forKey: PhotoEditorActivityAttributes.commandKey) else { return }
+        defaults.removeObject(forKey: PhotoEditorActivityAttributes.commandKey)
+        switch action {
+        case "compare": toggleOriginalPreview()
+        case "undo": undo()
+        case "redo": redo()
+        default: break
         }
     }
 

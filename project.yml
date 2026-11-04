@@ -65,6 +65,7 @@ targets:
         excludes:
           - "Models/Builtin/**"
           - "Info.plist"
+          - "LiveActivityWidget/**"
     resources:
       - path: SuperResApp/Resources/model_manifest.json
     postBuildScripts:
@@ -112,3 +113,25 @@ targets:
         ENABLE_PREVIEWS: "YES"
     dependencies:
       - package: ZIPFoundation
+      - target: PhotoEditorLiveActivity
+  PhotoEditorLiveActivity:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: SuperResApp/LiveActivityWidget
+      - path: SuperResApp/Shared/PhotoEditorActivityAttributes.swift
+    info:
+      properties:
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      path: SuperResApp/LiveActivityWidget/Widget.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.superres.app
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.superres.app.PhotoEditorLiveActivity
+        PRODUCT_NAME: PhotoEditorLiveActivity
+        SKIP_INSTALL: YES
+        APPLICATION_EXTENSION_API_ONLY: YES
