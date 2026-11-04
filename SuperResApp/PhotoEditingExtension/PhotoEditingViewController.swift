@@ -18,6 +18,7 @@ final class PhotoEditingViewController: UIViewController, PHContentEditingContro
     private let scrollView = UIScrollView()
     private let controlsStack = UIStackView()
     private var presetControl: UISegmentedControl?
+    private var sliders: [Int: UISlider] = [:]
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -174,6 +175,7 @@ final class PhotoEditingViewController: UIViewController, PHContentEditingContro
         row.addArrangedSubview(label)
         row.addArrangedSubview(slider)
         controlsStack.addArrangedSubview(row)
+        sliders[tag] = slider
     }
 
     @objc private func toggleAutoEnhance() {
@@ -262,6 +264,21 @@ final class PhotoEditingViewController: UIViewController, PHContentEditingContro
         return try? JSONSerialization.data(withJSONObject: values, options: [.sortedKeys])
     }
 
+    private func refreshSliders() {
+        sliders[0]?.value = Float(settings.exposure)
+        sliders[1]?.value = Float(settings.brightness)
+        sliders[2]?.value = Float(settings.contrast)
+        sliders[3]?.value = Float(settings.saturation)
+        sliders[4]?.value = Float(settings.vibrance)
+        sliders[5]?.value = Float(settings.highlights)
+        sliders[6]?.value = Float(settings.shadows)
+        sliders[7]?.value = Float(settings.temperature)
+        sliders[8]?.value = Float(settings.tint)
+        sliders[9]?.value = Float(settings.sharpness)
+        sliders[10]?.value = Float(settings.noiseReduction)
+        sliders[11]?.value = Float(settings.vignette)
+    }
+
     private func restoreAdjustmentData(_ data: Data?) {
         guard let data,
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
@@ -286,6 +303,7 @@ final class PhotoEditingViewController: UIViewController, PHContentEditingContro
             presetControl?.selectedSegmentIndex = presets.firstIndex(of: preset) ?? 0
         }
         autoEnhanceEnabled = root["autoEnhance"] as? Bool ?? false
+        refreshSliders()
         transform.quarterTurnsClockwise = root["rotation"] as? Int ?? 0
         transform.isHorizontallyFlipped = root["horizontalFlip"] as? Bool ?? false
         transform.usesSquareCrop = root["squareCrop"] as? Bool ?? false
