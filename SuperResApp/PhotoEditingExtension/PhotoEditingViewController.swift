@@ -70,22 +70,22 @@ final class PhotoEditingViewController: UIViewController, PHContentEditingContro
             filter?.setValue(inputImage, forKey: kCIInputImageKey)
             filter?.setValue(currentExposure, forKey: kCIInputEVKey)
             guard let rendered = filter?.outputImage,
-                  let cgImage = self.context.createCGImage(rendered, from: rendered.extent.integral),
-                  let destination = CGImageDestinationCreateWithURL(
-                    output.renderedContentURL as CFURL,
-                    UTType.jpeg.identifier as CFString,
-                    1,
-                    nil
-                  ) else {
+                  let pqColorSpace = CGColorSpace(name: CGColorSpace.itur_2100_PQ),
+                  let outputURL = try? output.renderedContentURL(for: .heic) else {
                 DispatchQueue.main.async { completionHandler(nil) }
                 return
             }
-            CGImageDestinationAddImage(destination, cgImage, nil)
-            guard CGImageDestinationFinalize(destination) else {
+            do {
+                try self.context.writeHEIF10Representation(
+                    of: rendered,
+                    to: outputURL,
+                    colorSpace: pqColorSpace,
+                    options: [:]
+                )
+                DispatchQueue.main.async { completionHandler(output) }
+            } catch {
                 DispatchQueue.main.async { completionHandler(nil) }
-                return
             }
-            DispatchQueue.main.async { completionHandler(output) }
         }
     }
 
@@ -98,6 +98,7 @@ final class PhotoEditingViewController: UIViewController, PHContentEditingContro
 
     private func configureEditorUI() {
         imageView.contentMode = .scaleAspectFit
+        imageView.preferredImageDynamicRange = .high
         imageView.translatesAutoresizingMaskIntoConstraints = false
         exposureSlider.translatesAutoresizingMaskIntoConstraints = false
         valueLabel.translatesAutoresizingMaskIntoConstraints = false
