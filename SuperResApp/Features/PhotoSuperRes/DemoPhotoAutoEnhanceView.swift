@@ -665,7 +665,7 @@ struct DemoPhotoAutoEnhanceView: View {
                 do {
                     let asset = try await PhotoKitEditingService.shared.fetchAsset(localIdentifier: identifier)
                     let input = try await PhotoKitEditingService.shared.requestEditingInput(for: asset)
-                    let isNativeRAW = input.uniformTypeIdentifier.flatMap(UTType.init)?.conforms(to: .rawImage) == true
+                    let isNativeRAW = input.uniformTypeIdentifier.flatMap { UTType($0) }?.conforms(to: .rawImage) == true
                     let shouldUseRAW = isNativeRAW || adjustmentDataUsesRAW(input.adjustmentData)
                     if shouldUseRAW && !isNativeRAW {
                         let rawURL = try await PhotoKitEditingService.shared.rawResourceURL(for: asset)
