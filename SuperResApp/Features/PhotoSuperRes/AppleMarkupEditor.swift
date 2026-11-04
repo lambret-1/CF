@@ -9,6 +9,7 @@ struct AppleMarkupEditor: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var drawing = PKDrawing()
+    @State private var drawingScale: CGFloat = 1
 
     var body: some View {
         NavigationStack {
@@ -31,6 +32,12 @@ struct AppleMarkupEditor: View {
                     }
                     .frame(width: fittedSize.width, height: fittedSize.height)
                 }
+                .onAppear {
+                    drawingScale = image.size.width / max(fittedSize.width, 1)
+                }
+                .onChange(of: fittedSize) { _, newSize in
+                    drawingScale = image.size.width / max(newSize.width, 1)
+                }
             }
             .navigationTitle("标注")
             .navigationBarTitleDisplayMode(.inline)
@@ -43,7 +50,7 @@ struct AppleMarkupEditor: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("完成") {
-                        onSave(drawing)
+                        onSave(drawing.transformed(using: CGAffineTransform(scaleX: drawingScale, y: drawingScale)))
                         dismiss()
                     }
                     .disabled(drawing.strokes.isEmpty)
