@@ -120,6 +120,8 @@ actor PhotoKitEditingService {
             sourceForAuxiliaryData = source
         }
         properties[kCGImagePropertyOrientation] = 1
+        properties[kCGImagePropertyPixelWidth] = image.width
+        properties[kCGImagePropertyPixelHeight] = image.height
         CGImageDestinationAddImage(destination, image, properties as CFDictionary)
 
         if let source = sourceForAuxiliaryData,
