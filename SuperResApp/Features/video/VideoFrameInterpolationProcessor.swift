@@ -234,8 +234,34 @@ final class VideoFrameInterpolationProcessor: @unchecked Sendable {
                 throw reader.error ?? FrameInterpolationError.readerStartFailed
             }
             try await finish(writer)
+
+            // 导出完成后读取文件系统中的实际大小，并按成功 append 的帧数统计输出帧数。
+            let outputFrameCount = processedFrames + 1 + aiIntermediateFrames + blendedIntermediateFrames
+            let outputFrameRate = nominalFrameRate.isFinite && nominalFrameRate > 0
+                ? nominalFrameRate * Double(multiplier)
+                : 0
+            let outputDisplaySize = CGSize(width: width, height: height).applying(preferredTransform)
+            let outputWidth = Int(abs(outputDisplaySize.width))
+            let outputHeight = Int(abs(outputDisplaySize.height))
+            let outputFileSize = (try? outputURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
+            let outputFrameRateText = outputFrameRate > 0
+                ? String(format: "%.2f fps", outputFrameRate)
+                : "未知（源视频帧率不可用）"
+
+            await log(
+                """
+                [补帧输出文件]
+                文件：\(outputURL.lastPathComponent)
+                路径：\(outputURL.path)
+                输出分辨率：\(outputWidth) × \(outputHeight)
+                输出帧率：\(outputFrameRateText)
+                输出总帧数：\(outputFrameCount)
+                文件大小：\(Self.formattedFileSize(outputFileSize))
+                RIFE 中间帧：\(aiIntermediateFrames)
+                快速混合帧：\(blendedIntermediateFrames)
+                """
+            )
             await progressHandler(1.0)
-            await log("[补帧完成] RIFE 中间帧 \(aiIntermediateFrames)，快速混合帧 \(blendedIntermediateFrames)")
         } catch {
             audioTask?.cancel()
             reader.cancelReading()
@@ -244,6 +270,14 @@ final class VideoFrameInterpolationProcessor: @unchecked Sendable {
             await log("[补帧失败] \(error.localizedDescription)", isError: true)
             throw error
         }
+    }
+
+    private static func formattedFileSize(_ bytes: Int64) -> String {
+        guard bytes > 0 else { return "读取失败或文件为空" }
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useKB, .useMB, .useGB]
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: bytes)
     }
 
     // MARK: - BZ 原版快速模式：运动检测与帧混合
