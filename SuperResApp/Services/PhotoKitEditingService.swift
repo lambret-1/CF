@@ -1,5 +1,6 @@
 import Foundation
 import Photos
+import CoreImage
 import ImageIO
 import UniformTypeIdentifiers
 import UIKit
@@ -129,6 +130,132 @@ actor PhotoKitEditingService {
         }
     }
 
+    func saveLivePhoto(
+        asset: PHAsset,
+        input: PHContentEditingInput,
+        settings: DemoAdjustmentSettings,
+        filterName: String?,
+        autoEnhance: Bool,
+        transform: DemoImageTransform,
+        adjustmentData: Data
+    ) async throws {
+        guard input.livePhoto != nil,
+              let editingContext = PHLivePhotoEditingContext(livePhotoEditingInput: input) else {
+            throw PhotoKitEditingError.livePhotoUnavailable
+        }
+
+        editingContext.frameProcessor = { frame, _ in
+            var output = frame.image
+            if autoEnhance {
+                for filter in output.autoAdjustmentFilters(options: [:]) {
+                    filter.setValue(output, forKey: kCIInputImageKey)
+                    if let next = filter.outputImage { output = next }
+                }
+            } else if let filterName, let filter = CIFilter(name: filterName) {
+                filter.setValue(output, forKey: kCIInputImageKey)
+                if let next = filter.outputImage { output = next }
+            }
+
+            if abs(settings.exposure) > 0.0001 {
+                let filter = CIFilter.exposureAdjust()
+                filter.inputImage = output
+                filter.ev = Float(settings.exposure)
+                if let next = filter.outputImage { output = next }
+            }
+            if abs(settings.brightness) > 0.0001 ||
+                abs(settings.contrast - 1) > 0.0001 ||
+                abs(settings.saturation - 1) > 0.0001 {
+                let filter = CIFilter.colorControls()
+                filter.inputImage = output
+                filter.brightness = Float(settings.brightness)
+                filter.contrast = Float(settings.contrast)
+                filter.saturation = Float(settings.saturation)
+                if let next = filter.outputImage { output = next }
+            }
+            if abs(settings.highlights) > 0.0001 || abs(settings.shadows) > 0.0001 {
+                let filter = CIFilter(name: "CIHighlightShadowAdjust")
+                filter?.setValue(output, forKey: kCIInputImageKey)
+                filter?.setValue(settings.highlights, forKey: "inputHighlightAmount")
+                filter?.setValue(settings.shadows, forKey: "inputShadowAmount")
+                if let next = filter?.outputImage { output = next }
+            }
+            if abs(settings.temperature - 6500) > 0.5 || abs(settings.tint) > 0.0001 {
+                let filter = CIFilter(name: "CITemperatureAndTint")
+                filter?.setValue(output, forKey: kCIInputImageKey)
+                filter?.setValue(CIVector(x: 6500, y: 0), forKey: "inputNeutral")
+                filter?.setValue(CIVector(x: settings.temperature, y: settings.tint), forKey: "inputTargetNeutral")
+                if let next = filter?.outputImage { output = next }
+            }
+            if abs(settings.sharpness) > 0.0001 {
+                let filter = CIFilter(name: "CISharpenLuminance")
+                filter?.setValue(output, forKey: kCIInputImageKey)
+                filter?.setValue(settings.sharpness, forKey: "inputSharpness")
+                if let next = filter?.outputImage { output = next }
+            }
+            if abs(settings.noiseReduction) > 0.0001 {
+                let filter = CIFilter(name: "CINoiseReduction")
+                filter?.setValue(output, forKey: kCIInputImageKey)
+                filter?.setValue(settings.noiseReduction, forKey: "inputNoiseLevel")
+                filter?.setValue(0.4, forKey: "inputSharpness")
+                if let next = filter?.outputImage { output = next }
+            }
+            if abs(settings.vignette) > 0.0001 {
+                let filter = CIFilter(name: "CIVignette")
+                filter?.setValue(output, forKey: kCIInputImageKey)
+                filter?.setValue(settings.vignette, forKey: "inputIntensity")
+                filter?.setValue(max(output.extent.width, output.extent.height) * 0.75, forKey: "inputRadius")
+                if let next = filter?.outputImage { output = next }
+            }
+
+            let turns = ((transform.quarterTurnsClockwise % 4) + 4) % 4
+            switch turns {
+            case 1: output = output.oriented(.right)
+            case 2: output = output.oriented(.down)
+            case 3: output = output.oriented(.left)
+            default: break
+            }
+            if transform.isHorizontallyFlipped {
+                output = output.oriented(.upMirrored)
+            }
+            if transform.usesSquareCrop {
+                let bounds = output.extent.integral
+                let side = min(bounds.width, bounds.height)
+                output = output.cropped(to: CGRect(
+                    x: bounds.midX - side / 2,
+                    y: bounds.midY - side / 2,
+                    width: side,
+                    height: side
+                ))
+            }
+            return output
+        }
+
+        let output = PHContentEditingOutput(contentEditingInput: input)
+        output.adjustmentData = PHAdjustmentData(
+            formatIdentifier: adjustmentFormatIdentifier,
+            formatVersion: adjustmentFormatVersion,
+            data: adjustmentData
+        )
+
+        try await withCheckedThrowingContinuation { continuation in
+            editingContext.saveLivePhoto(to: output, options: nil) { success, error in
+                guard success else {
+                    continuation.resume(throwing: error ?? PhotoKitEditingError.livePhotoSaveFailed)
+                    return
+                }
+                PHPhotoLibrary.shared().performChanges {
+                    PHAssetChangeRequest(for: asset).contentEditingOutput = output
+                } completionHandler: { saved, saveError in
+                    if saved {
+                        continuation.resume()
+                    } else {
+                        continuation.resume(throwing: saveError ?? PhotoKitEditingError.saveFailed)
+                    }
+                }
+            }
+        }
+    }
+
     func revertToOriginal(asset: PHAsset) async throws {
         try await withCheckedThrowingContinuation { continuation in
             PHPhotoLibrary.shared().performChanges {
@@ -157,6 +284,8 @@ enum PhotoKitEditingError: LocalizedError {
     case outputWriteFailed
     case saveFailed
     case revertFailed
+    case livePhotoUnavailable
+    case livePhotoSaveFailed
 
     var errorDescription: String? {
         switch self {
@@ -168,6 +297,8 @@ enum PhotoKitEditingError: LocalizedError {
         case .outputWriteFailed: return "写入编辑图像失败。"
         case .saveFailed: return "保存照片编辑失败。"
         case .revertFailed: return "恢复照片原始版本失败。"
+        case .livePhotoUnavailable: return "无法创建 Live Photo 编辑会话。"
+        case .livePhotoSaveFailed: return "Live Photo 的图像与视频帧处理失败。"
         }
     }
 }
