@@ -1,6 +1,7 @@
 import Foundation
 import Photos
 import ImageIO
+import CoreImage
 import UniformTypeIdentifiers
 import UIKit
 
