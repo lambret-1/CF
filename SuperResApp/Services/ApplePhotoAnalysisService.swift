@@ -47,6 +47,33 @@ enum ApplePhotoAnalysisService {
         )
     }
 
+    static func perspectiveCorrect(_ image: CIImage) throws -> CIImage? {
+        let request = VNDetectRectanglesRequest()
+        request.maximumObservations = 1
+        request.minimumConfidence = 0.55
+        request.minimumAspectRatio = 0.25
+        request.quadratureTolerance = 25
+        let handler = VNImageRequestHandler(ciImage: image, options: [:])
+        try handler.perform([request])
+        guard let rectangle = request.results?.first else { return nil }
+
+        let bounds = image.extent
+        func point(_ normalized: CGPoint) -> CIVector {
+            CIVector(cgPoint: CGPoint(
+                x: bounds.minX + normalized.x * bounds.width,
+                y: bounds.minY + normalized.y * bounds.height
+            ))
+        }
+
+        let filter = CIFilter(name: "CIPerspectiveCorrection")
+        filter?.setValue(image, forKey: kCIInputImageKey)
+        filter?.setValue(point(rectangle.topLeft), forKey: "inputTopLeft")
+        filter?.setValue(point(rectangle.topRight), forKey: "inputTopRight")
+        filter?.setValue(point(rectangle.bottomLeft), forKey: "inputBottomLeft")
+        filter?.setValue(point(rectangle.bottomRight), forKey: "inputBottomRight")
+        return filter?.outputImage
+    }
+
     static func horizonAngle(for image: UIImage) throws -> CGFloat? {
         guard let cgImage = image.cgImage else {
             throw ApplePhotoAnalysisError.imageUnavailable
