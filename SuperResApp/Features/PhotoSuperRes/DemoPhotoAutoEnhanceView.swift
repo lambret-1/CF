@@ -10,6 +10,7 @@ struct DemoPhotoAutoEnhanceView: View {
     @State private var pickerItem: PhotosPickerItem?
     @State private var selectedAsset: PHAsset?
     @State private var editingInput: PHContentEditingInput?
+    @State private var renderSourceURL: URL?
     @State private var analysisResult: ApplePhotoAnalysisResult?
     @State private var foregroundCutout: UIImage?
     @State private var isExtractingSubject = false
@@ -695,6 +696,7 @@ struct DemoPhotoAutoEnhanceView: View {
             renderToken = UUID()
             selectedAsset = loadedAsset
             editingInput = loadedInput
+            renderSourceURL = loadedInput?.fullSizeImageURL
             originalImage = image
             editedImage = image
             settings = DemoAdjustmentSettings()
@@ -897,7 +899,7 @@ struct DemoPhotoAutoEnhanceView: View {
         let currentFilterName = selectedPreset.filterName
         let currentTransform = imageTransform
         let currentMarkupData = markupData
-        let sourceURL = editingInput?.fullSizeImageURL
+        let sourceURL = renderSourceURL ?? editingInput?.fullSizeImageURL
 
         Task {
             if debounced { try? await Task.sleep(for: .milliseconds(100)) }
@@ -993,6 +995,7 @@ struct DemoPhotoAutoEnhanceView: View {
                     try ApplePhotoAnalysisService.renderRawImage(at: url)
                 }.value
                 pushUndo()
+                renderSourceURL = url
                 originalImage = rawImage
                 editedImage = rawImage
                 renderedCIImage = CIImage(image: rawImage)
@@ -1016,7 +1019,7 @@ struct DemoPhotoAutoEnhanceView: View {
         isExtractingSubject = true
         Task {
             do {
-                let sourceURL = editingInput?.fullSizeImageURL
+                let sourceURL = renderSourceURL ?? editingInput?.fullSizeImageURL
                 foregroundCutout = try await Task.detached(priority: .userInitiated) {
                     try ApplePhotoAnalysisService.foregroundCutout(from: image, sourceURL: sourceURL)
                 }.value
@@ -1035,7 +1038,7 @@ struct DemoPhotoAutoEnhanceView: View {
         isAnalyzing = true
         Task {
             do {
-                let sourceURL = editingInput?.fullSizeImageURL
+                let sourceURL = renderSourceURL ?? editingInput?.fullSizeImageURL
                 let result = try await Task.detached(priority: .userInitiated) {
                     try ApplePhotoAnalysisService.analyze(image, sourceURL: sourceURL)
                 }.value
@@ -1081,6 +1084,7 @@ struct DemoPhotoAutoEnhanceView: View {
                 let image = try await PhotoKitEditingService.shared.originalImage(from: refreshedInput)
                 selectedAsset = refreshedAsset
                 editingInput = refreshedInput
+                renderSourceURL = refreshedInput.fullSizeImageURL
                 originalImage = image
                 editedImage = image
                 settings = DemoAdjustmentSettings()
