@@ -66,6 +66,7 @@ targets:
           - "Models/Builtin/**"
           - "Info.plist"
           - "LiveActivityWidget/**"
+          - "PhotoEditingExtension/**"
     resources:
       - path: SuperResApp/Resources/model_manifest.json
     postBuildScripts:
