@@ -195,7 +195,7 @@ struct DemoPhotoAutoEnhanceView: View {
                             Image(systemName: tab.icon).font(.system(size: 16, weight: .semibold))
                             Text(tab.title).font(.caption.weight(.semibold))
                         }
-                        .foregroundStyle(activeTab == tab ? accent : Color.secondary)
+                        .foregroundStyle(activeTab == tab ? Color.primary : Color.secondary)
                         .frame(maxWidth: .infinity).padding(.vertical, 11)
                         .background(activeTab == tab ? accent.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 12))
                     }
