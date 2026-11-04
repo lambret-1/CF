@@ -1060,21 +1060,6 @@ struct DemoPhotoAutoEnhanceView: View {
         .frame(maxWidth: .infinity)
     }
 
-    private func compositeMarkup(_ drawing: PKDrawing, over image: UIImage) -> UIImage {
-        let bounds = CGRect(origin: .zero, size: image.size)
-        let overlay = drawing.image(from: bounds, scale: image.scale)
-        let renderer = UIGraphicsImageRenderer(size: image.size)
-        return renderer.image { _ in
-            image.draw(in: bounds)
-            overlay.draw(in: bounds)
-        }
-    }
-
-    private func imageWithMarkup(_ image: UIImage, data: Data?) -> UIImage? {
-        guard let data, let drawing = try? PKDrawing(data: data) else { return nil }
-        return compositeMarkup(drawing, over: image)
-    }
-
     private func revertPhotoToOriginal() {
         guard let asset = selectedAsset else { return }
         isSaving = true
