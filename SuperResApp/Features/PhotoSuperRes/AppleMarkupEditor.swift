@@ -5,7 +5,7 @@ import UIKit
 struct AppleMarkupEditor: View {
     let image: UIImage
     let onCancel: () -> Void
-    let onSave: (UIImage) -> Void
+    let onSave: (PKDrawing) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var drawing = PKDrawing()
@@ -33,7 +33,7 @@ struct AppleMarkupEditor: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("完成") {
-                        onSave(compositedImage())
+                        onSave(drawing)
                         dismiss()
                     }
                     .disabled(drawing.strokes.isEmpty)
@@ -42,15 +42,6 @@ struct AppleMarkupEditor: View {
         }
     }
 
-    private func compositedImage() -> UIImage {
-        let bounds = CGRect(origin: .zero, size: image.size)
-        let drawingImage = drawing.image(from: bounds, scale: image.scale)
-        let renderer = UIGraphicsImageRenderer(size: image.size)
-        return renderer.image { _ in
-            image.draw(in: bounds)
-            drawingImage.draw(in: bounds)
-        }
-    }
 }
 
 private struct PencilCanvas: UIViewRepresentable {
