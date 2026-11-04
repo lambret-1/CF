@@ -100,7 +100,7 @@ enum ApplePhotoAnalysisService {
                 kCGImageAuxiliaryDataTypePortraitEffectsMatte
            ) as? [AnyHashable: Any],
            let matte = try? AVPortraitEffectsMatte(fromDictionaryRepresentation: auxiliary),
-           let matteImage = CIImage(portraitEffectsMatte: matte) {
+           let matteImage = CIImage(portaitEffectsMatte: matte) {
             let foreground = CIImage(cgImage: cgImage)
             return makeCutout(foreground: foreground, mask: matteImage, scale: image.scale)
         }
