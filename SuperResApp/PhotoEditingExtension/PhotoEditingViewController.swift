@@ -192,6 +192,8 @@ final class PhotoEditingViewController: UIViewController, PHContentEditingContro
         let presets = DemoPhotoPreset.allCases.filter { $0 != .custom }
         guard presets.indices.contains(sender.selectedSegmentIndex) else { return }
         selectedPreset = presets[sender.selectedSegmentIndex]
+        settings = selectedPreset.settings
+        refreshSliders()
         autoEnhanceEnabled = false
         updatePreview()
     }
