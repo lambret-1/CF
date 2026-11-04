@@ -12,6 +12,7 @@ struct ApplePhotoAnalysisResult {
     let foregroundInstanceCount: Int
     let foregroundMask: CVPixelBuffer?
     let depthData: AVDepthData?
+    let semanticMatteTypes: [String]
 }
 
 /// Uses Apple's Vision, AVFoundation, ImageIO, and Core Image APIs only.
@@ -43,7 +44,8 @@ enum ApplePhotoAnalysisService {
             horizonAngle: horizon.results?.first?.angle,
             foregroundInstanceCount: foregroundObservation?.allInstances.count ?? 0,
             foregroundMask: mask,
-            depthData: sourceURL.flatMap { depthData(from: $0) } ?? depthData(from: image)
+            depthData: sourceURL.flatMap { depthData(from: $0) } ?? depthData(from: image),
+            semanticMatteTypes: sourceURL.map { semanticMatteTypes(from: $0) } ?? []
         )
     }
 
@@ -134,6 +136,32 @@ enum ApplePhotoAnalysisService {
             return nil
         }
         return UIImage(cgImage: rendered, scale: scale, orientation: .up)
+    }
+
+    static func semanticMatteTypes(from sourceURL: URL) -> [String] {
+        guard let source = CGImageSourceCreateWithURL(sourceURL as CFURL, nil) else { return [] }
+        let candidates: [(CFString, String)] = [
+            (kCGImageAuxiliaryDataTypeSemanticSegmentationHairMatte, "头发"),
+            (kCGImageAuxiliaryDataTypeSemanticSegmentationSkinMatte, "皮肤"),
+            (kCGImageAuxiliaryDataTypeSemanticSegmentationSkyMatte, "天空"),
+            (kCGImageAuxiliaryDataTypeSemanticSegmentationTeethMatte, "牙齿"),
+            (kCGImageAuxiliaryDataTypeSemanticSegmentationGlassesMatte, "眼镜"),
+            (kCGImageAuxiliaryDataTypeSemanticSegmentationFaceMatte, "面部")
+        ]
+        return candidates.compactMap { type, name in
+            guard let dictionary = CGImageSourceCopyAuxiliaryDataInfoAtIndex(
+                source,
+                0,
+                type
+            ) as? [AnyHashable: Any],
+            (try? AVSemanticSegmentationMatte(
+                fromImageSourceAuxiliaryDataType: type,
+                dictionaryRepresentation: dictionary
+            )) != nil else {
+                return nil
+            }
+            return name
+        }
     }
 
     static func depthData(from image: UIImage) -> AVDepthData? {
