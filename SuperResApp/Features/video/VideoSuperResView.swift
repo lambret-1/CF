@@ -37,6 +37,7 @@ struct VideoSuperResView: View {
             previewArea
             errorBanner
             Spacer(minLength: 0)
+            processingOptions
             modelMenu
             actionArea
         }
@@ -157,6 +158,29 @@ struct VideoSuperResView: View {
         }
     }
 
+    // MARK: - 处理模式与补帧倍数
+    private var processingOptions: some View {
+        VStack(spacing: 10) {
+            Picker("处理模式", selection: $viewModel.processingMode) {
+                ForEach(VideoProcessingMode.allCases) { mode in
+                    Text(mode.title).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .disabled(!viewModel.state.canEditModel)
+
+            if viewModel.processingMode == .frameInterpolation {
+                Picker("补帧倍数", selection: $viewModel.interpolationMultiplier) {
+                    Text("2 倍帧率").tag(2)
+                    Text("4 倍帧率").tag(4)
+                }
+                .pickerStyle(.segmented)
+                .disabled(!viewModel.state.canEditModel)
+            }
+        }
+        .padding(.horizontal)
+    }
+
     // MARK: - 模型菜单
     private var modelMenu: some View {
         Menu {
@@ -185,7 +209,7 @@ struct VideoSuperResView: View {
                 in: RoundedRectangle(cornerRadius: 10, style: .continuous)
             )
         }
-        .disabled(!viewModel.state.canEditModel)
+        .disabled(!viewModel.state.canEditModel || viewModel.processingMode == .frameInterpolation)
     }
 
     // MARK: - 操作区
@@ -200,7 +224,7 @@ struct VideoSuperResView: View {
                 loadingIndicator("正在加载视频…")
 
             case .videoSelected:
-                Button("开始超分") {
+                Button(viewModel.processingMode == .frameInterpolation ? "开始 AI 补帧" : "开始超分") {
                     Task { await viewModel.startProcessing() }
                 }
                 .buttonStyle(FilledButtonStyle(color: .blue))
@@ -221,7 +245,7 @@ struct VideoSuperResView: View {
 
             case .failed:
                 if viewModel.originalVideoURL != nil {
-                    Button("重试") {
+                    Button(viewModel.processingMode == .frameInterpolation ? "重试补帧" : "重试超分") {
                         Task { await viewModel.startProcessing() }
                     }
                     .buttonStyle(FilledButtonStyle(color: .blue))
