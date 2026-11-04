@@ -122,6 +122,8 @@ kernel void simple_blend(
     constant float &alpha [[buffer(0)]],
     uint2 gid [[thread_position_in_grid]]
 ) {
+    // dispatchThreadgroups 会覆盖到最后一个不完整线程组，必须防止越界读写。
+    if (gid.x >= frame0.get_width() || gid.y >= frame0.get_height()) return;
     float4 c0 = frame0.read(gid);
     float4 c1 = frame1.read(gid);
     float4 result = c0 * alpha + c1 * (1.0 - alpha);
