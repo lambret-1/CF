@@ -8,7 +8,7 @@ struct DemoPhotoAutoEnhanceView: View {
     @State private var editedImage: UIImage?
     @State private var settings = DemoAdjustmentSettings()
     @State private var selectedPreset: DemoPhotoPreset = .original
-    @State private var activeTab: EditorTab = .enhance
+    @State private var activeTab: EditorTab = .adjust
     @State private var compareMode: PreviewMode = .result
     @State private var comparePosition: CGFloat = 0.5
     @State private var autoEnhanceEnabled = false
