@@ -357,6 +357,16 @@ struct DemoPhotoAutoEnhanceView: View {
                         }
                     }
                     if let result = analysisResult {
+                        if result.depthData != nil {
+                            Button {
+                                pushUndo()
+                                imageTransform.usesDepthBlur.toggle()
+                                scheduleRender()
+                            } label: {
+                                Label(imageTransform.usesDepthBlur ? "关闭景深" : "Apple 景深效果", systemImage: "camera.aperture")
+                                    .font(.system(size: 11, weight: .semibold))
+                            }
+                        }
                         HStack(spacing: 14) {
                             analysisMetric("人脸", value: "\(result.faceCount)")
                             analysisMetric("主体", value: "\(result.foregroundInstanceCount)")
@@ -867,7 +877,7 @@ struct DemoPhotoAutoEnhanceView: View {
             if debounced { try? await Task.sleep(for: .milliseconds(100)) }
             guard renderToken == token else { return }
             let result = await Task.detached(priority: .userInitiated) {
-                DemoImageProcessor.render(originalImage, settings: currentSettings, autoEnhance: useAutoEnhance, filterName: currentFilterName, transform: currentTransform)
+                DemoImageProcessor.render(originalImage, settings: currentSettings, autoEnhance: useAutoEnhance, filterName: currentFilterName, transform: currentTransform, sourceURL: sourceURL)
             }.value
             guard renderToken == token else { return }
             let rendered = result ?? originalImage
@@ -917,6 +927,7 @@ struct DemoPhotoAutoEnhanceView: View {
         imageTransform.usesSquareCrop = root["squareCrop"] as? Bool ?? false
         imageTransform.straightenAngle = root["straightenAngle"] as? Double ?? 0
         imageTransform.usesPerspectiveCorrection = root["perspectiveCorrection"] as? Bool ?? false
+        imageTransform.usesDepthBlur = root["depthBlur"] as? Bool ?? false
         if let encodedMarkup = root["markupData"] as? String, !encodedMarkup.isEmpty {
             markupData = Data(base64Encoded: encodedMarkup)
         }
@@ -1054,7 +1065,8 @@ struct DemoPhotoAutoEnhanceView: View {
                         "horizontalFlip": imageTransform.isHorizontallyFlipped,
                         "squareCrop": imageTransform.usesSquareCrop,
                         "straightenAngle": imageTransform.straightenAngle,
-                        "perspectiveCorrection": imageTransform.usesPerspectiveCorrection
+                        "perspectiveCorrection": imageTransform.usesPerspectiveCorrection,
+                        "depthBlur": imageTransform.usesDepthBlur
                     ]
                     let data = try JSONSerialization.data(withJSONObject: adjustment, options: [.sortedKeys])
                     if asset.mediaSubtypes.contains(.photoLive), input.livePhoto != nil {
