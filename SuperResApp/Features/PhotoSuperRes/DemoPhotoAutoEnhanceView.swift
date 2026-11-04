@@ -12,6 +12,7 @@ struct DemoPhotoAutoEnhanceView: View {
     @State private var activeTab: EditorTab = .adjust
     @State private var compareMode: PreviewMode = .result
     @State private var autoEnhanceEnabled = false
+    @State private var preAutoEnhanceSettings: DemoAdjustmentSettings?
     @State private var undoStack: [DemoAdjustmentSettings] = []
     @State private var redoStack: [DemoAdjustmentSettings] = []
     @State private var editingSnapshot: DemoAdjustmentSettings?
@@ -50,7 +51,7 @@ struct DemoPhotoAutoEnhanceView: View {
                         .padding(.bottom, 18)
                 }
             }
-            .padding(.top, 4)
+            .padding(.top, max(geometry.safeAreaInsets.top, 52) + 6)
             .padding(.bottom, max(geometry.safeAreaInsets.bottom, 8))
             .frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
             .background(Color(uiColor: .systemBackground))
@@ -129,8 +130,8 @@ struct DemoPhotoAutoEnhanceView: View {
             .accessibilityLabel("撤销")
             Button { redo() } label: {
                 Image(systemName: "arrow.uturn.forward.circle")
-                    .font(.system(size: 27, weight: .regular))
-                    .frame(width: 48, height: 42)
+                    .font(.system(size: 21, weight: .regular))
+                    .frame(width: 42, height: 38)
             }
             .disabled(redoStack.isEmpty)
             .accessibilityLabel("重做")
@@ -204,18 +205,6 @@ struct DemoPhotoAutoEnhanceView: View {
                                 .padding(.bottom, 10)
                         }
                         .allowsHitTesting(false)
-                    } else {
-                        VStack {
-                            Spacer()
-                            Text("效果")
-                                .font(.system(size: 14, weight: .medium))
-                                .foregroundStyle(.primary)
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 7)
-                                .background(.ultraThinMaterial, in: Capsule())
-                                .padding(.bottom, 10)
-                        }
-                        .allowsHitTesting(false)
                     }
                 } else {
                     ProgressView("正在打开照片…")
@@ -257,10 +246,10 @@ struct DemoPhotoAutoEnhanceView: View {
                                 Image(systemName: control.icon)
                                     .font(.system(size: 19, weight: .regular))
                                     .frame(width: 48, height: 48)
-                                    .background(selectedAdjustment == control ? Color(uiColor: .tertiarySystemFill) : .clear, in: Circle())
-                                    .overlay(Circle().stroke(Color(uiColor: .systemGray4), lineWidth: selectedAdjustment == control ? 0 : 1))
+                                    .background((control == .auto ? autoEnhanceEnabled : selectedAdjustment == control) ? Color(uiColor: .tertiarySystemFill) : .clear, in: Circle())
+                                    .overlay(Circle().stroke(Color(uiColor: .systemGray4), lineWidth: (control == .auto ? autoEnhanceEnabled : selectedAdjustment == control) ? 0 : 1))
                                 Text(control.title)
-                                    .font(.system(size: 11, weight: selectedAdjustment == control ? .semibold : .regular))
+                                    .font(.system(size: 12, weight: (control == .auto ? autoEnhanceEnabled : selectedAdjustment == control) ? .semibold : .regular))
                                     .foregroundStyle(.primary)
                             }
                             .frame(maxWidth: .infinity)
@@ -526,6 +515,7 @@ struct DemoPhotoAutoEnhanceView: View {
             editedImage = image
             settings = DemoAdjustmentSettings()
             selectedPreset = .original
+            preAutoEnhanceSettings = nil
             autoEnhanceEnabled = false
             undoStack.removeAll()
             redoStack.removeAll()
@@ -540,7 +530,10 @@ struct DemoPhotoAutoEnhanceView: View {
     @MainActor
     private func startLiveActivity() async {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
-        if let liveActivity { await liveActivity.end(nil, dismissalPolicy: .immediate) }
+        for activity in Activity<PhotoEditorActivityAttributes>.activities {
+            await activity.end(nil, dismissalPolicy: .immediate)
+        }
+        liveActivity = nil
         let attributes = PhotoEditorActivityAttributes(sessionID: UUID().uuidString)
         let state = PhotoEditorActivityAttributes.ContentState(status: "正在编辑", selectedAction: "compare")
         do {
@@ -577,8 +570,16 @@ struct DemoPhotoAutoEnhanceView: View {
     private func applyAutoEnhance() {
         guard originalImage != nil else { return }
         pushUndo()
-        settings = DemoAdjustmentSettings()
-        autoEnhanceEnabled = true
+        if autoEnhanceEnabled {
+            settings = preAutoEnhanceSettings ?? DemoAdjustmentSettings()
+            preAutoEnhanceSettings = nil
+            autoEnhanceEnabled = false
+            selectedPreset = .custom
+        } else {
+            preAutoEnhanceSettings = settings
+            autoEnhanceEnabled = true
+            selectedPreset = .custom
+        }
         scheduleRender()
     }
 
@@ -586,6 +587,7 @@ struct DemoPhotoAutoEnhanceView: View {
         pushUndo()
         settings = preset.settings
         selectedPreset = preset
+        preAutoEnhanceSettings = nil
         autoEnhanceEnabled = false
         scheduleRender()
     }
@@ -601,6 +603,7 @@ struct DemoPhotoAutoEnhanceView: View {
         redoStack.append(settings)
         settings = previous
         autoEnhanceEnabled = false
+        preAutoEnhanceSettings = nil
         selectedPreset = .custom
         scheduleRender()
     }

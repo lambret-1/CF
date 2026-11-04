@@ -64,8 +64,10 @@ struct PhotoEditorLiveActivityWidget: Widget {
                 DynamicIslandExpandedRegion(.leading) {
                     Image(systemName: "slider.horizontal.3").font(.system(size: 20, weight: .semibold)).foregroundStyle(.mint)
                 }
-                DynamicIslandExpandedRegion(.trailing) {
-                    Text(context.state.status).font(.system(size: 12, weight: .medium)).lineLimit(1).foregroundStyle(.white)
+                DynamicIslandExpandedRegion(.center) {
+                    Text("CF 照片编辑")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.white)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     HStack(spacing: 8) {
@@ -79,7 +81,7 @@ struct PhotoEditorLiveActivityWidget: Widget {
             } compactLeading: {
                 Image(systemName: "slider.horizontal.3").foregroundStyle(.mint)
             } compactTrailing: {
-                Image(systemName: "photo").foregroundStyle(.white)
+                Image(systemName: "photo").font(.system(size: 12)).foregroundStyle(.white)
             } minimal: {
                 Image(systemName: "slider.horizontal.3").foregroundStyle(.mint)
             }
