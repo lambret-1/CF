@@ -281,6 +281,7 @@ struct DemoPhotoAutoEnhanceView: View {
                         .buttonStyle(.plain)
                     }
                     .padding(.horizontal, 10)
+                    }
                 }
                 .frame(height: 70)
                 TickMarkSlider(value: selectedAdjustmentBinding, range: selectedAdjustment.range) { editing in
