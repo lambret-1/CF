@@ -222,6 +222,7 @@ final class PhotoEditingViewController: UIViewController, PHContentEditingContro
         default: break
         }
         selectedPreset = .custom
+        presetControl?.selectedSegmentIndex = UISegmentedControl.noSegment
         autoEnhanceEnabled = false
         updatePreview()
     }
@@ -309,7 +310,7 @@ final class PhotoEditingViewController: UIViewController, PHContentEditingContro
            let preset = DemoPhotoPreset(rawValue: rawPreset) {
             selectedPreset = preset
             let presets = DemoPhotoPreset.allCases.filter { $0 != .custom }
-            presetControl?.selectedSegmentIndex = presets.firstIndex(of: preset) ?? 0
+            presetControl?.selectedSegmentIndex = presets.firstIndex(of: preset) ?? UISegmentedControl.noSegment
         }
         autoEnhanceEnabled = root["autoEnhance"] as? Bool ?? false
         refreshSliders()
