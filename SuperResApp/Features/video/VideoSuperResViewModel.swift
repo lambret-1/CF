@@ -197,7 +197,7 @@ final class VideoSuperResViewModel: ObservableObject {
 
         let gen = generation
         let outputURL = tempDirectory
-            .appendingPathComponent("superres_\(Int(Date().timeIntervalSince1970)).mov")
+            .appendingPathComponent("video_result_\(UUID().uuidString).mov")
         let mode = processingMode
         let modelID = selectedModelID
         let scale = currentScaleFactor
