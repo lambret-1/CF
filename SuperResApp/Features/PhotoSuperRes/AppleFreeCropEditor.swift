@@ -77,6 +77,7 @@ private struct CropSelectionOverlay: View {
                     .stroke(Color.white, lineWidth: 1.5)
                     .frame(width: selection.width, height: selection.height)
                     .position(x: selection.midX, y: selection.midY)
+                    .contentShape(Rectangle())
                     .gesture(
                         DragGesture()
                             .onChanged { value in
