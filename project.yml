@@ -121,6 +121,7 @@ targets:
       - path: SuperResApp/LiveActivityWidget
       - path: SuperResApp/Shared/PhotoEditorActivityAttributes.swift
     info:
+      path: SuperResApp/LiveActivityWidget/Info.plist
       properties:
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
