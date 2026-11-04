@@ -217,8 +217,14 @@ actor ModelCompiler {
             enumerator.skipDescendants()
         }
 
+        let normalizedModelID = modelID
+            .lowercased()
+            .filter { $0.isLetter || $0.isNumber }
         if let match = candidates.first(where: {
-            $0.lastPathComponent.lowercased().contains(modelID.lowercased())
+            let normalizedName = $0.lastPathComponent
+                .lowercased()
+                .filter { $0.isLetter || $0.isNumber }
+            return normalizedName.contains(normalizedModelID)
         }) {
             return match
         }
