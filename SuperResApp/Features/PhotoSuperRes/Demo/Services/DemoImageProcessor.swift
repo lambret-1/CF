@@ -96,7 +96,10 @@ enum DemoImageProcessor {
                 scale: image.scale
             )
             if let overlay = CIImage(image: drawingImage) {
-                let alignedOverlay = overlay.transformed(by: CGAffineTransform(
+                let scaleX = output.extent.width / max(overlay.extent.width, 1)
+                let scaleY = output.extent.height / max(overlay.extent.height, 1)
+                let scaledOverlay = overlay.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
+                let alignedOverlay = scaledOverlay.transformed(by: CGAffineTransform(
                     translationX: output.extent.minX,
                     y: output.extent.minY
                 ))
