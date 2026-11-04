@@ -60,16 +60,23 @@ actor ModelCompiler {
         if let precompiledURL = findCompiledModel(in: tempDir, modelID: modelID) {
             compiledURL = precompiledURL
         } else {
-            guard let packageURL = try findMLPackage(in: tempDir, modelID: modelID) else {
+            let modelSourceURL: URL
+            if let packageURL = try findMLPackage(in: tempDir, modelID: modelID) {
+                modelSourceURL = packageURL
+            } else if let modelURL = findMLModelFile(in: tempDir, modelID: modelID) {
+                // Some archives are mislabeled as .mlmodelc but contain the original
+                // .mlmodel source under Data/. Compile that source for this device.
+                modelSourceURL = modelURL
+            } else {
                 let contents = extractedContentsSummary(in: tempDir)
-                let reason = "解压成功，但未识别到 Core ML 模型目录。解压内容：\(contents)"
+                let reason = "解压成功，但未识别到可加载的 .mlmodelc、.mlpackage 或 .mlmodel。解压内容：\(contents)"
                 await manifestLoader.markFailed(id: modelID, reason: reason)
                 throw CompileError.packageNotFound
             }
             do {
-                compiledURL = try await MLModel.compileModel(at: packageURL)
+                compiledURL = try await MLModel.compileModel(at: modelSourceURL)
             } catch {
-                await manifestLoader.markFailed(id: modelID, reason: "编译失败：\(error.localizedDescription)")
+                await manifestLoader.markFailed(id: modelID, reason: "模型源文件编译失败：\(error.localizedDescription)")
                 throw CompileError.compileFailed(error.localizedDescription)
             }
         }
@@ -200,6 +207,26 @@ actor ModelCompiler {
         } ?? packages.first
     }
 
+    /// 查找 ZIP 中未编译的 .mlmodel 源文件。
+    private func findMLModelFile(in directory: URL, modelID: String) -> URL? {
+        let fileManager = FileManager.default
+        guard let enumerator = fileManager.enumerator(
+            at: directory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else { return nil }
+
+        var models: [URL] = []
+        for case let fileURL as URL in enumerator where fileURL.pathExtension.lowercased() == "mlmodel" {
+            models.append(fileURL)
+        }
+
+        let normalizedID = normalizedName(modelID)
+        return models.first {
+            normalizedName($0.lastPathComponent).contains(normalizedID)
+        } ?? models.first
+    }
+
     /// 查找预编译 Core ML 模型。
     /// 支持标准的 *.mlmodelc 目录，也支持 ZIP 直接打包其内部文件的情况。
     private func findCompiledModel(in directory: URL, modelID: String) -> URL? {
@@ -220,10 +247,9 @@ actor ModelCompiler {
             }
 
             for child in children where isDirectory(child) {
-                if child.pathExtension.lowercased() == "mlmodelc" ||
-                    isCompiledModelBundle(child) {
+                if child.pathExtension.lowercased() == "mlmodelc" && isCompiledModelBundle(child) {
                     candidates.append(child)
-                    // 模型包内部的 Data/ 不是独立模型，不再向下搜索。
+                    // 仅识别包含真实 Core ML 编译产物的目录。
                 } else {
                     pendingDirectories.append(child)
                 }
@@ -256,17 +282,19 @@ actor ModelCompiler {
         guard isDirectory(url) else { return false }
         let fileManager = FileManager.default
 
-        let manifest = url.appendingPathComponent("Manifest.json")
-        let dataDirectory = url.appendingPathComponent("Data", isDirectory: true)
-        if fileManager.fileExists(atPath: manifest.path),
-           isDirectory(dataDirectory) {
-            return true
-        }
-
-        // 兼容其他 Core ML 编译格式。
-        for name in ["model.mil", "model.espresso.net", "coremldata.bin"] {
-            if fileManager.fileExists(atPath: url.appendingPathComponent(name).path) {
-                return true
+        // A Manifest.json + Data/ pair is not sufficient: an .mlpackage
+        // can have the same layout while still containing an uncompiled model.mlmodel.
+        // Only accept directories containing actual compiled Core ML payloads.
+        let compiledNames: Set<String> = ["model.mil", "model.espresso.net", "coremldata.bin"]
+        if let enumerator = fileManager.enumerator(
+            at: url,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) {
+            for case let child as URL in enumerator {
+                if compiledNames.contains(child.lastPathComponent) {
+                    return true
+                }
             }
         }
         return false
