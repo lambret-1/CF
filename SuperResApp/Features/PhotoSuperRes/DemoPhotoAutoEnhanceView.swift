@@ -522,13 +522,16 @@ struct DemoPhotoAutoEnhanceView: View {
             imageTransform = next
             scheduleRender()
         } label: {
+            let isSelected = ratio == nil
+                ? imageTransform.cropRect == nil && imageTransform.cropAspectRatio == nil && !imageTransform.usesSquareCrop
+                : imageTransform.cropAspectRatio == ratio
             Text(title)
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(imageTransform.cropAspectRatio == ratio ? .primary : .secondary)
+                .foregroundStyle(isSelected ? .primary : .secondary)
                 .padding(.horizontal, 9)
                 .padding(.vertical, 6)
                 .background(
-                    imageTransform.cropAspectRatio == ratio ? Color(uiColor: .tertiarySystemFill) : .clear,
+                    isSelected ? Color(uiColor: .tertiarySystemFill) : .clear,
                     in: Capsule()
                 )
         }
