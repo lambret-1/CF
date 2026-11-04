@@ -101,8 +101,7 @@ struct DemoPhotoAutoEnhanceView: View {
                 AppleMarkupEditor(image: image, onCancel: {}, onSave: { drawing in
                     pushUndo()
                     markupData = drawing.dataRepresentation()
-                    editedImage = compositeMarkup(drawing, over: editedImage ?? image)
-                    renderedCIImage = editedImage.flatMap { CIImage(image: $0) }
+                    scheduleRender()
                 })
             }
         }
@@ -900,7 +899,8 @@ struct DemoPhotoAutoEnhanceView: View {
                     autoEnhance: useAutoEnhance,
                     filterName: currentFilterName,
                     transform: currentTransform,
-                    sourceURL: sourceURL
+                    sourceURL: sourceURL,
+                    markupData: currentMarkupData
                 )
             }.value
             guard renderToken == token else { return }
@@ -908,11 +908,7 @@ struct DemoPhotoAutoEnhanceView: View {
             if let result {
                 renderedCIImage = result
                 let preview = DemoImageProcessor.makePreviewImage(from: result, scale: originalImage.scale) ?? originalImage
-                let finalPreview = imageWithMarkup(preview, data: currentMarkupData) ?? preview
-                editedImage = finalPreview
-                if currentMarkupData != nil {
-                    renderedCIImage = CIImage(image: finalPreview)
-                }
+                editedImage = preview
             } else {
                 renderedCIImage = nil
                 editedImage = originalImage
