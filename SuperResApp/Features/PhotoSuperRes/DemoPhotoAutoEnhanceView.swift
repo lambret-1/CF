@@ -98,26 +98,6 @@ struct DemoPhotoAutoEnhanceView: View {
                 DemoShareSheet(items: [image])
             }
         }
-        .sheet(isPresented: $showMarkupEditor) {
-            if let image = editedImage ?? originalImage {
-                AppleMarkupEditor(image: image, onCancel: {}, onSave: { drawing in
-                    pushUndo()
-                    markupData = drawing.dataRepresentation()
-                    scheduleRender()
-                })
-            }
-        }
-        .sheet(isPresented: $showFreeCropEditor) {
-            if let image = editedImage ?? originalImage {
-                AppleFreeCropEditor(image: image, onCancel: {}, onApply: { rect in
-                    pushUndo()
-                    imageTransform.cropRect = rect
-                    imageTransform.cropAspectRatio = nil
-                    imageTransform.usesSquareCrop = false
-                    scheduleRender()
-                })
-            }
-        }
         .onOpenURL { url in
             guard url.scheme == "cfphotoeditor" else { return }
             switch url.host {
@@ -354,6 +334,17 @@ struct DemoPhotoAutoEnhanceView: View {
                             .foregroundStyle(.primary)
                         }
                         .buttonStyle(.plain)
+                        .sheet(isPresented: $showFreeCropEditor) {
+                            if let image = editedImage ?? originalImage {
+                                AppleFreeCropEditor(image: image, onCancel: {}, onApply: { rect in
+                                    pushUndo()
+                                    imageTransform.cropRect = rect
+                                    imageTransform.cropAspectRatio = nil
+                                    imageTransform.usesSquareCrop = false
+                                    scheduleRender()
+                                })
+                            }
+                        }
                         cropTool(imageTransform.usesPerspectiveCorrection ? "取消透视" : "透视", icon: "perspective", action: .perspective)
                         Button {
                             autoStraighten()
@@ -463,6 +454,15 @@ struct DemoPhotoAutoEnhanceView: View {
                         .font(.system(size: 13, weight: .semibold))
                 }
                 .frame(height: 92)
+                .sheet(isPresented: $showMarkupEditor) {
+                    if let image = editedImage ?? originalImage {
+                        AppleMarkupEditor(image: image, onCancel: {}, onSave: { drawing in
+                            pushUndo()
+                            markupData = drawing.dataRepresentation()
+                            scheduleRender()
+                        })
+                    }
+                }
             }
         }
         .padding(.top, 8)
