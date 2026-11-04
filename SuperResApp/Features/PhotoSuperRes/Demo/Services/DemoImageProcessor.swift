@@ -52,7 +52,8 @@ enum DemoImageProcessor {
             sourceImage = nil
         }
 
-        let orientation = sourceURL == nil ? image.imageOrientation.cgImagePropertyOrientation : CGImagePropertyOrientation.up
+        let hasDecodedSourceURL = sourceImage != nil
+        let orientation = hasDecodedSourceURL ? CGImagePropertyOrientation.up : image.imageOrientation.cgImagePropertyOrientation
         let input = sourceImage ?? CIImage(cgImage: cgImage)
         var output = input
 
@@ -81,7 +82,7 @@ enum DemoImageProcessor {
             output = applyManualAdjustments(settings, to: output)
         }
 
-        if sourceURL == nil {
+        if !hasDecodedSourceURL {
             output = output.oriented(orientation)
         }
         output = applyGeometry(transform, to: output)
