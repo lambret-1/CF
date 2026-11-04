@@ -54,6 +54,7 @@ final class PhotoEditingViewController: UIViewController, PHContentEditingContro
 
         let currentSettings = settings
         let currentPreset = selectedPreset
+        let currentTransform = transform
         let useAutoEnhance = autoEnhanceEnabled
         let output = PHContentEditingOutput(contentEditingInput: editingInput)
         guard let adjustmentData = makeAdjustmentData() else {
@@ -72,7 +73,7 @@ final class PhotoEditingViewController: UIViewController, PHContentEditingContro
                 settings: currentSettings,
                 autoEnhance: useAutoEnhance,
                 filterName: currentPreset.filterName,
-                transform: transform,
+                transform: currentTransform,
                 sourceURL: sourceURL
             ),
             let pqColorSpace = CGColorSpace(name: CGColorSpace.itur_2100_PQ),
