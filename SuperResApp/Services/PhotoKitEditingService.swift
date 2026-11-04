@@ -161,6 +161,42 @@ actor PhotoKitEditingService {
         }
     }
 
+    func saveRenderedCIImage(
+        _ image: CIImage,
+        asset: PHAsset,
+        input: PHContentEditingInput,
+        adjustmentData: Data
+    ) async throws {
+        let output = PHContentEditingOutput(contentEditingInput: input)
+        output.adjustmentData = PHAdjustmentData(
+            formatIdentifier: adjustmentFormatIdentifier,
+            formatVersion: adjustmentFormatVersion,
+            data: adjustmentData
+        )
+        let outputURL = try output.renderedContentURL(for: .heic)
+        guard let pqColorSpace = CGColorSpace(name: CGColorSpace.itur_2100_PQ) else {
+            throw PhotoKitEditingError.outputWriteFailed
+        }
+        try CIContext().writeHEIF10Representation(
+            of: image,
+            to: outputURL,
+            colorSpace: pqColorSpace,
+            options: [:]
+        )
+
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            PHPhotoLibrary.shared().performChanges {
+                PHAssetChangeRequest(for: asset).contentEditingOutput = output
+            } completionHandler: { success, error in
+                if success {
+                    continuation.resume()
+                } else {
+                    continuation.resume(throwing: error ?? PhotoKitEditingError.saveFailed)
+                }
+            }
+        }
+    }
+
     func saveLivePhoto(
         asset: PHAsset,
         input: PHContentEditingInput,
