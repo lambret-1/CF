@@ -103,11 +103,11 @@ struct DemoPhotoAutoEnhanceView: View {
 
     private func autoEnhanced(_ image: UIImage) -> UIImage? {
         guard let cgImage = image.cgImage else { return nil }
+        // Apply the UIImage orientation before filtering; Core Image's auto-adjustment
+        // options do not include an imageOrientation key.
         var ciImage = CIImage(cgImage: cgImage)
-        let options: [CIImageAutoAdjustmentOption: Any] = [
-            .imageOrientation: image.imageOrientation.cgImagePropertyOrientation,
-            .crop: false
-        ]
+            .oriented(image.imageOrientation.cgImagePropertyOrientation)
+        let options: [CIImageAutoAdjustmentOption: Any] = [.crop: false]
 
         for filter in ciImage.autoAdjustmentFilters(options: options) {
             filter.setValue(ciImage, forKey: kCIInputImageKey)
@@ -119,7 +119,8 @@ struct DemoPhotoAutoEnhanceView: View {
         guard let output = context.createCGImage(ciImage, from: ciImage.extent) else {
             return nil
         }
-        return UIImage(cgImage: output, scale: image.scale, orientation: image.imageOrientation)
+        // The pixels are already oriented, so return an upright image.
+        return UIImage(cgImage: output, scale: image.scale, orientation: .up)
     }
 }
 
