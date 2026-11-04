@@ -40,7 +40,7 @@ actor PhotoKitEditingService {
     }
 
     func requestEditingInput(for asset: PHAsset) async throws -> PHContentEditingInput {
-        try await withCheckedThrowingContinuation { continuation in
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             let options = PHContentEditingInputRequestOptions()
             options.isNetworkAccessAllowed = true
             asset.requestContentEditingInput(with: options) { input, info in
@@ -118,7 +118,7 @@ actor PhotoKitEditingService {
             throw PhotoKitEditingError.outputWriteFailed
         }
 
-        try await withCheckedThrowingContinuation { continuation in
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             PHPhotoLibrary.shared().performChanges {
                 PHAssetChangeRequest(for: asset).contentEditingOutput = output
             } completionHandler: { success, error in
@@ -246,7 +246,7 @@ actor PhotoKitEditingService {
             data: adjustmentData
         )
 
-        try await withCheckedThrowingContinuation { continuation in
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             editingContext.saveLivePhoto(to: output, options: nil) { success, error in
                 guard success else {
                     continuation.resume(throwing: error ?? PhotoKitEditingError.livePhotoSaveFailed)
@@ -266,7 +266,7 @@ actor PhotoKitEditingService {
     }
 
     func revertToOriginal(asset: PHAsset) async throws {
-        try await withCheckedThrowingContinuation { continuation in
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             PHPhotoLibrary.shared().performChanges {
                 PHAssetChangeRequest(for: asset).revertAssetContentToOriginal()
             } completionHandler: { success, error in
@@ -293,7 +293,7 @@ actor PhotoKitEditingService {
         let options = PHAssetResourceRequestOptions()
         options.isNetworkAccessAllowed = true
 
-        try await withCheckedThrowingContinuation { continuation in
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             PHAssetResourceManager.default().writeData(
                 for: resource,
                 toFile: url,
