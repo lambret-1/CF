@@ -46,11 +46,12 @@ struct AppleLivePhotoPreview: UIViewRepresentable {
             targetSize: CGSize(width: 1600, height: 1600),
             contentMode: .aspectFit,
             options: options
-        ) { livePhoto, info in
+        ) { [weak view] livePhoto, info in
             guard (info?[PHImageCancelledKey] as? Bool) != true,
                   (info?[PHImageErrorKey] as? Error) == nil,
                   let livePhoto else { return }
-            DispatchQueue.main.async {
+            DispatchQueue.main.async { [weak view] in
+                guard let view else { return }
                 view.livePhoto = livePhoto
                 view.startPlayback(with: .hint)
             }
