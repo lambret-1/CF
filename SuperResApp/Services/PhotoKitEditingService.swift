@@ -1,7 +1,6 @@
 import Foundation
 import Photos
 import ImageIO
-import CoreImage
 import UniformTypeIdentifiers
 import UIKit
 
@@ -54,14 +53,11 @@ actor PhotoKitEditingService {
     }
 
     func originalImage(from input: PHContentEditingInput) throws -> UIImage {
-        if let url = input.fullSizeImageURL, let image = UIImage(contentsOfFile: url.path) {
-            return image
+        guard let url = input.fullSizeImageURL,
+              let image = UIImage(contentsOfFile: url.path) else {
+            throw PhotoKitEditingError.originalImageUnavailable
         }
-        if let image = input.fullSizeImage,
-           let cgImage = CIContext().createCGImage(image, from: image.extent) {
-            return UIImage(cgImage: cgImage)
-        }
-        throw PhotoKitEditingError.originalImageUnavailable
+        return image
     }
 
     func resourceTypes(for asset: PHAsset) -> [PHAssetResourceType] {
