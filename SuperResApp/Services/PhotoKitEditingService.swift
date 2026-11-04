@@ -208,6 +208,11 @@ actor PhotoKitEditingService {
                 if let next = filter?.outputImage { output = next }
             }
 
+            if transform.usesPerspectiveCorrection,
+               let corrected = try? ApplePhotoAnalysisService.perspectiveCorrect(output),
+               let corrected {
+                output = corrected
+            }
             if abs(transform.straightenAngle) > 0.0001 {
                 output = output.applyingFilter("CIStraightenFilter", parameters: ["inputAngle": transform.straightenAngle])
             }
