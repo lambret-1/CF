@@ -668,16 +668,23 @@ struct DemoPhotoAutoEnhanceView: View {
                     let isNativeRAW = input.uniformTypeIdentifier.flatMap { UTType($0) }?.conforms(to: .rawImage) == true
                     let shouldUseRAW = isNativeRAW || adjustmentDataUsesRAW(input.adjustmentData)
                     if shouldUseRAW && !isNativeRAW {
-                        let rawURL = try await PhotoKitEditingService.shared.rawResourceURL(for: asset)
-                        loadedImage = try await Task.detached(priority: .userInitiated) {
-                            try ApplePhotoAnalysisService.renderRawImage(at: rawURL)
-                        }.value
-                        loadedSourceURL = rawURL
+                        do {
+                            let rawURL = try await PhotoKitEditingService.shared.rawResourceURL(for: asset)
+                            loadedImage = try await Task.detached(priority: .userInitiated) {
+                                try ApplePhotoAnalysisService.renderRawImage(at: rawURL)
+                            }.value
+                            loadedSourceURL = rawURL
+                            loadedUsesRAW = true
+                        } catch {
+                            loadedImage = try await PhotoKitEditingService.shared.originalImage(from: input)
+                            loadedSourceURL = input.fullSizeImageURL
+                            loadedUsesRAW = false
+                        }
                     } else {
                         loadedImage = try await PhotoKitEditingService.shared.originalImage(from: input)
                         loadedSourceURL = input.fullSizeImageURL
+                        loadedUsesRAW = isNativeRAW
                     }
-                    loadedUsesRAW = shouldUseRAW
                     loadedAsset = asset
                     loadedInput = input
                 } catch {
