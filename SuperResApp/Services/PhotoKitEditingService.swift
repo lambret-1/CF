@@ -271,6 +271,36 @@ actor PhotoKitEditingService {
         }
     }
 
+    func rawResourceURL(for asset: PHAsset) async throws -> URL {
+        guard let resource = PHAssetResource.assetResources(for: asset).first(where: {
+            guard let type = UTType($0.uniformTypeIdentifier) else { return false }
+            return type.conforms(to: .rawImage)
+        }) else {
+            throw PhotoKitEditingError.rawResourceUnavailable
+        }
+
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CF-RAW-\(UUID().uuidString)")
+            .appendingPathExtension(UTType(resource.uniformTypeIdentifier)?.preferredFilenameExtension ?? "dng")
+        let options = PHAssetResourceRequestOptions()
+        options.isNetworkAccessAllowed = true
+
+        try await withCheckedThrowingContinuation { continuation in
+            PHAssetResourceManager.default().writeData(
+                for: resource,
+                toFile: url,
+                options: options
+            ) { error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume()
+                }
+            }
+        }
+        return url
+    }
+
     func originalResources(for asset: PHAsset) -> [PHAssetResource] {
         PHAssetResource.assetResources(for: asset)
     }
@@ -287,6 +317,7 @@ enum PhotoKitEditingError: LocalizedError {
     case revertFailed
     case livePhotoUnavailable
     case livePhotoSaveFailed
+    case rawResourceUnavailable
 
     var errorDescription: String? {
         switch self {
@@ -300,6 +331,7 @@ enum PhotoKitEditingError: LocalizedError {
         case .revertFailed: return "恢复照片原始版本失败。"
         case .livePhotoUnavailable: return "无法创建 Live Photo 编辑会话。"
         case .livePhotoSaveFailed: return "Live Photo 的图像与视频帧处理失败。"
+        case .rawResourceUnavailable: return "照片图库中没有可读取的 RAW 原始资源。"
         }
     }
 }
