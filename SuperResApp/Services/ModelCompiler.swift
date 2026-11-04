@@ -53,19 +53,22 @@ actor ModelCompiler {
             throw CompileError.unzipFailed(error.localizedDescription)
         }
 
-        // 2. 查找 .mlpackage 目录
-        guard let packageURL = try findMLPackage(in: tempDir, modelID: modelID) else {
-            await manifestLoader.markFailed(id: modelID, reason: "未找到 .mlpackage 目录")
-            throw CompileError.packageNotFound
-        }
-
-        // 3. 编译模型
+        // 2. 优先识别预编译 .mlmodelc（RIFE Release 提供预编译模型）。
+        //    其他模型仍走 .mlpackage 编译流程，保持原有兼容性。
         let compiledURL: URL
-        do {
-            compiledURL = try await MLModel.compileModel(at: packageURL)
-        } catch {
-            await manifestLoader.markFailed(id: modelID, reason: "编译失败：\(error.localizedDescription)")
-            throw CompileError.compileFailed(error.localizedDescription)
+        if let precompiledURL = findCompiledModel(in: tempDir, modelID: modelID) {
+            compiledURL = precompiledURL
+        } else {
+            guard let packageURL = try findMLPackage(in: tempDir, modelID: modelID) else {
+                await manifestLoader.markFailed(id: modelID, reason: "未找到 .mlmodelc 或 .mlpackage 目录")
+                throw CompileError.packageNotFound
+            }
+            do {
+                compiledURL = try await MLModel.compileModel(at: packageURL)
+            } catch {
+                await manifestLoader.markFailed(id: modelID, reason: "编译失败：\(error.localizedDescription)")
+                throw CompileError.compileFailed(error.localizedDescription)
+            }
         }
 
         // 4. 移动到 Application Support/Models/
@@ -193,6 +196,33 @@ actor ModelCompiler {
         }
 
         return packages.first
+    }
+
+    /// 查找 ZIP 中的预编译 Core ML 模型目录。
+    private func findCompiledModel(in directory: URL, modelID: String) -> URL? {
+        let fileManager = FileManager.default
+        guard let enumerator = fileManager.enumerator(
+            at: directory,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else { return nil }
+
+        var candidates: [URL] = []
+        for case let fileURL as URL in enumerator {
+            guard fileURL.pathExtension == "mlmodelc",
+                  (try? fileURL.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else {
+                continue
+            }
+            candidates.append(fileURL)
+            enumerator.skipDescendants()
+        }
+
+        if let match = candidates.first(where: {
+            $0.lastPathComponent.lowercased().contains(modelID.lowercased())
+        }) {
+            return match
+        }
+        return candidates.count == 1 ? candidates.first : nil
     }
 
     /// 查找 SinSR 子模型包
