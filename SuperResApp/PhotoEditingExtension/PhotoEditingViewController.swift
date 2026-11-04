@@ -12,6 +12,7 @@ final class PhotoEditingViewController: UIViewController, PHContentEditingContro
     private var settings = DemoAdjustmentSettings()
     private var selectedPreset: DemoPhotoPreset = .original
     private var autoEnhanceEnabled = false
+    private var transform = DemoImageTransform()
 
     private let imageView = UIImageView()
     private let scrollView = UIScrollView()
@@ -25,7 +26,12 @@ final class PhotoEditingViewController: UIViewController, PHContentEditingContro
     }
 
     func canHandle(_ adjustmentData: PHAdjustmentData) -> Bool {
-        adjustmentData.formatIdentifier == formatIdentifier
+        guard adjustmentData.formatIdentifier == formatIdentifier,
+              let root = try? JSONSerialization.jsonObject(with: adjustmentData.data) as? [String: Any] else {
+            return false
+        }
+        let markup = root["markupData"] as? String ?? ""
+        return markup.isEmpty
     }
 
     func startContentEditing(
@@ -66,6 +72,7 @@ final class PhotoEditingViewController: UIViewController, PHContentEditingContro
                 settings: currentSettings,
                 autoEnhance: useAutoEnhance,
                 filterName: currentPreset.filterName,
+                transform: transform,
                 sourceURL: sourceURL
             ),
             let pqColorSpace = CGColorSpace(name: CGColorSpace.itur_2100_PQ),
@@ -214,6 +221,7 @@ final class PhotoEditingViewController: UIViewController, PHContentEditingContro
                 settings: settings,
                 autoEnhance: autoEnhanceEnabled,
                 filterName: selectedPreset.filterName,
+                transform: transform,
                 sourceURL: editingInput?.fullSizeImageURL
               ),
               let preview = DemoImageProcessor.makePreviewImage(from: rendered) else {
@@ -240,7 +248,15 @@ final class PhotoEditingViewController: UIViewController, PHContentEditingContro
                 "vignette": settings.vignette
             ],
             "preset": selectedPreset.rawValue,
-            "autoEnhance": autoEnhanceEnabled
+            "autoEnhance": autoEnhanceEnabled,
+            "rotation": transform.quarterTurnsClockwise,
+            "horizontalFlip": transform.isHorizontallyFlipped,
+            "squareCrop": transform.usesSquareCrop,
+            "straightenAngle": transform.straightenAngle,
+            "perspectiveCorrection": transform.usesPerspectiveCorrection,
+            "depthBlur": transform.usesDepthBlur,
+            "cropAspectRatio": transform.cropAspectRatio ?? 0,
+            "cropRect": transform.cropRect.map { [$0.origin.x, $0.origin.y, $0.size.width, $0.size.height] } ?? []
         ]
         return try? JSONSerialization.data(withJSONObject: values, options: [.sortedKeys])
     }
@@ -269,5 +285,16 @@ final class PhotoEditingViewController: UIViewController, PHContentEditingContro
             presetControl?.selectedSegmentIndex = presets.firstIndex(of: preset) ?? 0
         }
         autoEnhanceEnabled = root["autoEnhance"] as? Bool ?? false
+        transform.quarterTurnsClockwise = root["rotation"] as? Int ?? 0
+        transform.isHorizontallyFlipped = root["horizontalFlip"] as? Bool ?? false
+        transform.usesSquareCrop = root["squareCrop"] as? Bool ?? false
+        transform.straightenAngle = root["straightenAngle"] as? Double ?? 0
+        transform.usesPerspectiveCorrection = root["perspectiveCorrection"] as? Bool ?? false
+        transform.usesDepthBlur = root["depthBlur"] as? Bool ?? false
+        let ratio = root["cropAspectRatio"] as? Double ?? 0
+        transform.cropAspectRatio = ratio > 0 ? ratio : nil
+        if let crop = root["cropRect"] as? [Double], crop.count == 4 {
+            transform.cropRect = CGRect(x: crop[0], y: crop[1], width: crop[2], height: crop[3])
+        }
     }
 }
