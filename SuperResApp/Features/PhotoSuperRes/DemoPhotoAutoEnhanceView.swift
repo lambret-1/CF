@@ -1,6 +1,7 @@
 import SwiftUI
 import PhotosUI
 import UIKit
+import CoreImage
 import ActivityKit
 import Photos
 import PencilKit
