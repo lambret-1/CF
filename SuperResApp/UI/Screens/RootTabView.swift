@@ -25,7 +25,7 @@ struct RootTabView: View {
 
     var body: some View {
         TabView(selection: $selectedTab) {
-            PhotoSuperResView()
+            PhotoEntryView()
                 .tabItem {
                     Label(Tab.photo.rawValue, systemImage: Tab.photo.icon)
                 }
