@@ -8,6 +8,7 @@ struct DemoPhotoAutoEnhanceView: View {
     @State private var originalImage: UIImage?
     @State private var editedImage: UIImage?
     @State private var settings = DemoAdjustmentSettings()
+    @State private var imageTransform = DemoImageTransform.identity
     @State private var selectedPreset: DemoPhotoPreset = .original
     @State private var activeTab: EditorTab = .adjust
     @State private var compareMode: PreviewMode = .result
@@ -284,10 +285,10 @@ struct DemoPhotoAutoEnhanceView: View {
                 .frame(height: 82)
             } else if activeTab == .crop {
                 HStack(spacing: 30) {
-                    cropTool("自由", icon: "crop")
-                    cropTool("旋转", icon: "rotate.right")
-                    cropTool("翻转", icon: "arrow.left.and.right.righttriangle.left.righttriangle.right")
-                    cropTool("比例", icon: "aspectratio")
+                    cropTool("还原", icon: "crop", action: .reset)
+                    cropTool("旋转", icon: "rotate.right", action: .rotate)
+                    cropTool("翻转", icon: "arrow.left.and.right.righttriangle.left.righttriangle.right", action: .flip)
+                    cropTool(imageTransform.usesSquareCrop ? "原比例" : "正方形", icon: "aspectratio", action: .toggleSquare)
                 }
                 .frame(height: 78)
             } else {
@@ -322,9 +323,19 @@ struct DemoPhotoAutoEnhanceView: View {
         )
     }
 
-    private func cropTool(_ title: String, icon: String) -> some View {
+    private func cropTool(_ title: String, icon: String, action: CropAction) -> some View {
         Button {
-            alertMessage = "\(title)工具将在裁剪引擎接入阶段启用。"
+            var next = imageTransform
+            switch action {
+            case .reset: next = .identity
+            case .rotate: next.quarterTurnsClockwise = (next.quarterTurnsClockwise + 1) % 4
+            case .flip: next.isHorizontallyFlipped.toggle()
+            case .toggleSquare: next.usesSquareCrop.toggle()
+            }
+            guard next != imageTransform else { return }
+            pushUndo()
+            imageTransform = next
+            scheduleRender()
         } label: {
             VStack(spacing: 6) {
                 Image(systemName: icon).font(.system(size: 22))
@@ -493,7 +504,7 @@ struct DemoPhotoAutoEnhanceView: View {
     }
 
     private var hasChanges: Bool {
-        originalImage != nil && (settings != DemoAdjustmentSettings() || autoEnhanceEnabled || selectedPreset.filterName != nil)
+        originalImage != nil && (settings != DemoAdjustmentSettings() || autoEnhanceEnabled || selectedPreset.filterName != nil || imageTransform != .identity)
     }
 
     private var isCompleteEnabled: Bool {
@@ -521,6 +532,7 @@ struct DemoPhotoAutoEnhanceView: View {
             originalImage = image
             editedImage = image
             settings = DemoAdjustmentSettings()
+            imageTransform = .identity
             selectedPreset = .original
             autoEnhanceBaseSettings = nil
             autoEnhanceBasePreset = nil
@@ -635,7 +647,8 @@ struct DemoPhotoAutoEnhanceView: View {
             selectedPreset: preset,
             autoEnhanceEnabled: false,
             autoEnhanceBaseSettings: nil,
-            autoEnhanceBasePreset: nil
+            autoEnhanceBasePreset: nil,
+            imageTransform: imageTransform
         )
         guard next != captureSnapshot() else { return }
         pushUndo()
@@ -648,7 +661,8 @@ struct DemoPhotoAutoEnhanceView: View {
             selectedPreset: selectedPreset,
             autoEnhanceEnabled: autoEnhanceEnabled,
             autoEnhanceBaseSettings: autoEnhanceBaseSettings,
-            autoEnhanceBasePreset: autoEnhanceBasePreset
+            autoEnhanceBasePreset: autoEnhanceBasePreset,
+            imageTransform: imageTransform
         )
     }
 
@@ -658,6 +672,7 @@ struct DemoPhotoAutoEnhanceView: View {
         autoEnhanceEnabled = snapshot.autoEnhanceEnabled
         autoEnhanceBaseSettings = snapshot.autoEnhanceBaseSettings
         autoEnhanceBasePreset = snapshot.autoEnhanceBasePreset
+        imageTransform = snapshot.imageTransform
         scheduleRender()
     }
 
@@ -683,7 +698,17 @@ struct DemoPhotoAutoEnhanceView: View {
     }
 
     private func resetEdits() {
-        applyPreset(.original)
+        let next = DemoEditorSnapshot(
+            settings: DemoAdjustmentSettings(),
+            selectedPreset: .original,
+            autoEnhanceEnabled: false,
+            autoEnhanceBaseSettings: nil,
+            autoEnhanceBasePreset: nil,
+            imageTransform: .identity
+        )
+        guard next != captureSnapshot() else { return }
+        pushUndo()
+        restoreSnapshot(next)
         compareMode = .result
     }
 
@@ -695,7 +720,8 @@ struct DemoPhotoAutoEnhanceView: View {
         let currentSettings = settings
         let useAutoEnhance = autoEnhanceEnabled
         let currentFilterName = selectedPreset.filterName
-        if currentSettings == DemoAdjustmentSettings() && !useAutoEnhance && currentFilterName == nil {
+        let currentTransform = imageTransform
+        if currentSettings == DemoAdjustmentSettings() && !useAutoEnhance && currentFilterName == nil && currentTransform == .identity {
             editedImage = originalImage
             isProcessing = false
             return
@@ -704,7 +730,7 @@ struct DemoPhotoAutoEnhanceView: View {
             if debounced { try? await Task.sleep(for: .milliseconds(100)) }
             guard renderToken == token else { return }
             let result = await Task.detached(priority: .userInitiated) {
-                DemoImageProcessor.render(originalImage, settings: currentSettings, autoEnhance: useAutoEnhance, filterName: currentFilterName)
+                DemoImageProcessor.render(originalImage, settings: currentSettings, autoEnhance: useAutoEnhance, filterName: currentFilterName, transform: currentTransform)
             }.value
             guard renderToken == token else { return }
             editedImage = result ?? originalImage
@@ -735,7 +761,10 @@ private struct DemoEditorSnapshot: Equatable {
     let autoEnhanceEnabled: Bool
     let autoEnhanceBaseSettings: DemoAdjustmentSettings?
     let autoEnhanceBasePreset: DemoPhotoPreset?
+    let imageTransform: DemoImageTransform
 }
+
+private enum CropAction { case reset, rotate, flip, toggleSquare }
 
 private enum PreviewMode { case result, original }
 
