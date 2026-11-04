@@ -20,30 +20,34 @@ struct DemoPhotoAutoEnhanceView: View {
     @State private var isSaving = false
     @State private var alertMessage: String?
     @State private var showShareSheet = false
+    @State private var selectedAdjustment: AdjustmentControl = .exposure
+    @Environment(\.dismiss) private var dismiss
 
     private let accent = Color(red: 0.43, green: 0.78, blue: 0.68)
 
     var body: some View {
         VStack(spacing: 0) {
-            toolbar
-            ScrollView(showsIndicators: false) {
-                VStack(spacing: 20) {
-                    preview
-                    if originalImage == nil { welcome }
-                    else { editor }
-                }
-                .padding(.horizontal, 18)
-                .padding(.top, 12)
-                .padding(.bottom, 22)
+            navigationBar
+            if originalImage != nil { quickToolbar }
+            preview
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(.horizontal, 8)
+            if originalImage != nil {
+                parameterPanel
+                editorTabBar
+            } else {
+                welcome
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 20)
             }
         }
-        .background(Color(uiColor: .systemGroupedBackground))
+        .background(Color(uiColor: .systemBackground))
         .toolbar(.hidden, for: .navigationBar)
         .onChange(of: pickerItem) { _, item in
             guard let item else { return }
             Task { await loadPhoto(item) }
         }
-        .alert("照片工作室", isPresented: Binding(
+        .alert("照片编辑", isPresented: Binding(
             get: { alertMessage != nil },
             set: { if !$0 { alertMessage = nil } }
         )) {
@@ -58,152 +62,286 @@ struct DemoPhotoAutoEnhanceView: View {
         }
     }
 
-    private var toolbar: some View {
-        HStack(spacing: 17) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("PHOTO STUDIO")
-                    .font(.system(size: 12, weight: .black, design: .rounded))
-                    .tracking(2)
-                Text("智能照片编辑")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 8)
-            if originalImage != nil {
-                PhotosPicker(selection: $pickerItem, matching: .images) {
-                    Image(systemName: "photo.badge.plus")
-                        .font(.system(size: 17, weight: .medium))
-                        .frame(width: 36, height: 36)
-                        .contentShape(Rectangle())
+    private var navigationBar: some View {
+        HStack {
+            Button("取消") {
+                if settings != DemoAdjustmentSettings() || selectedPreset != .original {
+                    alertMessage = "已退出照片编辑。未保存的修改不会写入相册。"
                 }
-                .accessibilityLabel("更换照片")
-
-                Button { saveToPhotos() } label: {
-                    if isSaving {
-                        ProgressView()
-                            .frame(width: 36, height: 36)
-                    } else {
-                        Image(systemName: "square.and.arrow.down")
-                            .font(.system(size: 17, weight: .medium))
-                            .frame(width: 36, height: 36)
-                            .contentShape(Rectangle())
-                    }
-                }
-                .disabled(isSaving)
-                .accessibilityLabel("保存照片")
+                dismiss()
             }
+            .font(.system(size: 16, weight: .medium))
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 17)
+            .padding(.vertical, 8)
+            .background(Color(uiColor: .tertiarySystemFill), in: Capsule())
+            Spacer()
+            Button("完成") {
+                saveToPhotos()
+            }
+            .font(.system(size: 16, weight: .semibold))
+            .foregroundStyle(originalImage == nil ? .secondary : Color.black.opacity(0.65))
+            .padding(.horizontal, 19)
+            .padding(.vertical, 8)
+            .background(originalImage == nil ? Color(uiColor: .tertiarySystemFill) : Color(red: 1.0, green: 0.88, blue: 0.48), in: Capsule())
+            .disabled(originalImage == nil || isSaving)
         }
-        .font(.system(size: 17, weight: .medium))
         .padding(.horizontal, 20)
-        .padding(.vertical, 12)
-        .background(.bar)
+        .padding(.top, 8)
+        .padding(.bottom, 10)
+    }
+
+    private var quickToolbar: some View {
+        HStack(spacing: 0) {
+            Button { undo() } label: {
+                Image(systemName: "arrow.uturn.backward.circle")
+                    .font(.system(size: 27, weight: .regular))
+                    .frame(width: 48, height: 42)
+            }
+            .disabled(undoStack.isEmpty)
+            .accessibilityLabel("撤销")
+            Button { redo() } label: {
+                Image(systemName: "arrow.uturn.forward.circle")
+                    .font(.system(size: 27, weight: .regular))
+                    .frame(width: 48, height: 42)
+            }
+            .disabled(redoStack.isEmpty)
+            .accessibilityLabel("重做")
+            Spacer(minLength: 8)
+            Text(activeTab.title)
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 8)
+            Button {
+                compareMode = compareMode == .original ? .result : .original
+            } label: {
+                Image(systemName: compareMode == .original ? "eye" : "eye.slash")
+                    .font(.system(size: 25))
+                    .frame(width: 46, height: 42)
+            }
+            .accessibilityLabel("查看原图")
+            Button { showShareSheet = true } label: {
+                Image(systemName: "pencil.tip.crop.circle")
+                    .font(.system(size: 25))
+                    .frame(width: 46, height: 42)
+            }
+            .accessibilityLabel("标记")
+            Menu {
+                Button("重置所有调整", systemImage: "arrow.counterclockwise") { resetEdits() }
+                Button("更换照片", systemImage: "photo") { pickerItem = nil }
+                Button("分享照片", systemImage: "square.and.arrow.up") { showShareSheet = true }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .font(.system(size: 26))
+                    .frame(width: 42, height: 42)
+            }
+            .accessibilityLabel("更多操作")
+        }
+        .foregroundStyle(Color(uiColor: .secondaryLabel))
+        .padding(.horizontal, 18)
+        .padding(.bottom, 8)
     }
 
     private var preview: some View {
-        VStack(spacing: 11) {
+        GeometryReader { geo in
             ZStack {
-                RoundedRectangle(cornerRadius: 23, style: .continuous)
-                    .fill(Color(red: 0.10, green: 0.12, blue: 0.13))
+                Color(uiColor: .systemBackground)
                 if let originalImage {
-                    GeometryReader { geo in
-                        ZStack(alignment: .leading) {
-                            Image(uiImage: compareMode == .original ? originalImage : (editedImage ?? originalImage))
-                                .resizable().scaledToFit()
-                                .frame(width: geo.size.width, height: geo.size.height)
-                            if compareMode == .compare {
-                                Image(uiImage: originalImage)
-                                    .resizable().scaledToFit()
-                                    .frame(width: geo.size.width, height: geo.size.height)
-                                    .mask(alignment: .leading) {
-                                        Rectangle().frame(width: geo.size.width * comparePosition)
-                                    }
-                                Rectangle()
-                                    .fill(.white)
-                                    .frame(width: 2)
-                                    .overlay {
-                                        Image(systemName: "arrow.left.and.right")
-                                            .font(.system(size: 10, weight: .bold))
-                                            .foregroundStyle(.black)
-                                            .padding(7)
-                                            .background(.white, in: Circle())
-                                    }
-                                    .position(x: geo.size.width * comparePosition, y: geo.size.height / 2)
+                    let displayImage = compareMode == .original ? originalImage : (editedImage ?? originalImage)
+                    Image(uiImage: displayImage)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: geo.size.width, height: geo.size.height)
+                    if compareMode == .compare {
+                        Image(uiImage: originalImage)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: geo.size.width, height: geo.size.height)
+                            .mask(alignment: .leading) {
+                                Rectangle().frame(width: geo.size.width * comparePosition)
                             }
-                        }
-                        .contentShape(Rectangle())
-                        .gesture(DragGesture(minimumDistance: 0).onChanged { value in
-                            guard compareMode == .compare else { return }
-                            comparePosition = min(max(value.location.x / max(geo.size.width, 1), 0.03), 0.97)
-                        })
+                        Rectangle()
+                            .fill(.white)
+                            .frame(width: 2)
+                            .overlay {
+                                Image(systemName: "arrow.left.and.right")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(.black)
+                                    .padding(7)
+                                    .background(.white, in: Circle())
+                            }
+                            .position(x: geo.size.width * comparePosition, y: geo.size.height / 2)
                     }
-                    .padding(5)
+                    if isProcessing {
+                        VStack {
+                            Spacer()
+                            ProgressView("正在处理…")
+                                .padding(.horizontal, 14).padding(.vertical, 9)
+                                .background(.ultraThinMaterial, in: Capsule())
+                            Spacer().frame(height: 12)
+                        }
+                    }
                 } else {
-                    VStack(spacing: 13) {
-                        Image(systemName: "photo.on.rectangle.angled")
-                            .font(.system(size: 43, weight: .light)).foregroundStyle(accent)
-                        Text("让每一张照片，都值得珍藏")
-                            .font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
-                        Text("导入照片，开始你的创作")
-                            .font(.system(size: 12)).foregroundStyle(.white.opacity(0.55))
-                    }
-                }
-                if isProcessing {
-                    VStack {
-                        Spacer()
-                        HStack(spacing: 8) {
-                            ProgressView().tint(.white)
-                            Text("正在渲染预览…").font(.caption.weight(.medium)).foregroundStyle(.white)
+                    VStack(spacing: 12) {
+                        Image(systemName: "photo")
+                            .font(.system(size: 42, weight: .light))
+                            .foregroundStyle(.secondary)
+                        Text("选择照片开始编辑")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundStyle(.secondary)
+                        PhotosPicker(selection: $pickerItem, matching: .images) {
+                            Text("打开照片")
+                                .font(.system(size: 15, weight: .semibold))
+                                .padding(.horizontal, 22).padding(.vertical, 11)
+                                .background(Color(uiColor: .label), in: Capsule())
+                                .foregroundStyle(Color(uiColor: .systemBackground))
                         }
-                        .padding(.horizontal, 14).padding(.vertical, 9)
-                        .background(.black.opacity(0.68), in: Capsule())
-                        .padding(.bottom, 15)
                     }
                 }
             }
-            .aspectRatio(4 / 3, contentMode: .fit)
-            .overlay(alignment: .topLeading) {
-                if originalImage != nil {
-                    Text(compareMode == .original ? "原图" : (compareMode == .compare ? "前后对比" : "编辑效果"))
-                        .font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
-                        .padding(.horizontal, 10).padding(.vertical, 7)
-                        .background(.black.opacity(0.55), in: Capsule()).padding(15)
-                }
-            }
-            if originalImage != nil {
-                HStack(spacing: 7) {
-                    previewModeButton("效果", mode: .result, icon: "sparkles")
-                    previewModeButton("原图", mode: .original, icon: "photo")
-                    previewModeButton("对比", mode: .compare, icon: "slider.horizontal.3")
-                    Spacer(minLength: 4)
-                    Button { undo() } label: {
-                        Image(systemName: "arrow.uturn.backward")
-                            .font(.system(size: 14, weight: .semibold))
-                            .frame(width: 32, height: 32)
-                            .contentShape(Rectangle())
-                    }
-                    .disabled(undoStack.isEmpty)
-                    .accessibilityLabel("撤销")
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+                guard compareMode == .compare else { return }
+                comparePosition = min(max(value.location.x / max(geo.size.width, 1), 0.03), 0.97)
+            })
+        }
+        .clipped()
+    }
 
-                    Button { redo() } label: {
-                        Image(systemName: "arrow.uturn.forward")
-                            .font(.system(size: 14, weight: .semibold))
-                            .frame(width: 32, height: 32)
-                            .contentShape(Rectangle())
+    private var parameterPanel: some View {
+        VStack(spacing: 13) {
+            if activeTab == .adjust {
+                HStack(spacing: 0) {
+                    ForEach(AdjustmentControl.allCases) { control in
+                        Button {
+                            if control == .auto { applyAutoEnhance() }
+                            else { selectedAdjustment = control }
+                        } label: {
+                            VStack(spacing: 5) {
+                                Image(systemName: control.icon)
+                                    .font(.system(size: 22, weight: .regular))
+                                    .frame(width: 62, height: 62)
+                                    .background(selectedAdjustment == control ? Color(uiColor: .tertiarySystemFill) : .clear, in: Circle())
+                                    .overlay(Circle().stroke(Color(uiColor: .tertiaryLabel).opacity(selectedAdjustment == control ? 0 : 0.65), lineWidth: 1.5))
+                                Text(control.title)
+                                    .font(.system(size: 10, weight: selectedAdjustment == control ? .semibold : .regular))
+                            }
+                            .foregroundStyle(.primary)
+                            .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .disabled(redoStack.isEmpty)
-                    .accessibilityLabel("重做")
-
-                    Button { resetEdits() } label: {
-                        Image(systemName: "arrow.counterclockwise")
-                            .font(.system(size: 14, weight: .semibold))
-                            .frame(width: 32, height: 32)
-                            .contentShape(Rectangle())
-                    }
-                    .disabled(originalImage == nil)
-                    .accessibilityLabel("重置")
                 }
+                .padding(.horizontal, 8)
+                Slider(value: selectedAdjustmentBinding, in: selectedAdjustment.range)
+                    .tint(.primary)
+                    .padding(.horizontal, 26)
+                    .accessibilityLabel(selectedAdjustment.title)
+                Text(selectedAdjustment.title)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+            } else if activeTab == .filters {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        ForEach(DemoPhotoPreset.allCases.filter { $0 != .custom }) { preset in
+                            Button { applyPreset(preset) } label: {
+                                VStack(spacing: 7) {
+                                    RoundedRectangle(cornerRadius: 13)
+                                        .fill(preset.tint.opacity(0.22))
+                                        .frame(width: 58, height: 58)
+                                        .overlay(Image(systemName: preset.icon).font(.system(size: 21)).foregroundStyle(preset.tint))
+                                        .overlay(RoundedRectangle(cornerRadius: 13).stroke(selectedPreset == preset ? Color.primary : .clear, lineWidth: 2))
+                                    Text(preset.title).font(.system(size: 10, weight: .medium)).foregroundStyle(.primary)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 18)
+                }
+                .frame(height: 88)
+            } else if activeTab == .crop {
+                HStack(spacing: 25) {
+                    cropTool("自由", icon: "crop")
+                    cropTool("旋转", icon: "rotate.right")
+                    cropTool("翻转", icon: "arrow.left.and.right.righttriangle.left.righttriangle.right")
+                    cropTool("比例", icon: "aspectratio")
+                }
+                .frame(height: 76)
+            } else {
+                HStack(spacing: 18) {
+                    Image(systemName: activeTab.icon).font(.system(size: 24))
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(activeTab.title).font(.system(size: 13, weight: .semibold))
+                        Text("功能入口已预留，后续可直接扩展")
+                            .font(.system(size: 10)).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                }
+                .padding(.horizontal, 24)
+                .frame(height: 76)
             }
         }
+        .padding(.top, 12)
+        .padding(.bottom, 8)
+    }
+
+    private var selectedAdjustmentBinding: Binding<Double> {
+        Binding(
+            get: { settings[keyPath: selectedAdjustment.keyPath] },
+            set: { value in
+                settings[keyPath: selectedAdjustment.keyPath] = value
+                selectedPreset = .custom
+                autoEnhanceEnabled = false
+                scheduleRender(debounced: true)
+            }
+        )
+    }
+
+    private func cropTool(_ title: String, icon: String) -> some View {
+        Button {
+            alertMessage = "\(title)工具将在裁剪引擎接入阶段启用。"
+        } label: {
+            VStack(spacing: 6) {
+                Image(systemName: icon).font(.system(size: 22))
+                Text(title).font(.system(size: 10))
+            }
+            .foregroundStyle(.primary)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var editorTabBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 0) {
+                ForEach(EditorTab.allCases) { tab in
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) { activeTab = tab }
+                    } label: {
+                        VStack(spacing: 6) {
+                            Image(systemName: tab.icon)
+                                .font(.system(size: 23, weight: activeTab == tab ? .semibold : .regular))
+                                .frame(height: 27)
+                            Text(tab.title)
+                                .font(.system(size: 11, weight: activeTab == tab ? .semibold : .regular))
+                        }
+                        .foregroundStyle(activeTab == tab ? .primary : Color(uiColor: .tertiaryLabel))
+                        .frame(minWidth: 88)
+                        .padding(.top, 9)
+                        .padding(.bottom, 7)
+                        .overlay(alignment: .top) {
+                            if activeTab == tab {
+                                Capsule().fill(Color(red: 1.0, green: 0.72, blue: 0.12)).frame(width: 7, height: 7).offset(y: -1)
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 12)
+        }
+        .padding(.bottom, 22)
+        .background(Color(uiColor: .systemBackground))
     }
 
     private var welcome: some View {
@@ -235,134 +373,21 @@ struct DemoPhotoAutoEnhanceView: View {
     }
 
     private var editor: some View {
-        VStack(alignment: .leading, spacing: 17) {
-            HStack(spacing: 6) {
-                ForEach(EditorTab.allCases) { tab in
-                    Button { withAnimation(.easeInOut(duration: 0.2)) { activeTab = tab } } label: {
-                        VStack(spacing: 6) {
-                            Image(systemName: tab.icon).font(.system(size: 16, weight: .semibold))
-                            Text(tab.title).font(.system(size: 10, weight: .semibold))
-                        }
-                        .foregroundStyle(activeTab == tab ? accent : Color.secondary)
-                        .frame(maxWidth: .infinity).padding(.vertical, 11)
-                        .background(activeTab == tab ? accent.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 12))
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            switch activeTab {
-            case .enhance: enhancePanel
-            case .adjust: adjustmentPanel
-            case .compare: comparePanel
-            case .export: exportPanel
-            }
-        }
+        EmptyView()
     }
 
-    private var enhancePanel: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            heading("智能增强", subtitle: "使用 iOS 原生图像算法优化照片")
-            Button { applyAutoEnhance() } label: {
-                HStack(spacing: 12) {
-                    Image(systemName: "wand.and.stars").font(.system(size: 22))
-                        .frame(width: 45, height: 45)
-                        .background(.white.opacity(0.18), in: RoundedRectangle(cornerRadius: 12))
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("一键智能增强").font(.system(size: 15, weight: .bold))
-                        Text("自动优化色彩、曝光与细节").font(.system(size: 10)).opacity(0.8)
-                    }
-                    Spacer()
-                    Image(systemName: "arrow.right")
-                }
-                .foregroundStyle(.black.opacity(0.85)).padding(13)
-                .background(accent, in: RoundedRectangle(cornerRadius: 16))
-            }
-            .buttonStyle(.plain).disabled(isProcessing)
+    private var enhancePanel: some View { EmptyView() }
 
-            heading("风格预设", subtitle: "一键应用不同影调")
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 9) {
-                ForEach(DemoPhotoPreset.allCases.filter { $0 != .custom }) { preset in
-                    Button { applyPreset(preset) } label: {
-                        HStack(spacing: 9) {
-                            Image(systemName: preset.icon).font(.system(size: 17))
-                                .foregroundStyle(preset.tint).frame(width: 34, height: 34)
-                                .background(preset.tint.opacity(0.13), in: RoundedRectangle(cornerRadius: 10))
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(preset.title).font(.system(size: 12, weight: .semibold))
-                                Text(preset.subtitle).font(.system(size: 9)).foregroundStyle(.secondary)
-                            }
-                            Spacer(minLength: 0)
-                            if selectedPreset == preset {
-                                Image(systemName: "checkmark.circle.fill").foregroundStyle(accent)
-                            }
-                        }
-                        .padding(10)
-                        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 13))
-                        .overlay(RoundedRectangle(cornerRadius: 13).stroke(selectedPreset == preset ? accent : .clear, lineWidth: 1.2))
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
+    private var adjustmentPanel: some View { EmptyView() }
 
-        }
-    }
+    private var comparePanel: some View { EmptyView() }
 
-    private var adjustmentPanel: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            heading("精细调整", subtitle: "拖动滑块实时查看画面变化")
-            VStack(spacing: 17) {
-                slider("曝光", icon: "sun.max", keyPath: \.exposure, range: -2...2, display: signed(settings.exposure))
-                slider("亮度", icon: "sun.min", keyPath: \.brightness, range: -0.5...0.5, display: signed(settings.brightness))
-                slider("对比度", icon: "circle.lefthalf.filled", keyPath: \.contrast, range: 0.5...1.8, display: decimal(settings.contrast))
-                slider("饱和度", icon: "drop", keyPath: \.saturation, range: 0...2, display: decimal(settings.saturation))
-                slider("色温", icon: "thermometer.medium", keyPath: \.temperature, range: -100...100, display: signed(settings.temperature))
-                slider("高光", icon: "sun.max.fill", keyPath: \.highlights, range: -1...1, display: signed(settings.highlights))
-                slider("阴影", icon: "moon", keyPath: \.shadows, range: -1...1, display: signed(settings.shadows))
-                slider("锐度", icon: "viewfinder", keyPath: \.sharpness, range: 0...2, display: decimal(settings.sharpness))
-            }
-            .padding(15)
-            .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 17))
-        }
-    }
-
-    private var comparePanel: some View {
-        VStack(alignment: .leading, spacing: 13) {
-            heading("前后对比", subtitle: "拖动预览中的分割线查看增强前后差异")
-        }
-    }
-
-    private var exportPanel: some View {
-        VStack(alignment: .leading, spacing: 13) {
-            heading("导出作品", subtitle: "以当前编辑效果保存或分享")
-            VStack(spacing: 0) {
-                exportRow("输出尺寸", value: outputSize, icon: "aspectratio")
-                Divider().padding(.leading, 44)
-                exportRow("图像格式", value: "JPEG / 系统原生", icon: "doc")
-                Divider().padding(.leading, 44)
-                exportRow("画质", value: "高质量", icon: "sparkles")
-            }
-            .padding(.horizontal, 13)
-            .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 15))
-            Button { saveToPhotos() } label: {
-                Label(isSaving ? "正在保存…" : "保存到照片", systemImage: "square.and.arrow.down")
-                    .font(.system(size: 13, weight: .bold)).frame(maxWidth: .infinity).padding(14)
-                    .background(accent, in: RoundedRectangle(cornerRadius: 13)).foregroundStyle(.black.opacity(0.85))
-            }.disabled(isSaving)
-            Button { showShareSheet = true } label: {
-                Label("分享作品", systemImage: "square.and.arrow.up")
-                    .font(.system(size: 13, weight: .semibold)).frame(maxWidth: .infinity).padding(13)
-                    .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 13))
-            }
-        }
-    }
+    private var exportPanel: some View { EmptyView() }
 
     private func previewModeButton(_ title: String, mode: PreviewMode, icon: String) -> some View {
         Button { compareMode = mode } label: {
             Label(title, systemImage: icon).font(.system(size: 10, weight: .semibold))
-                .padding(.horizontal, 10).padding(.vertical, 8)
-                .foregroundStyle(compareMode == mode ? Color.primary : Color.secondary)
-                .background(compareMode == mode ? Color(uiColor: .tertiarySystemFill) : .clear, in: Capsule())
-        }.buttonStyle(.plain)
+        }
     }
 
     private func heading(_ title: String, subtitle: String) -> some View {
@@ -546,27 +571,71 @@ struct DemoPhotoAutoEnhanceView: View {
 private enum PreviewMode { case result, compare, original }
 
 private enum EditorTab: String, CaseIterable, Identifiable {
-    case enhance, adjust, compare, export
+    case adjust, filters, crop, enhance, portrait, repair
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .enhance: "增强"
-        case .adjust: "调节"
-        case .compare: "对比"
-        case .export: "导出"
+        case .adjust: "调整"
+        case .filters: "滤镜"
+        case .crop: "裁剪"
+        case .enhance: "AI增强"
+        case .portrait: "人像"
+        case .repair: "画质修复"
         }
     }
     var icon: String {
         switch self {
-        case .enhance: "sparkles"
         case .adjust: "slider.horizontal.3"
-        case .compare: "square.split.2x1"
-        case .export: "square.and.arrow.up"
+        case .filters: "camera.filters"
+        case .crop: "crop"
+        case .enhance: "sparkles"
+        case .portrait: "person.crop.square"
+        case .repair: "wand.and.stars"
         }
     }
 }
 
-private struct DemoShareSheet: UIViewControllerRepresentable {
+private enum AdjustmentControl: String, CaseIterable, Identifiable {
+    case auto, exposure, contrast, saturation, brightness
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .auto: "自动"
+        case .exposure: "曝光"
+        case .contrast: "对比度"
+        case .saturation: "饱和度"
+        case .brightness: "亮度"
+        }
+    }
+    var icon: String {
+        switch self {
+        case .auto: "wand.and.stars"
+        case .exposure: "plusminus.circle"
+        case .contrast: "circle.lefthalf.filled"
+        case .saturation: "drop.halffull"
+        case .brightness: "sun.max"
+        }
+    }
+    var range: ClosedRange<Double> {
+        switch self {
+        case .auto: 0...1
+        case .exposure: -2...2
+        case .contrast: 0.5...1.8
+        case .saturation: 0...2
+        case .brightness: -0.5...0.5
+        }
+    }
+    var keyPath: WritableKeyPath<DemoAdjustmentSettings, Double> {
+        switch self {
+        case .auto, .exposure: \.exposure
+        case .contrast: \.contrast
+        case .saturation: \.saturation
+        case .brightness: \.brightness
+        }
+    }
+}
+
+private struct DemoShareSheet: UIViewControllerRepresentableprivate struct DemoShareSheet: UIViewControllerRepresentable {
     let items: [Any]
     func makeUIViewController(context: Context) -> UIActivityViewController {
         UIActivityViewController(activityItems: items, applicationActivities: nil)
