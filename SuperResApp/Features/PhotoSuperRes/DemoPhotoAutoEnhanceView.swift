@@ -3,11 +3,16 @@ import PhotosUI
 import UIKit
 import ActivityKit
 import Photos
+import PencilKit
 
 struct DemoPhotoAutoEnhanceView: View {
     @State private var pickerItem: PhotosPickerItem?
     @State private var selectedAsset: PHAsset?
     @State private var editingInput: PHContentEditingInput?
+    @State private var analysisResult: ApplePhotoAnalysisResult?
+    @State private var isAnalyzing = false
+    @State private var showMarkupEditor = false
+    @State private var markupData: Data?
     @State private var originalImage: UIImage?
     @State private var editedImage: UIImage?
     @State private var settings = DemoAdjustmentSettings()
@@ -81,6 +86,15 @@ struct DemoPhotoAutoEnhanceView: View {
         .sheet(isPresented: $showShareSheet) {
             if let image = editedImage ?? originalImage {
                 DemoShareSheet(items: [image])
+            }
+        }
+        .sheet(isPresented: $showMarkupEditor) {
+            if let image = editedImage ?? originalImage {
+                AppleMarkupEditor(image: image, onCancel: {}, onSave: { drawing in
+                    pushUndo()
+                    markupData = drawing.dataRepresentation()
+                    editedImage = compositeMarkup(drawing, over: editedImage ?? image)
+                })
             }
         }
         .onOpenURL { url in
@@ -294,18 +308,45 @@ struct DemoPhotoAutoEnhanceView: View {
                     cropTool(imageTransform.usesSquareCrop ? "原比例" : "正方形", icon: "aspectratio", action: .toggleSquare)
                 }
                 .frame(height: 78)
-            } else {
-                HStack(spacing: 18) {
-                    Image(systemName: activeTab.icon).font(.system(size: 26))
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(activeTab.title).font(.system(size: 14, weight: .semibold))
-                        Text("功能入口已预留，后续可直接扩展")
-                            .font(.system(size: 12)).foregroundStyle(.secondary)
+            } else if activeTab == .analysis {
+                VStack(spacing: 8) {
+                    Button {
+                        analyzeCurrentPhoto()
+                    } label: {
+                        Label(isAnalyzing ? "正在分析…" : "使用 Apple Vision 分析", systemImage: "viewfinder")
+                            .font(.system(size: 13, weight: .semibold))
                     }
-                    Spacer()
+                    .disabled(isAnalyzing)
+                    if let result = analysisResult {
+                        HStack(spacing: 14) {
+                            analysisMetric("人脸", value: "\(result.faceCount)")
+                            analysisMetric("主体", value: "\(result.foregroundInstanceCount)")
+                            analysisMetric("景深", value: result.depthData == nil ? "无" : "有")
+                            analysisMetric("水平", value: result.horizonAngle.map { String(format: "%.1f°", $0 * 180 / .pi) } ?? "—")
+                        }
+                    } else {
+                        Text("检测人脸、主体分割、地平线和可用景深数据")
+                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                    }
                 }
-                .padding(.horizontal, 24)
-                .frame(height: 104)
+                .frame(height: 92)
+            } else if activeTab == .livePhoto {
+                if let asset = selectedAsset, asset.mediaSubtypes.contains(.photoLive) {
+                    AppleLivePhotoPreview(asset: asset)
+                        .frame(height: 110)
+                } else {
+                    Text("当前照片不是 Live Photo")
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                        .frame(height: 92)
+                }
+            } else if activeTab == .markup {
+                Button {
+                    showMarkupEditor = true
+                } label: {
+                    Label("打开 Apple Pencil 标注", systemImage: "pencil.tip.crop.circle")
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .frame(height: 92)
             }
         }
         .padding(.top, 8)
@@ -507,7 +548,7 @@ struct DemoPhotoAutoEnhanceView: View {
     }
 
     private var hasChanges: Bool {
-        originalImage != nil && (settings != DemoAdjustmentSettings() || autoEnhanceEnabled || selectedPreset.filterName != nil || imageTransform != .identity)
+        originalImage != nil && (settings != DemoAdjustmentSettings() || autoEnhanceEnabled || selectedPreset.filterName != nil || imageTransform != .identity || markupData != nil)
     }
 
     private var isCompleteEnabled: Bool {
@@ -566,6 +607,8 @@ struct DemoPhotoAutoEnhanceView: View {
             undoStack.removeAll()
             redoStack.removeAll()
             compareMode = .result
+            analysisResult = nil
+            markupData = nil
             await startLiveActivity()
         } catch {
             alertMessage = "读取照片失败：\(error.localizedDescription)"
@@ -688,7 +731,8 @@ struct DemoPhotoAutoEnhanceView: View {
             autoEnhanceEnabled: autoEnhanceEnabled,
             autoEnhanceBaseSettings: autoEnhanceBaseSettings,
             autoEnhanceBasePreset: autoEnhanceBasePreset,
-            imageTransform: imageTransform
+            imageTransform: imageTransform,
+            markupData: markupData
         )
     }
 
@@ -699,6 +743,7 @@ struct DemoPhotoAutoEnhanceView: View {
         autoEnhanceBaseSettings = snapshot.autoEnhanceBaseSettings
         autoEnhanceBasePreset = snapshot.autoEnhanceBasePreset
         imageTransform = snapshot.imageTransform
+        markupData = snapshot.markupData
         scheduleRender()
     }
 
@@ -730,7 +775,8 @@ struct DemoPhotoAutoEnhanceView: View {
             autoEnhanceEnabled: false,
             autoEnhanceBaseSettings: nil,
             autoEnhanceBasePreset: nil,
-            imageTransform: .identity
+            imageTransform: .identity,
+            markupData: nil
         )
         guard next != captureSnapshot() else { return }
         pushUndo()
@@ -747,8 +793,9 @@ struct DemoPhotoAutoEnhanceView: View {
         let useAutoEnhance = autoEnhanceEnabled
         let currentFilterName = selectedPreset.filterName
         let currentTransform = imageTransform
+        let currentMarkupData = markupData
         if currentSettings == DemoAdjustmentSettings() && !useAutoEnhance && currentFilterName == nil && currentTransform == .identity {
-            editedImage = originalImage
+            editedImage = imageWithMarkup(originalImage, data: currentMarkupData) ?? originalImage
             isProcessing = false
             return
         }
@@ -759,9 +806,49 @@ struct DemoPhotoAutoEnhanceView: View {
                 DemoImageProcessor.render(originalImage, settings: currentSettings, autoEnhance: useAutoEnhance, filterName: currentFilterName, transform: currentTransform)
             }.value
             guard renderToken == token else { return }
-            editedImage = result ?? originalImage
+            let rendered = result ?? originalImage
+            editedImage = imageWithMarkup(rendered, data: currentMarkupData) ?? rendered
             isProcessing = false
         }
+    }
+
+    private func analyzeCurrentPhoto() {
+        guard let image = originalImage else { return }
+        isAnalyzing = true
+        Task {
+            do {
+                let result = try await Task.detached(priority: .userInitiated) {
+                    try ApplePhotoAnalysisService.analyze(image)
+                }.value
+                analysisResult = result
+            } catch {
+                alertMessage = error.localizedDescription
+            }
+            isAnalyzing = false
+        }
+    }
+
+    private func analysisMetric(_ title: String, value: String) -> some View {
+        VStack(spacing: 3) {
+            Text(value).font(.system(size: 12, weight: .semibold, design: .rounded))
+            Text(title).font(.system(size: 9)).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func compositeMarkup(_ drawing: PKDrawing, over image: UIImage) -> UIImage {
+        let bounds = CGRect(origin: .zero, size: image.size)
+        let overlay = drawing.image(from: bounds, scale: image.scale)
+        let renderer = UIGraphicsImageRenderer(size: image.size)
+        return renderer.image { _ in
+            image.draw(in: bounds)
+            overlay.draw(in: bounds)
+        }
+    }
+
+    private func imageWithMarkup(_ image: UIImage, data: Data?) -> UIImage? {
+        guard let data, let drawing = try? PKDrawing(data: data) else { return nil }
+        return compositeMarkup(drawing, over: image)
     }
 
     private func saveToPhotos() {
@@ -812,6 +899,7 @@ private struct DemoEditorSnapshot: Equatable {
     let autoEnhanceBaseSettings: DemoAdjustmentSettings?
     let autoEnhanceBasePreset: DemoPhotoPreset?
     let imageTransform: DemoImageTransform
+    let markupData: Data?
 }
 
 private enum CropAction { case reset, rotate, flip, toggleSquare }
@@ -819,13 +907,16 @@ private enum CropAction { case reset, rotate, flip, toggleSquare }
 private enum PreviewMode { case result, original }
 
 private enum EditorTab: String, CaseIterable, Identifiable {
-    case adjust, filters, crop
+    case adjust, filters, crop, analysis, livePhoto, markup
     var id: String { rawValue }
     var title: String {
         switch self {
         case .adjust: "调整"
         case .filters: "滤镜"
         case .crop: "裁剪"
+        case .analysis: "识别"
+        case .livePhoto: "实况"
+        case .markup: "标注"
         }
     }
     var icon: String {
@@ -833,6 +924,9 @@ private enum EditorTab: String, CaseIterable, Identifiable {
         case .adjust: "slider.horizontal.3"
         case .filters: "camera.filters"
         case .crop: "crop"
+        case .analysis: "viewfinder"
+        case .livePhoto: "livephoto"
+        case .markup: "pencil.tip.crop.circle"
         }
     }
 }
