@@ -57,7 +57,7 @@ final class VideoFrameInterpolationProcessor: @unchecked Sendable {
         let height = max(2, Int(naturalSize.height).quotientAndRemainder(dividingBy: 2).quotient * 2)
         let nominalFrameRate = Double((try? await videoTrack.load(.nominalFrameRate)) ?? 0)
         let durationSeconds = CMTimeGetSeconds(duration)
-        await log("[补帧] 输入视频：\\(width)×\\(height)，\\(String(format: "%.2f", nominalFrameRate))fps，时长 \\(String(format: "%.2f", durationSeconds))s")
+        await log("[补帧] 输入视频：\(width)×\(height)，\(String(format: "%.2f", nominalFrameRate))fps，时长 \(String(format: "%.2f", durationSeconds))s")
 
         let reader = try AVAssetReader(asset: asset)
         let videoOutput = AVAssetReaderTrackOutput(track: videoTrack, outputSettings: [

@@ -130,7 +130,7 @@ final class VideoSuperResViewModel: ObservableObject {
         ) { note in
             guard let info = note.object as? String, !info.isEmpty else { return }
             Task { @MainActor in
-                AppLogger.shared.log("[补帧模型诊断]\\n\(info)", isError: false)
+                AppLogger.shared.log("[补帧模型诊断]\n\(info)", isError: false)
             }
         }
     }
@@ -206,6 +206,10 @@ final class VideoSuperResViewModel: ObservableObject {
             resultVideoURL = nil
 
             let metadata = try await loadVideoMetadata(from: movie.url)
+            guard state == .loading else {
+                try? FileManager.default.removeItem(at: movie.url)
+                return
+            }
             self.originalVideoURL = movie.url
             self.videoMetadata = metadata
             self.state = .videoSelected
