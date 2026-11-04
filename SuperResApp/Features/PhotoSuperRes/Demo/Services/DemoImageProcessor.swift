@@ -108,6 +108,45 @@ enum DemoImageProcessor {
             if let next = filter.outputImage { output = next }
         }
 
+        if abs(settings.highlights) > 0.0001 || abs(settings.shadows) > 0.0001 {
+            let filter = CIFilter(name: "CIHighlightShadowAdjust")
+            filter?.setValue(output, forKey: kCIInputImageKey)
+            filter?.setValue(settings.highlights, forKey: "inputHighlightAmount")
+            filter?.setValue(settings.shadows, forKey: "inputShadowAmount")
+            if let next = filter?.outputImage { output = next }
+        }
+
+        if abs(settings.temperature - 6500) > 0.5 || abs(settings.tint) > 0.0001 {
+            let filter = CIFilter(name: "CITemperatureAndTint")
+            filter?.setValue(output, forKey: kCIInputImageKey)
+            filter?.setValue(CIVector(x: 6500, y: 0), forKey: "inputNeutral")
+            filter?.setValue(CIVector(x: settings.temperature, y: settings.tint), forKey: "inputTargetNeutral")
+            if let next = filter?.outputImage { output = next }
+        }
+
+        if abs(settings.sharpness) > 0.0001 {
+            let filter = CIFilter(name: "CISharpenLuminance")
+            filter?.setValue(output, forKey: kCIInputImageKey)
+            filter?.setValue(settings.sharpness, forKey: "inputSharpness")
+            if let next = filter?.outputImage { output = next }
+        }
+
+        if abs(settings.noiseReduction) > 0.0001 {
+            let filter = CIFilter(name: "CINoiseReduction")
+            filter?.setValue(output, forKey: kCIInputImageKey)
+            filter?.setValue(settings.noiseReduction, forKey: "inputNoiseLevel")
+            filter?.setValue(0.4, forKey: "inputSharpness")
+            if let next = filter?.outputImage { output = next }
+        }
+
+        if abs(settings.vignette) > 0.0001 {
+            let filter = CIFilter(name: "CIVignette")
+            filter?.setValue(output, forKey: kCIInputImageKey)
+            filter?.setValue(settings.vignette, forKey: "inputIntensity")
+            filter?.setValue(max(output.extent.width, output.extent.height) * 0.75, forKey: "inputRadius")
+            if let next = filter?.outputImage { output = next }
+        }
+
         return output
     }
 }
