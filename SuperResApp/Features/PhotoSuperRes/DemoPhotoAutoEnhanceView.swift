@@ -353,7 +353,7 @@ struct DemoPhotoAutoEnhanceView: View {
             }).tint(accent)
                 .accessibilityLabel(spec.title)
                 .accessibilityValue(display)
-                .accessibilityHint("调整照片的\\(spec.title)")
+                .accessibilityHint("调整照片的\(spec.title)")
         }
     }
 
