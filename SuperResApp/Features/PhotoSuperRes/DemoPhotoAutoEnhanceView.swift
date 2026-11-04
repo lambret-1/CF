@@ -315,6 +315,7 @@ struct DemoPhotoAutoEnhanceView: View {
                     cropTool("旋转", icon: "rotate.right", action: .rotate)
                     cropTool("翻转", icon: "arrow.left.and.right.righttriangle.left.righttriangle.right", action: .flip)
                     cropTool(imageTransform.usesSquareCrop ? "原比例" : "正方形", icon: "aspectratio", action: .toggleSquare)
+                    cropTool(imageTransform.usesPerspectiveCorrection ? "取消透视" : "透视", icon: "perspective", action: .perspective)
                     Button {
                         autoStraighten()
                     } label: {
@@ -424,6 +425,7 @@ struct DemoPhotoAutoEnhanceView: View {
             case .rotate: next.quarterTurnsClockwise = (next.quarterTurnsClockwise + 1) % 4
             case .flip: next.isHorizontallyFlipped.toggle()
             case .toggleSquare: next.usesSquareCrop.toggle()
+            case .perspective: next.usesPerspectiveCorrection.toggle()
             }
             guard next != imageTransform else { return }
             pushUndo()
@@ -906,6 +908,7 @@ struct DemoPhotoAutoEnhanceView: View {
         imageTransform.isHorizontallyFlipped = root["horizontalFlip"] as? Bool ?? false
         imageTransform.usesSquareCrop = root["squareCrop"] as? Bool ?? false
         imageTransform.straightenAngle = root["straightenAngle"] as? Double ?? 0
+        imageTransform.usesPerspectiveCorrection = root["perspectiveCorrection"] as? Bool ?? false
         if let encodedMarkup = root["markupData"] as? String, !encodedMarkup.isEmpty {
             markupData = Data(base64Encoded: encodedMarkup)
         }
@@ -1010,7 +1013,8 @@ struct DemoPhotoAutoEnhanceView: View {
                         "rotation": imageTransform.quarterTurnsClockwise,
                         "horizontalFlip": imageTransform.isHorizontallyFlipped,
                         "squareCrop": imageTransform.usesSquareCrop,
-                        "straightenAngle": imageTransform.straightenAngle
+                        "straightenAngle": imageTransform.straightenAngle,
+                        "perspectiveCorrection": imageTransform.usesPerspectiveCorrection
                     ]
                     let data = try JSONSerialization.data(withJSONObject: adjustment, options: [.sortedKeys])
                     if asset.mediaSubtypes.contains(.photoLive), input.livePhoto != nil {
@@ -1056,7 +1060,7 @@ private struct DemoEditorSnapshot: Equatable {
     let markupData: Data?
 }
 
-private enum CropAction { case reset, rotate, flip, toggleSquare }
+private enum CropAction { case reset, rotate, flip, toggleSquare, perspective }
 
 private enum PreviewMode { case result, original }
 
