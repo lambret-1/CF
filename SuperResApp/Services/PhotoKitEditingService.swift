@@ -281,8 +281,7 @@ actor PhotoKitEditingService {
             }
 
             if transform.usesPerspectiveCorrection,
-               let corrected = try? ApplePhotoAnalysisService.perspectiveCorrect(output),
-               let corrected {
+               let corrected = try? ApplePhotoAnalysisService.perspectiveCorrect(output) {
                 output = corrected
             }
             if abs(transform.straightenAngle) > 0.0001 {
