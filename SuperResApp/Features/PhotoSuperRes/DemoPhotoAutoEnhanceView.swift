@@ -36,7 +36,6 @@ struct DemoPhotoAutoEnhanceView: View {
                 .padding(.top, 12)
                 .padding(.bottom, 22)
             }
-            bottomBar
         }
         .background(Color(uiColor: .systemGroupedBackground))
         .toolbar(.hidden, for: .navigationBar)
@@ -69,16 +68,30 @@ struct DemoPhotoAutoEnhanceView: View {
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
             }
-            Spacer()
-            Button { undo() } label: { Image(systemName: "arrow.uturn.backward") }
-                .disabled(undoStack.isEmpty)
-                .accessibilityLabel("撤销")
-            Button { redo() } label: { Image(systemName: "arrow.uturn.forward") }
-                .disabled(redoStack.isEmpty)
-                .accessibilityLabel("重做")
-            Button("重置") { resetEdits() }
-                .font(.system(size: 12, weight: .semibold))
-                .disabled(originalImage == nil)
+            Spacer(minLength: 8)
+            if originalImage != nil {
+                PhotosPicker(selection: $pickerItem, matching: .images) {
+                    Image(systemName: "photo.badge.plus")
+                        .font(.system(size: 17, weight: .medium))
+                        .frame(width: 36, height: 36)
+                        .contentShape(Rectangle())
+                }
+                .accessibilityLabel("更换照片")
+
+                Button { saveToPhotos() } label: {
+                    if isSaving {
+                        ProgressView()
+                            .frame(width: 36, height: 36)
+                    } else {
+                        Image(systemName: "square.and.arrow.down")
+                            .font(.system(size: 17, weight: .medium))
+                            .frame(width: 36, height: 36)
+                            .contentShape(Rectangle())
+                    }
+                }
+                .disabled(isSaving)
+                .accessibilityLabel("保存照片")
+            }
         }
         .font(.system(size: 17, weight: .medium))
         .padding(.horizontal, 20)
@@ -159,13 +172,35 @@ struct DemoPhotoAutoEnhanceView: View {
             if originalImage != nil {
                 HStack(spacing: 7) {
                     previewModeButton("效果", mode: .result, icon: "sparkles")
-                    previewModeButton("对比", mode: .compare, icon: "slider.horizontal.3")
                     previewModeButton("原图", mode: .original, icon: "photo")
-                    Spacer()
-                    if let image = editedImage ?? originalImage {
-                        Text("\(image.cgImage?.width ?? Int(image.size.width * image.scale)) × \(image.cgImage?.height ?? Int(image.size.height * image.scale))")
-                            .font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
+                    previewModeButton("对比", mode: .compare, icon: "slider.horizontal.3")
+                    Spacer(minLength: 4)
+                    Button { undo() } label: {
+                        Image(systemName: "arrow.uturn.backward")
+                            .font(.system(size: 14, weight: .semibold))
+                            .frame(width: 32, height: 32)
+                            .contentShape(Rectangle())
                     }
+                    .disabled(undoStack.isEmpty)
+                    .accessibilityLabel("撤销")
+
+                    Button { redo() } label: {
+                        Image(systemName: "arrow.uturn.forward")
+                            .font(.system(size: 14, weight: .semibold))
+                            .frame(width: 32, height: 32)
+                            .contentShape(Rectangle())
+                    }
+                    .disabled(redoStack.isEmpty)
+                    .accessibilityLabel("重做")
+
+                    Button { resetEdits() } label: {
+                        Image(systemName: "arrow.counterclockwise")
+                            .font(.system(size: 14, weight: .semibold))
+                            .frame(width: 32, height: 32)
+                            .contentShape(Rectangle())
+                    }
+                    .disabled(originalImage == nil)
+                    .accessibilityLabel("重置")
                 }
             }
         }
@@ -319,19 +354,6 @@ struct DemoPhotoAutoEnhanceView: View {
                     .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 13))
             }
         }
-    }
-
-    private var bottomBar: some View {
-        HStack(spacing: 11) {
-            if originalImage != nil {
-                PhotosPicker(selection: $pickerItem, matching: .images) {
-                    Label("更换照片", systemImage: "photo.badge.plus")
-                        .font(.body.weight(.semibold)).frame(maxWidth: .infinity).padding(.vertical, 13)
-                        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 13))
-                }
-            }
-        }
-        .padding(.horizontal, 18).padding(.top, 10).padding(.bottom, 9).background(.bar)
     }
 
     private func previewModeButton(_ title: String, mode: PreviewMode, icon: String) -> some View {
