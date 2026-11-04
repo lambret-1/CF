@@ -493,7 +493,7 @@ struct DemoPhotoAutoEnhanceView: View {
     }
 
     private var hasChanges: Bool {
-        originalImage != nil && (settings != DemoAdjustmentSettings() || autoEnhanceEnabled || selectedPreset != .original)
+        originalImage != nil && (settings != DemoAdjustmentSettings() || autoEnhanceEnabled || selectedPreset.filterName != nil)
     }
 
     private var isCompleteEnabled: Bool {
@@ -695,7 +695,7 @@ struct DemoPhotoAutoEnhanceView: View {
         let currentSettings = settings
         let useAutoEnhance = autoEnhanceEnabled
         let currentFilterName = selectedPreset.filterName
-        if currentSettings == DemoAdjustmentSettings() && !useAutoEnhance && selectedPreset == .original {
+        if currentSettings == DemoAdjustmentSettings() && !useAutoEnhance && currentFilterName == nil {
             editedImage = originalImage
             isProcessing = false
             return
