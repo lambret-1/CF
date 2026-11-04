@@ -310,11 +310,21 @@ struct DemoPhotoAutoEnhanceView: View {
                 }
                 .frame(height: 82)
             } else if activeTab == .crop {
-                HStack(spacing: 30) {
+                HStack(spacing: 18) {
                     cropTool("还原", icon: "crop", action: .reset)
                     cropTool("旋转", icon: "rotate.right", action: .rotate)
                     cropTool("翻转", icon: "arrow.left.and.right.righttriangle.left.righttriangle.right", action: .flip)
                     cropTool(imageTransform.usesSquareCrop ? "原比例" : "正方形", icon: "aspectratio", action: .toggleSquare)
+                    Button {
+                        autoStraighten()
+                    } label: {
+                        VStack(spacing: 6) {
+                            Image(systemName: "level").font(.system(size: 22))
+                            Text("自动拉直").font(.system(size: 10))
+                        }
+                        .foregroundStyle(.primary)
+                    }
+                    .buttonStyle(.plain)
                 }
                 .frame(height: 78)
             } else if activeTab == .analysis {
@@ -385,6 +395,25 @@ struct DemoPhotoAutoEnhanceView: View {
                 scheduleRender(debounced: true)
             }
         )
+    }
+
+    private func autoStraighten() {
+        guard let image = originalImage else { return }
+        Task {
+            do {
+                guard let angle = try await Task.detached(priority: .userInitiated, operation: {
+                    try ApplePhotoAnalysisService.horizonAngle(for: image)
+                }).value else {
+                    alertMessage = "Vision 未检测到可用的地平线。"
+                    return
+                }
+                pushUndo()
+                imageTransform.straightenAngle = -Double(angle)
+                scheduleRender()
+            } catch {
+                alertMessage = error.localizedDescription
+            }
+        }
     }
 
     private func cropTool(_ title: String, icon: String, action: CropAction) -> some View {
@@ -876,6 +905,7 @@ struct DemoPhotoAutoEnhanceView: View {
         }
         imageTransform.isHorizontallyFlipped = root["horizontalFlip"] as? Bool ?? false
         imageTransform.usesSquareCrop = root["squareCrop"] as? Bool ?? false
+        imageTransform.straightenAngle = root["straightenAngle"] as? Double ?? 0
         if let encodedMarkup = root["markupData"] as? String, !encodedMarkup.isEmpty {
             markupData = Data(base64Encoded: encodedMarkup)
         }
@@ -979,7 +1009,8 @@ struct DemoPhotoAutoEnhanceView: View {
                         "autoEnhance": autoEnhanceEnabled,
                         "rotation": imageTransform.quarterTurnsClockwise,
                         "horizontalFlip": imageTransform.isHorizontallyFlipped,
-                        "squareCrop": imageTransform.usesSquareCrop
+                        "squareCrop": imageTransform.usesSquareCrop,
+                        "straightenAngle": imageTransform.straightenAngle
                     ]
                     let data = try JSONSerialization.data(withJSONObject: adjustment, options: [.sortedKeys])
                     if asset.mediaSubtypes.contains(.photoLive), input.livePhoto != nil {
