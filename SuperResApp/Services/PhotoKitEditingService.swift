@@ -5,7 +5,6 @@ import CoreImage.CIFilterBuiltins
 import ImageIO
 import UniformTypeIdentifiers
 import UIKit
-import UniformTypeIdentifiers
 
 /// PhotoKit-backed editing for existing library assets.
 /// Edits are committed through PHContentEditingOutput so the original resource remains recoverable.
