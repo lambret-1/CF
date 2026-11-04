@@ -338,7 +338,7 @@ struct DemoPhotoAutoEnhanceView: View {
                             if let image = editedImage ?? originalImage {
                                 AppleFreeCropEditor(image: image, onCancel: {}, onApply: { rect in
                                     pushUndo()
-                                    imageTransform.cropRect = rect
+                                    imageTransform.cropRect = combinedCropRect(for: rect)
                                     imageTransform.cropAspectRatio = nil
                                     imageTransform.usesSquareCrop = false
                                     scheduleRender()
@@ -480,6 +480,34 @@ struct DemoPhotoAutoEnhanceView: View {
                 autoEnhanceBasePreset = nil
                 scheduleRender(debounced: true)
             }
+        )
+    }
+
+    private func combinedCropRect(for selection: CGRect) -> CGRect {
+        let base: CGRect
+        if let existing = imageTransform.cropRect {
+            base = existing
+        } else if let ratio = imageTransform.cropAspectRatio ?? (imageTransform.usesSquareCrop ? 1 : nil),
+                  let image = originalImage {
+            var sourceAspect = image.size.width / max(image.size.height, 1)
+            if abs(imageTransform.quarterTurnsClockwise % 2) == 1 {
+                sourceAspect = 1 / max(sourceAspect, 0.0001)
+            }
+            if sourceAspect > ratio {
+                let width = ratio / sourceAspect
+                base = CGRect(x: (1 - width) / 2, y: 0, width: width, height: 1)
+            } else {
+                let height = sourceAspect / ratio
+                base = CGRect(x: 0, y: (1 - height) / 2, width: 1, height: height)
+            }
+        } else {
+            base = CGRect(x: 0, y: 0, width: 1, height: 1)
+        }
+        return CGRect(
+            x: base.minX + selection.minX * base.width,
+            y: base.minY + selection.minY * base.height,
+            width: selection.width * base.width,
+            height: selection.height * base.height
         )
     }
 
