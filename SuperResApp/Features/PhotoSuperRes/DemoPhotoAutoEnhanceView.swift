@@ -609,6 +609,10 @@ struct DemoPhotoAutoEnhanceView: View {
             compareMode = .result
             analysisResult = nil
             markupData = nil
+            restoreAdjustmentData(loadedInput?.adjustmentData)
+            if loadedInput?.adjustmentData != nil {
+                scheduleRender()
+            }
             await startLiveActivity()
         } catch {
             alertMessage = "读取照片失败：\(error.localizedDescription)"
@@ -810,6 +814,41 @@ struct DemoPhotoAutoEnhanceView: View {
             let rendered = result ?? originalImage
             editedImage = imageWithMarkup(rendered, data: currentMarkupData) ?? rendered
             isProcessing = false
+        }
+    }
+
+    private func restoreAdjustmentData(_ adjustmentData: PHAdjustmentData?) {
+        guard let adjustmentData,
+              adjustmentData.formatIdentifier == "com.superres.app.photo-editor",
+              let root = try? JSONSerialization.jsonObject(with: adjustmentData.data) as? [String: Any] else {
+            return
+        }
+
+        if let values = root["settings"] as? [String: Double] {
+            settings.exposure = values["exposure"] ?? 0
+            settings.brightness = values["brightness"] ?? 0
+            settings.contrast = values["contrast"] ?? 1
+            settings.saturation = values["saturation"] ?? 1
+            settings.highlights = values["highlights"] ?? 0
+            settings.shadows = values["shadows"] ?? 0
+            settings.temperature = values["temperature"] ?? 6500
+            settings.tint = values["tint"] ?? 0
+            settings.sharpness = values["sharpness"] ?? 0
+            settings.noiseReduction = values["noiseReduction"] ?? 0
+            settings.vignette = values["vignette"] ?? 0
+        }
+        if let rawPreset = root["preset"] as? String,
+           let preset = DemoPhotoPreset(rawValue: rawPreset) {
+            selectedPreset = preset
+        }
+        autoEnhanceEnabled = root["autoEnhance"] as? Bool ?? false
+        if let transform = root["rotation"] as? Int {
+            imageTransform.quarterTurnsClockwise = transform
+        }
+        imageTransform.isHorizontallyFlipped = root["horizontalFlip"] as? Bool ?? false
+        imageTransform.usesSquareCrop = root["squareCrop"] as? Bool ?? false
+        if let encodedMarkup = root["markupData"] as? String, !encodedMarkup.isEmpty {
+            markupData = Data(base64Encoded: encodedMarkup)
         }
     }
 
