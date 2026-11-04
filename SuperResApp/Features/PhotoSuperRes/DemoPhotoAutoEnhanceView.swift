@@ -994,7 +994,8 @@ struct DemoPhotoAutoEnhanceView: View {
                 let rawImage = try await Task.detached(priority: .userInitiated) {
                     try ApplePhotoAnalysisService.renderRawImage(at: url)
                 }.value
-                pushUndo()
+                undoStack.removeAll()
+                redoStack.removeAll()
                 renderSourceURL = url
                 originalImage = rawImage
                 editedImage = rawImage
