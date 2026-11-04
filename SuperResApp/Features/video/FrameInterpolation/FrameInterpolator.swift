@@ -125,6 +125,11 @@ final class FrameInterpolator {
     func interpolate(frame0: CVPixelBuffer, frame1: CVPixelBuffer) -> CVPixelBuffer? {
         let originalWidth = CVPixelBufferGetWidth(frame0)
         let originalHeight = CVPixelBufferGetHeight(frame0)
+        guard CVPixelBufferGetWidth(frame1) == originalWidth,
+              CVPixelBufferGetHeight(frame1) == originalHeight else {
+            logger.error("输入帧尺寸不一致")
+            return nil
+        }
 
         // 1. 缩放到模型输入尺寸 512x512
         guard let resized0 = resize(pixelBuffer: frame0, width: modelInputWidth, height: modelInputHeight),
@@ -230,14 +235,15 @@ final class FrameInterpolator {
         encodeSigmoid(commandBuffer: postprocessBuffer)
 
         // 上采样 flow/mask 到原分辨率，光流值按宽度比缩放
-        let flowScale = Float(originalWidth) / Float(modelInputWidth)
+        let flowScaleX = Float(originalWidth) / Float(modelInputWidth)
+        let flowScaleY = Float(originalHeight) / Float(modelInputHeight)
         encodeUpsampleFlowMask(
             commandBuffer: postprocessBuffer,
             srcFlow: flowBuffer, srcMask: maskBuffer,
             dstFlow: origFlowBuffer, dstMask: origMaskBuffer,
             srcW: modelInputWidth, srcH: modelInputHeight,
             dstW: originalWidth, dstH: originalHeight,
-            flowScale: flowScale
+            flowScaleX: flowScaleX, flowScaleY: flowScaleY
         )
 
         // Warp：在原分辨率空间用原帧做warp，光流已上采样
@@ -343,7 +349,8 @@ final class FrameInterpolator {
         srcH: Int,
         dstW: Int,
         dstH: Int,
-        flowScale: Float
+        flowScaleX: Float,
+        flowScaleY: Float
     ) {
         guard let encoder = commandBuffer.makeComputeCommandEncoder() else { return }
         encoder.setComputePipelineState(upsampleFlowMaskPipeline)
@@ -354,12 +361,14 @@ final class FrameInterpolator {
 
         var sw = UInt32(srcW), sh = UInt32(srcH)
         var dw = UInt32(dstW), dh = UInt32(dstH)
-        var fs = flowScale
+        var fsx = flowScaleX
+        var fsy = flowScaleY
         encoder.setBytes(&sw, length: MemoryLayout<UInt32>.size, index: 4)
         encoder.setBytes(&sh, length: MemoryLayout<UInt32>.size, index: 5)
         encoder.setBytes(&dw, length: MemoryLayout<UInt32>.size, index: 6)
         encoder.setBytes(&dh, length: MemoryLayout<UInt32>.size, index: 7)
-        encoder.setBytes(&fs, length: MemoryLayout<Float>.size, index: 8)
+        encoder.setBytes(&fsx, length: MemoryLayout<Float>.size, index: 8)
+        encoder.setBytes(&fsy, length: MemoryLayout<Float>.size, index: 9)
 
         dispatch2D(encoder: encoder, width: dstW, height: dstH)
         encoder.endEncoding()
