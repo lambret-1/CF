@@ -21,28 +21,6 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - name: 取消同工作流其它竞争Job
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const runId = context.runId;
-            const jobs = await github.rest.actions.listJobsForWorkflowRun({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              run_id: runId
-            });
-            for(const job of jobs.data.jobs){
-              if(job.id !== context.jobId && job.status === 'queued'){
-                try{
-                  await github.rest.actions.cancelWorkflowRun({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    run_id: runId
-                  });
-                }catch(e){}
-              }
-            }
-
       - name: 检出代码
         uses: actions/checkout@v4
         with:
