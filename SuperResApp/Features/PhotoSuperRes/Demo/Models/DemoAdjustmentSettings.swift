@@ -100,6 +100,7 @@ struct DemoImageTransform: Equatable {
     var usesPerspectiveCorrection = false
     var usesDepthBlur = false
     var cropAspectRatio: Double?
+    var cropRect: CGRect?
 
     static let identity = DemoImageTransform()
 }
