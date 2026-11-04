@@ -1,5 +1,5 @@
 // SuperResApp/Services/ModelCompiler.swift
-// 模型编译器：解压 zip → 找到 .mlpackage → 编译为 .mlmodelc → 移动到 Application Support
+// 模型安装器：解压 ZIP，安装预编译 .mlmodelc 或编译 .mlpackage
 
 import Foundation
 import CoreML
@@ -258,7 +258,7 @@ enum CompileError: LocalizedError {
         case .unzipFailed(let detail):
             return "解压失败：\(detail)"
         case .packageNotFound:
-            return "未找到 .mlpackage 目录"
+            return "未找到 .mlmodelc 或 .mlpackage 目录"
         case .compileFailed(let detail):
             return "模型编译失败：\(detail)"
         case .moveFailed(let detail):
