@@ -95,6 +95,7 @@ struct DemoImageTransform: Equatable {
     var quarterTurnsClockwise = 0
     var isHorizontallyFlipped = false
     var usesSquareCrop = false
+    var straightenAngle = 0.0
 
     static let identity = DemoImageTransform()
 }
