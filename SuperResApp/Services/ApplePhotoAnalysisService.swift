@@ -16,7 +16,7 @@ struct ApplePhotoAnalysisResult {
 
 /// Uses Apple's Vision, AVFoundation, ImageIO, and Core Image APIs only.
 enum ApplePhotoAnalysisService {
-    static func analyze(_ image: UIImage) throws -> ApplePhotoAnalysisResult {
+    static func analyze(_ image: UIImage, sourceURL: URL? = nil) throws -> ApplePhotoAnalysisResult {
         guard let cgImage = image.cgImage else {
             throw ApplePhotoAnalysisError.imageUnavailable
         }
@@ -43,7 +43,7 @@ enum ApplePhotoAnalysisService {
             horizonAngle: horizon.results?.first?.angle,
             foregroundInstanceCount: foregroundObservation?.allInstances.count ?? 0,
             foregroundMask: mask,
-            depthData: depthData(from: image)
+            depthData: sourceURL.flatMap { depthData(from: $0) } ?? depthData(from: image)
         )
     }
 
