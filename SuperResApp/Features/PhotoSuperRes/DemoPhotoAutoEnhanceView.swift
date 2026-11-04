@@ -18,6 +18,7 @@ struct DemoPhotoAutoEnhanceView: View {
     @State private var markupData: Data?
     @State private var originalImage: UIImage?
     @State private var editedImage: UIImage?
+    @State private var renderedCIImage: CIImage?
     @State private var settings = DemoAdjustmentSettings()
     @State private var imageTransform = DemoImageTransform.identity
     @State private var selectedPreset: DemoPhotoPreset = .original
@@ -98,6 +99,7 @@ struct DemoPhotoAutoEnhanceView: View {
                     pushUndo()
                     markupData = drawing.dataRepresentation()
                     editedImage = compositeMarkup(drawing, over: editedImage ?? image)
+                    renderedCIImage = editedImage.flatMap { CIImage(image: $0) }
                 })
             }
         }
@@ -706,9 +708,7 @@ struct DemoPhotoAutoEnhanceView: View {
             foregroundCutout = nil
             markupData = nil
             restoreAdjustmentData(loadedInput?.adjustmentData)
-            if loadedInput?.adjustmentData != nil {
-                scheduleRender()
-            }
+            scheduleRender()
             await startLiveActivity()
         } catch {
             alertMessage = "读取照片失败：\(error.localizedDescription)"
@@ -895,20 +895,35 @@ struct DemoPhotoAutoEnhanceView: View {
         let currentFilterName = selectedPreset.filterName
         let currentTransform = imageTransform
         let currentMarkupData = markupData
-        if currentSettings == DemoAdjustmentSettings() && !useAutoEnhance && currentFilterName == nil && currentTransform == .identity {
-            editedImage = imageWithMarkup(originalImage, data: currentMarkupData) ?? originalImage
-            isProcessing = false
-            return
-        }
+        let sourceURL = editingInput?.fullSizeImageURL
+
         Task {
             if debounced { try? await Task.sleep(for: .milliseconds(100)) }
             guard renderToken == token else { return }
             let result = await Task.detached(priority: .userInitiated) {
-                DemoImageProcessor.render(originalImage, settings: currentSettings, autoEnhance: useAutoEnhance, filterName: currentFilterName, transform: currentTransform, sourceURL: sourceURL)
+                DemoImageProcessor.renderCIImage(
+                    originalImage,
+                    settings: currentSettings,
+                    autoEnhance: useAutoEnhance,
+                    filterName: currentFilterName,
+                    transform: currentTransform,
+                    sourceURL: sourceURL
+                )
             }.value
             guard renderToken == token else { return }
-            let rendered = result ?? originalImage
-            editedImage = imageWithMarkup(rendered, data: currentMarkupData) ?? rendered
+
+            if let result {
+                renderedCIImage = result
+                let preview = DemoImageProcessor.makePreviewImage(from: result, scale: originalImage.scale) ?? originalImage
+                let finalPreview = imageWithMarkup(preview, data: currentMarkupData) ?? preview
+                editedImage = finalPreview
+                if currentMarkupData != nil {
+                    renderedCIImage = CIImage(image: finalPreview)
+                }
+            } else {
+                renderedCIImage = nil
+                editedImage = originalImage
+            }
             isProcessing = false
         }
     }
@@ -978,6 +993,7 @@ struct DemoPhotoAutoEnhanceView: View {
                 pushUndo()
                 originalImage = rawImage
                 editedImage = rawImage
+                renderedCIImage = CIImage(image: rawImage)
                 settings = DemoAdjustmentSettings()
                 selectedPreset = .original
                 autoEnhanceEnabled = false
@@ -985,6 +1001,7 @@ struct DemoPhotoAutoEnhanceView: View {
                 markupData = nil
                 analysisResult = nil
                 compareMode = .result
+                scheduleRender()
             } catch {
                 alertMessage = error.localizedDescription
             }
@@ -1127,13 +1144,22 @@ struct DemoPhotoAutoEnhanceView: View {
                         )
                         alertMessage = "Live Photo 的照片帧与动态视频帧已作为非破坏性修改保存。"
                     } else {
-                        try await PhotoKitEditingService.shared.saveRenderedImage(
-                            cgImage,
-                            asset: asset,
-                            input: input,
-                            adjustmentData: data
-                        )
-                        alertMessage = "已将编辑作为非破坏性修改保存到原照片。"
+                        if let renderedCIImage {
+                            try await PhotoKitEditingService.shared.saveRenderedCIImage(
+                                renderedCIImage,
+                                asset: asset,
+                                input: input,
+                                adjustmentData: data
+                            )
+                        } else {
+                            try await PhotoKitEditingService.shared.saveRenderedImage(
+                                cgImage,
+                                asset: asset,
+                                input: input,
+                                adjustmentData: data
+                            )
+                        }
+                        alertMessage = "已将编辑作为 10-bit HEIF 非破坏性修改保存到原照片。"
                     }
                 } else {
                     try await PhotoLibraryService.shared.save(cgImage)
