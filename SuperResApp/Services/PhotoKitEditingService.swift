@@ -64,6 +64,12 @@ actor PhotoKitEditingService {
            type.conforms(to: .rawImage) {
             return try ApplePhotoAnalysisService.renderRawImage(at: url)
         }
+        if let hdrImage = CIImage(
+            contentsOf: url,
+            options: [.applyOrientationProperty: true, .expandToHDR: true]
+        ), let preview = DemoImageProcessor.makePreviewImage(from: hdrImage) {
+            return preview
+        }
         guard let image = UIImage(contentsOfFile: url.path) else {
             throw PhotoKitEditingError.originalImageUnavailable
         }
