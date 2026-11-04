@@ -14,13 +14,20 @@ enum DemoImageProcessor {
         settings: DemoAdjustmentSettings,
         autoEnhance: Bool = false,
         filterName: String? = nil,
-        transform: DemoImageTransform = .identity
+        transform: DemoImageTransform = .identity,
+        sourceURL: URL? = nil
     ) -> UIImage? {
         guard let cgImage = image.cgImage else { return nil }
 
         let orientation = image.imageOrientation.cgImagePropertyOrientation
         let input = CIImage(cgImage: cgImage)
         var output = input
+
+        if transform.usesDepthBlur, let sourceURL,
+           let depthFilter = context.depthBlurEffectFilter(forImageURL: sourceURL, options: nil),
+           let depthImage = depthFilter.outputImage {
+            output = depthImage
+        }
 
         if autoEnhance {
             let options: [CIImageAutoAdjustmentOption: Any] = [
