@@ -222,6 +222,7 @@ struct DemoPhotoAutoEnhanceView: View {
                     let displayImage = compareMode == .original ? originalImage : (editedImage ?? originalImage)
                     Image(uiImage: displayImage)
                         .resizable()
+                        .allowedDynamicRange(.high)
                         .scaledToFit()
                         .frame(width: geo.size.width, height: geo.size.height)
                         .contentShape(Rectangle())
