@@ -78,17 +78,23 @@ final class PhotoEditingViewController: UIViewController, PHContentEditingContro
                 transform: currentTransform,
                 sourceURL: sourceURL
             ),
-            let pqColorSpace = CGColorSpace(name: CGColorSpace.itur_2100_PQ),
             let outputURL = try? output.renderedContentURL(for: .heic) else {
                 DispatchQueue.main.async { completionHandler(nil) }
                 return
             }
 
+            let outputColorSpace = ApplePhotoAnalysisService.containsHDRGainMap(at: sourceURL)
+                ? CGColorSpace(name: CGColorSpace.itur_2100_PQ)
+                : (rendered.colorSpace ?? CGColorSpace(name: CGColorSpace.displayP3))
+            guard let outputColorSpace else {
+                DispatchQueue.main.async { completionHandler(nil) }
+                return
+            }
             do {
                 try CIContext().writeHEIF10Representation(
                     of: rendered,
                     to: outputURL,
-                    colorSpace: pqColorSpace,
+                    colorSpace: outputColorSpace,
                     options: [:]
                 )
                 DispatchQueue.main.async { completionHandler(output) }
