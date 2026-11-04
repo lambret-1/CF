@@ -112,7 +112,7 @@ final class VideoSuperResViewModel: ObservableObject {
     private var processor: VideoSuperResProcessor?
     private var frameInterpolationProcessor: VideoFrameInterpolationProcessor?
     private var generation: Int = 0
-    private var interpolationDebugObserver: NSObjectProtocol?
+    private var interpolationDebugObserver: NSObjectProtocol? = nil
 
     // ❗️后台任务句柄：beginBackgroundTask 返回值，必须与 endBackgroundTask 一一配对
     private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
