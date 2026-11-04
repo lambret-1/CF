@@ -122,11 +122,11 @@ final class VideoFrameInterpolationProcessor: @unchecked Sendable {
             return Task.detached {
                 while !Task.isCancelled, let sample = audioOutput.copyNextSampleBuffer() {
                     while !audioInput.isReadyForMoreMediaData {
-                        if Task.isCancelled { break }
+                        if Task.isCancelled || writer.status == .failed { break }
                         try? await Task.sleep(nanoseconds: 5_000_000)
                     }
                     if Task.isCancelled { break }
-                    _ = audioInput.append(sample)
+                    guard audioInput.append(sample) else { break }
                 }
                 audioInput.markAsFinished()
             }
@@ -184,6 +184,9 @@ final class VideoFrameInterpolationProcessor: @unchecked Sendable {
             try await append(previousBuffer, at: previousTime, adaptor: adaptor, input: videoInput, writer: writer)
             videoInput.markAsFinished()
             await audioTask?.value
+            guard reader.status == .completed else {
+                throw reader.error ?? FrameInterpolationError.readerStartFailed
+            }
             try await finish(writer)
             await progressHandler(1.0)
         } catch {
