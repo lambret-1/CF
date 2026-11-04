@@ -59,7 +59,7 @@ struct PhotoEditorLiveActivityWidget: Widget {
         destination: String,
         tint: Color
     ) -> some View {
-        Link(destination: URL(string: "cfphotoeditor://\\(destination)")!) {
+        Link(destination: URL(string: "cfphotoeditor://\(destination)")!) {
             Label(title, systemImage: icon)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(tint)
