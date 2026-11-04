@@ -2,6 +2,7 @@ import SwiftUI
 import PhotosUI
 import UIKit
 import CoreImage
+import UniformTypeIdentifiers
 import ActivityKit
 import Photos
 import PencilKit
@@ -11,6 +12,7 @@ struct DemoPhotoAutoEnhanceView: View {
     @State private var selectedAsset: PHAsset?
     @State private var editingInput: PHContentEditingInput?
     @State private var renderSourceURL: URL?
+    @State private var usesRAWResource = false
     @State private var analysisResult: ApplePhotoAnalysisResult?
     @State private var foregroundCutout: UIImage?
     @State private var isExtractingSubject = false
@@ -656,12 +658,26 @@ struct DemoPhotoAutoEnhanceView: View {
             var loadedImage: UIImage?
             var loadedAsset: PHAsset?
             var loadedInput: PHContentEditingInput?
+            var loadedSourceURL: URL?
+            var loadedUsesRAW = false
 
             if let identifier = item.itemIdentifier {
                 do {
                     let asset = try await PhotoKitEditingService.shared.fetchAsset(localIdentifier: identifier)
                     let input = try await PhotoKitEditingService.shared.requestEditingInput(for: asset)
-                    loadedImage = try await PhotoKitEditingService.shared.originalImage(from: input)
+                    let isNativeRAW = input.uniformTypeIdentifier.flatMap(UTType.init)?.conforms(to: .rawImage) == true
+                    let shouldUseRAW = isNativeRAW || adjustmentDataUsesRAW(input.adjustmentData)
+                    if shouldUseRAW && !isNativeRAW {
+                        let rawURL = try await PhotoKitEditingService.shared.rawResourceURL(for: asset)
+                        loadedImage = try await Task.detached(priority: .userInitiated) {
+                            try ApplePhotoAnalysisService.renderRawImage(at: rawURL)
+                        }.value
+                        loadedSourceURL = rawURL
+                    } else {
+                        loadedImage = try await PhotoKitEditingService.shared.originalImage(from: input)
+                        loadedSourceURL = input.fullSizeImageURL
+                    }
+                    loadedUsesRAW = shouldUseRAW
                     loadedAsset = asset
                     loadedInput = input
                 } catch {
@@ -684,7 +700,8 @@ struct DemoPhotoAutoEnhanceView: View {
             renderToken = UUID()
             selectedAsset = loadedAsset
             editingInput = loadedInput
-            renderSourceURL = loadedInput?.fullSizeImageURL
+            renderSourceURL = loadedSourceURL
+            usesRAWResource = loadedUsesRAW
             originalImage = image
             editedImage = image
             settings = DemoAdjustmentSettings()
@@ -917,6 +934,14 @@ struct DemoPhotoAutoEnhanceView: View {
         }
     }
 
+    private func adjustmentDataUsesRAW(_ adjustmentData: PHAdjustmentData?) -> Bool {
+        guard let adjustmentData,
+              let root = try? JSONSerialization.jsonObject(with: adjustmentData.data) as? [String: Any] else {
+            return false
+        }
+        return root["usesRAW"] as? Bool ?? false
+    }
+
     private func refreshSelectedAsset() {
         guard let identifier = selectedAsset?.localIdentifier else { return }
         Task {
@@ -960,6 +985,7 @@ struct DemoPhotoAutoEnhanceView: View {
         imageTransform.straightenAngle = root["straightenAngle"] as? Double ?? 0
         imageTransform.usesPerspectiveCorrection = root["perspectiveCorrection"] as? Bool ?? false
         imageTransform.usesDepthBlur = root["depthBlur"] as? Bool ?? false
+        usesRAWResource = root["usesRAW"] as? Bool ?? usesRAWResource
         let cropRatio = root["cropAspectRatio"] as? Double ?? 0
         imageTransform.cropAspectRatio = cropRatio > 0 ? cropRatio : nil
         if let crop = root["cropRect"] as? [Double], crop.count == 4 {
@@ -998,6 +1024,7 @@ struct DemoPhotoAutoEnhanceView: View {
                 undoStack.removeAll()
                 redoStack.removeAll()
                 renderSourceURL = url
+                usesRAWResource = true
                 originalImage = rawImage
                 editedImage = rawImage
                 renderedCIImage = CIImage(image: rawImage)
@@ -1125,6 +1152,7 @@ struct DemoPhotoAutoEnhanceView: View {
                         "straightenAngle": imageTransform.straightenAngle,
                         "perspectiveCorrection": imageTransform.usesPerspectiveCorrection,
                         "depthBlur": imageTransform.usesDepthBlur,
+                        "usesRAW": usesRAWResource,
                         "cropAspectRatio": imageTransform.cropAspectRatio ?? 0,
                         "cropRect": imageTransform.cropRect.map { [$0.origin.x, $0.origin.y, $0.size.width, $0.size.height] } ?? []
                     ]
