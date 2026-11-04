@@ -3,6 +3,7 @@ import Photos
 import ImageIO
 import UniformTypeIdentifiers
 import UIKit
+import UniformTypeIdentifiers
 
 /// PhotoKit-backed editing for existing library assets.
 /// Edits are committed through PHContentEditingOutput so the original resource remains recoverable.
@@ -53,8 +54,15 @@ actor PhotoKitEditingService {
     }
 
     func originalImage(from input: PHContentEditingInput) throws -> UIImage {
-        guard let url = input.fullSizeImageURL,
-              let image = UIImage(contentsOfFile: url.path) else {
+        guard let url = input.fullSizeImageURL else {
+            throw PhotoKitEditingError.originalImageUnavailable
+        }
+        if let identifier = input.uniformTypeIdentifier,
+           let type = UTType(identifier),
+           type.conforms(to: .rawImage) {
+            return try ApplePhotoAnalysisService.renderRawImage(at: url)
+        }
+        guard let image = UIImage(contentsOfFile: url.path) else {
             throw PhotoKitEditingError.originalImageUnavailable
         }
         return image
@@ -80,7 +88,8 @@ actor PhotoKitEditingService {
         let destinationType: UTType = {
             if let identifier = input.uniformTypeIdentifier,
                let type = UTType(identifier),
-               type.conforms(to: .image) {
+               type.conforms(to: .image),
+               !type.conforms(to: .rawImage) {
                 return type
             }
             return .jpeg
