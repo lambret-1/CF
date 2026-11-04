@@ -10,6 +10,8 @@ struct DemoPhotoAutoEnhanceView: View {
     @State private var selectedAsset: PHAsset?
     @State private var editingInput: PHContentEditingInput?
     @State private var analysisResult: ApplePhotoAnalysisResult?
+    @State private var foregroundCutout: UIImage?
+    @State private var isExtractingSubject = false
     @State private var isAnalyzing = false
     @State private var isLoadingRAW = false
     @State private var showMarkupEditor = false
@@ -357,6 +359,13 @@ struct DemoPhotoAutoEnhanceView: View {
                         }
                     }
                     if let result = analysisResult {
+                        Button {
+                            extractForegroundSubject()
+                        } label: {
+                            Label(isExtractingSubject ? "分离中…" : "主体抠图", systemImage: "person.crop.rectangle")
+                                .font(.system(size: 11, weight: .semibold))
+                        }
+                        .disabled(isExtractingSubject)
                         if result.depthData != nil {
                             Button {
                                 pushUndo()
@@ -366,6 +375,18 @@ struct DemoPhotoAutoEnhanceView: View {
                                 Label(imageTransform.usesDepthBlur ? "关闭景深" : "Apple 景深效果", systemImage: "camera.aperture")
                                     .font(.system(size: 11, weight: .semibold))
                             }
+                        }
+                        if let foregroundCutout {
+                            Image(uiImage: foregroundCutout)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(height: 56)
+                                .contextMenu {
+                                    Button("分享透明主体", systemImage: "square.and.arrow.up") {
+                                        editedImage = foregroundCutout
+                                        showShareSheet = true
+                                    }
+                                }
                         }
                         HStack(spacing: 14) {
                             analysisMetric("人脸", value: "\(result.faceCount)")
@@ -677,6 +698,7 @@ struct DemoPhotoAutoEnhanceView: View {
             redoStack.removeAll()
             compareMode = .result
             analysisResult = nil
+            foregroundCutout = nil
             markupData = nil
             restoreAdjustmentData(loadedInput?.adjustmentData)
             if loadedInput?.adjustmentData != nil {
@@ -962,6 +984,24 @@ struct DemoPhotoAutoEnhanceView: View {
                 alertMessage = error.localizedDescription
             }
             isLoadingRAW = false
+        }
+    }
+
+    private func extractForegroundSubject() {
+        guard let image = originalImage else { return }
+        isExtractingSubject = true
+        Task {
+            do {
+                foregroundCutout = try await Task.detached(priority: .userInitiated) {
+                    try ApplePhotoAnalysisService.foregroundCutout(from: image)
+                }.value
+                if foregroundCutout == nil {
+                    alertMessage = "Vision 未检测到可分离的前景主体。"
+                }
+            } catch {
+                alertMessage = error.localizedDescription
+            }
+            isExtractingSubject = false
         }
     }
 
