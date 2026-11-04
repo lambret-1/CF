@@ -2,9 +2,9 @@ import SwiftUI
 import PhotosUI
 import UIKit
 
-// MARK: - Theme
+// MARK: - Theme & Constants
 
-private enum StudioTheme {
+private enum DemoPhotoTheme {
     static let accent = Color(red: 0.43, green: 0.78, blue: 0.68)
     static let onAccent = Color.black.opacity(0.85)
     static let previewBackground = Color(red: 0.10, green: 0.12, blue: 0.13)
@@ -31,19 +31,19 @@ private enum StudioTheme {
 
 // MARK: - Snapshot & Specs
 
-private struct EditSnapshot: Equatable {
+private struct DemoEditSnapshot: Equatable {
     var settings: DemoAdjustmentSettings
     var preset: DemoPhotoPreset
     var autoEnhance: Bool
 }
 
-private struct EditingSession {
+private struct DemoEditingSession {
     var settings: DemoAdjustmentSettings
     var preset: DemoPhotoPreset
     var autoEnhance: Bool
 }
 
-private struct SliderSpec: Identifiable {
+private struct DemoSliderSpec: Identifiable {
     let id: String
     let title: String
     let icon: String
@@ -52,25 +52,25 @@ private struct SliderSpec: Identifiable {
     let format: (Double) -> String
 
     static func signed(_ keyPath: WritableKeyPath<DemoAdjustmentSettings, Double>,
-                       title: String, icon: String, range: ClosedRange<Double>) -> SliderSpec {
-        SliderSpec(id: title, title: title, icon: icon, keyPath: keyPath, range: range) {
+                       title: String, icon: String, range: ClosedRange<Double>) -> DemoSliderSpec {
+        DemoSliderSpec(id: title, title: title, icon: icon, keyPath: keyPath, range: range) {
             String(format: "%+.2f", $0)
         }
     }
 
     static func decimal(_ keyPath: WritableKeyPath<DemoAdjustmentSettings, Double>,
-                        title: String, icon: String, range: ClosedRange<Double>) -> SliderSpec {
-        SliderSpec(id: title, title: title, icon: icon, keyPath: keyPath, range: range) {
+                        title: String, icon: String, range: ClosedRange<Double>) -> DemoSliderSpec {
+        DemoSliderSpec(id: title, title: title, icon: icon, keyPath: keyPath, range: range) {
             String(format: "%.2f", $0)
         }
     }
 }
 
-private struct SendableImage: @unchecked Sendable {
+private struct DemoSendableImage: @unchecked Sendable {
     let image: UIImage?
 }
 
-private struct StudioAlert: Identifiable {
+private struct DemoStudioAlert: Identifiable {
     let id = UUID()
     let title: String
     let message: String
@@ -82,16 +82,17 @@ struct DemoPhotoAutoEnhanceView: View {
     @State private var pickerItem: PhotosPickerItem?
     @State private var originalImage: UIImage?
     @State private var editedImage: UIImage?
+    
     @State private var settings = DemoAdjustmentSettings()
     @State private var selectedPreset: DemoPhotoPreset = .original
-    @State private var activeTab: EditorTab = .enhance
-    @State private var compareMode: PreviewMode = .result
+    @State private var activeTab: DemoEditorTab = .enhance
+    @State private var compareMode: DemoPreviewMode = .result
     @State private var comparePosition: CGFloat = 0.5
     @State private var autoEnhanceEnabled = false
 
-    @State private var undoStack: [EditSnapshot] = []
-    @State private var redoStack: [EditSnapshot] = []
-    @State private var editingSessions: [String: EditingSession] = [:]
+    @State private var undoStack: [DemoEditSnapshot] = []
+    @State private var redoStack: [DemoEditSnapshot] = []
+    @State private var editingSessions: [String: DemoEditingSession] = [:]
 
     @State private var renderToken = 0
     @State private var renderTask: Task<Void, Never>?
@@ -99,7 +100,7 @@ struct DemoPhotoAutoEnhanceView: View {
     @State private var isLoading = false
     @State private var isSaving = false
 
-    @State private var alert: StudioAlert?
+    @State private var alert: DemoStudioAlert?
     @State private var showShareSheet = false
     @State private var showAutoEnhanceConfirm = false
 
@@ -108,9 +109,9 @@ struct DemoPhotoAutoEnhanceView: View {
     private static let presets: [DemoPhotoPreset] =
         DemoPhotoPreset.allCases.filter { $0 != .custom }
 
-    private let accent = StudioTheme.accent
+    private let accent = DemoPhotoTheme.accent
 
-    private var sliderSpecs: [SliderSpec] {
+    private var sliderSpecs: [DemoSliderSpec] {
         [
             .signed(\.exposure,    title: "曝光",   icon: "sun.max",                 range: -2...2),
             .signed(\.brightness,  title: "亮度",   icon: "sun.min",                 range: -0.5...0.5),
@@ -128,15 +129,7 @@ struct DemoPhotoAutoEnhanceView: View {
     var body: some View {
         VStack(spacing: 0) {
             toolbar
-            ScrollView(showsIndicators: false) {
-                VStack(spacing: 20) {
-                    preview
-                    if originalImage == nil { welcome } else { editor }
-                }
-                .padding(.horizontal, StudioTheme.contentPadding)
-                .padding(.top, 12)
-                .padding(.bottom, 22)
-            }
+            scrollContent
             if originalImage != nil {
                 bottomBar
             }
@@ -178,14 +171,30 @@ struct DemoPhotoAutoEnhanceView: View {
         .onDisappear { renderTask?.cancel() }
     }
 
-    // MARK: Toolbar
+    // MARK: - Layout Components
+    
+    private var scrollContent: some View {
+        ScrollView(showsIndicators: false) {
+            VStack(spacing: 20) {
+                previewSection
+                if originalImage == nil {
+                    welcomeSection
+                } else {
+                    editorSection
+                }
+            }
+            .padding(.horizontal, DemoPhotoTheme.contentPadding)
+            .padding(.top, 12)
+            .padding(.bottom, 22)
+        }
+    }
 
     private var toolbar: some View {
         HStack(spacing: 4) {
             Button { dismiss() } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 15, weight: .semibold))
-                    .frame(width: StudioTheme.touchSize, height: StudioTheme.touchSize)
+                    .frame(width: DemoPhotoTheme.touchSize, height: DemoPhotoTheme.touchSize)
                     .contentShape(Rectangle())
             }
             .accessibilityLabel("关闭")
@@ -204,7 +213,7 @@ struct DemoPhotoAutoEnhanceView: View {
             Button("重置") { resetEdits() }
                 .font(.caption.weight(.semibold))
                 .padding(.horizontal, 10)
-                .frame(minHeight: StudioTheme.touchSize)
+                .frame(minHeight: DemoPhotoTheme.touchSize)
                 .contentShape(Rectangle())
                 .disabled(originalImage == nil)
                 .accessibilityLabel("重置所有调节")
@@ -220,53 +229,58 @@ struct DemoPhotoAutoEnhanceView: View {
         Button(action: action) {
             Image(systemName: systemName)
                 .font(.system(size: 17, weight: .medium))
-                .frame(width: StudioTheme.touchSize, height: StudioTheme.touchSize)
+                .frame(width: DemoPhotoTheme.touchSize, height: DemoPhotoTheme.touchSize)
                 .contentShape(Rectangle())
         }
         .disabled(disabled)
         .accessibilityLabel(label)
     }
 
-    // MARK: Preview
+    // MARK: - Preview
 
-    private var preview: some View {
+    private var previewSection: some View {
         VStack(spacing: 11) {
-            ZStack {
-                RoundedRectangle(cornerRadius: StudioTheme.cornerRadiusLarge, style: .continuous)
-                    .fill(StudioTheme.previewBackground)
-                if let originalImage {
-                    previewContent(original: originalImage)
-                } else {
-                    previewEmpty
-                }
-                if isLoading {
-                    Color.black.opacity(0.4)
-                    ProgressView().tint(.white)
-                } else if isProcessing {
-                    processingOverlay
-                }
-            }
-            .aspectRatio(previewAspect, contentMode: .fit)
-            .frame(minHeight: StudioTheme.minPreviewHeight)
-            .clipShape(RoundedRectangle(cornerRadius: StudioTheme.cornerRadiusLarge, style: .continuous))
-            .overlay(alignment: .bottomLeading) {
-                if originalImage != nil {
-                    modeBadge.padding(12)
-                }
-            }
-
+            previewImageContainer
             if originalImage != nil {
                 previewControls
             }
         }
     }
 
+    private var previewImageContainer: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: DemoPhotoTheme.cornerRadiusLarge, style: .continuous)
+                .fill(DemoPhotoTheme.previewBackground)
+            
+            if let originalImage {
+                previewContent(original: originalImage)
+            } else {
+                previewEmpty
+            }
+            
+            if isLoading {
+                Color.black.opacity(0.4)
+                ProgressView().tint(.white)
+            } else if isProcessing {
+                processingOverlay
+            }
+        }
+        .aspectRatio(previewAspect, contentMode: .fit)
+        .frame(minHeight: DemoPhotoTheme.minPreviewHeight)
+        .clipShape(RoundedRectangle(cornerRadius: DemoPhotoTheme.cornerRadiusLarge, style: .continuous))
+        .overlay(alignment: .bottomLeading) {
+            if originalImage != nil {
+                modeBadge.padding(12)
+            }
+        }
+    }
+
     private var previewAspect: CGFloat {
         guard let image = editedImage ?? originalImage, image.size.height > 0 else {
-            return StudioTheme.previewAspectFallback
+            return DemoPhotoTheme.previewAspectFallback
         }
         let ratio = image.size.width / image.size.height
-        return min(max(ratio, StudioTheme.previewAspectMin), StudioTheme.previewAspectMax)
+        return min(max(ratio, DemoPhotoTheme.previewAspectMin), DemoPhotoTheme.previewAspectMax)
     }
 
     private func previewContent(original: UIImage) -> some View {
@@ -297,7 +311,7 @@ struct DemoPhotoAutoEnhanceView: View {
                     .onChanged { value in
                         guard compareMode == .compare else { return }
                         let raw = value.location.x / max(geo.size.width, 1)
-                        comparePosition = min(max(raw, StudioTheme.compareMin), StudioTheme.compareMax)
+                        comparePosition = min(max(raw, DemoPhotoTheme.compareMin), DemoPhotoTheme.compareMax)
                     }
             )
             .accessibilityElement(children: .ignore)
@@ -307,9 +321,9 @@ struct DemoPhotoAutoEnhanceView: View {
                 guard compareMode == .compare else { return }
                 switch direction {
                 case .increment:
-                    comparePosition = min(comparePosition + StudioTheme.compareStep, StudioTheme.compareMax)
+                    comparePosition = min(comparePosition + DemoPhotoTheme.compareStep, DemoPhotoTheme.compareMax)
                 case .decrement:
-                    comparePosition = max(comparePosition - StudioTheme.compareStep, StudioTheme.compareMin)
+                    comparePosition = max(comparePosition - DemoPhotoTheme.compareStep, DemoPhotoTheme.compareMin)
                 @unknown default:
                     break
                 }
@@ -322,16 +336,16 @@ struct DemoPhotoAutoEnhanceView: View {
         return ZStack {
             Rectangle()
                 .fill(.white)
-                .frame(width: StudioTheme.dividerWidth, height: size.height)
+                .frame(width: DemoPhotoTheme.dividerWidth, height: size.height)
             Circle()
                 .fill(.white)
-                .frame(width: StudioTheme.handleDiameter, height: StudioTheme.handleDiameter)
+                .frame(width: DemoPhotoTheme.handleDiameter, height: DemoPhotoTheme.handleDiameter)
                 .overlay {
                     Image(systemName: "arrow.left.and.right")
                         .font(.system(size: 12, weight: .bold))
                         .foregroundStyle(.black)
                 }
-                .frame(width: StudioTheme.handleHitSize, height: StudioTheme.handleHitSize)
+                .frame(width: DemoPhotoTheme.handleHitSize, height: DemoPhotoTheme.handleHitSize)
                 .contentShape(Rectangle())
         }
         .position(x: x, y: size.height / 2)
@@ -386,7 +400,7 @@ struct DemoPhotoAutoEnhanceView: View {
         }
     }
 
-    private func previewModeButton(_ title: String, mode: PreviewMode, icon: String) -> some View {
+    private func previewModeButton(_ title: String, mode: DemoPreviewMode, icon: String) -> some View {
         Button {
             compareMode = mode
         } label: {
@@ -407,9 +421,9 @@ struct DemoPhotoAutoEnhanceView: View {
         return "\(cg.width) × \(cg.height)"
     }
 
-    // MARK: Welcome
+    // MARK: - Welcome
 
-    private var welcome: some View {
+    private var welcomeSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
@@ -430,7 +444,7 @@ struct DemoPhotoAutoEnhanceView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 14)
                     .background(accent, in: RoundedRectangle(cornerRadius: 14))
-                    .foregroundStyle(StudioTheme.onAccent)
+                    .foregroundStyle(DemoPhotoTheme.onAccent)
             }
             HStack(spacing: 7) {
                 featurePill("原生增强", icon: "sparkles")
@@ -451,12 +465,12 @@ struct DemoPhotoAutoEnhanceView: View {
             .background(Color(uiColor: .tertiarySystemFill), in: Capsule())
     }
 
-    // MARK: Editor
+    // MARK: - Editor
 
-    private var editor: some View {
+    private var editorSection: some View {
         VStack(alignment: .leading, spacing: 17) {
             HStack(spacing: 6) {
-                ForEach(EditorTab.allCases) { tab in
+                ForEach(DemoEditorTab.allCases) { tab in
                     Button {
                         withAnimation(.easeInOut(duration: 0.2)) { activeTab = tab }
                     } label: {
@@ -477,12 +491,17 @@ struct DemoPhotoAutoEnhanceView: View {
                     .accessibilityAddTraits(activeTab == tab ? .isSelected : [])
                 }
             }
-            switch activeTab {
-            case .enhance: enhancePanel
-            case .adjust:  adjustmentPanel
-            case .compare: comparePanel
-            case .export:  exportPanel
-            }
+            editorPanelContent
+        }
+    }
+
+    @ViewBuilder
+    private var editorPanelContent: some View {
+        switch activeTab {
+        case .enhance: enhancePanel
+        case .adjust:  adjustmentPanel
+        case .compare: comparePanel
+        case .export:  exportPanel
         }
     }
 
@@ -505,7 +524,7 @@ struct DemoPhotoAutoEnhanceView: View {
                     Spacer()
                     Image(systemName: "arrow.right")
                 }
-                .foregroundStyle(StudioTheme.onAccent)
+                .foregroundStyle(DemoPhotoTheme.onAccent)
                 .padding(13)
                 .background(accent, in: RoundedRectangle(cornerRadius: 16))
                 .contentShape(Rectangle())
@@ -571,7 +590,7 @@ struct DemoPhotoAutoEnhanceView: View {
         }
     }
 
-    private func sliderRow(_ spec: SliderSpec) -> some View {
+    private func sliderRow(_ spec: DemoSliderSpec) -> some View {
         VStack(spacing: 7) {
             HStack {
                 Label(spec.title, systemImage: spec.icon)
@@ -593,19 +612,19 @@ struct DemoPhotoAutoEnhanceView: View {
                 in: spec.range,
                 onEditingChanged: { editing in
                     if editing {
-                        editingSessions[spec.id] = EditingSession(
+                        editingSessions[spec.id] = DemoEditingSession(
                             settings: settings,
                             preset: selectedPreset,
                             autoEnhance: autoEnhanceEnabled
                         )
                     } else if let session = editingSessions.removeValue(forKey: spec.id) {
                         if session.settings != settings {
-                            undoStack.append(EditSnapshot(
+                            undoStack.append(DemoEditSnapshot(
                                 settings: session.settings,
                                 preset: session.preset,
                                 autoEnhance: session.autoEnhance
                             ))
-                            if undoStack.count > StudioTheme.undoLimit { undoStack.removeFirst() }
+                            if undoStack.count > DemoPhotoTheme.undoLimit { undoStack.removeFirst() }
                             redoStack.removeAll()
                         }
                     }
@@ -705,7 +724,7 @@ struct DemoPhotoAutoEnhanceView: View {
         }
     }
 
-    // MARK: Bottom Bar
+    // MARK: - Bottom Bar
 
     private var bottomBar: some View {
         HStack(spacing: 11) {
@@ -721,7 +740,7 @@ struct DemoPhotoAutoEnhanceView: View {
             Button { saveToPhotos() } label: {
                 HStack(spacing: 7) {
                     if isSaving {
-                        ProgressView().tint(StudioTheme.onAccent)
+                        ProgressView().tint(DemoPhotoTheme.onAccent)
                     } else {
                         Image(systemName: "square.and.arrow.down")
                     }
@@ -731,7 +750,7 @@ struct DemoPhotoAutoEnhanceView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 13)
                 .background(accent, in: RoundedRectangle(cornerRadius: 13))
-                .foregroundStyle(StudioTheme.onAccent)
+                .foregroundStyle(DemoPhotoTheme.onAccent)
                 .contentShape(Rectangle())
             }
             .disabled(isSaving || isProcessing || isLoading)
@@ -742,7 +761,7 @@ struct DemoPhotoAutoEnhanceView: View {
         .background(.bar)
     }
 
-    // MARK: Actions
+    // MARK: - Actions
 
     @MainActor
     private func loadPhoto(_ item: PhotosPickerItem) async {
@@ -751,7 +770,7 @@ struct DemoPhotoAutoEnhanceView: View {
         do {
             guard let data = try await item.loadTransferable(type: Data.self),
                   let image = UIImage(data: data) else {
-                alert = StudioAlert(title: "导入失败", message: "无法读取所选照片，请重新选择。")
+                alert = DemoStudioAlert(title: "导入失败", message: "无法读取所选照片，请重新选择。")
                 return
             }
             renderTask?.cancel()
@@ -767,7 +786,7 @@ struct DemoPhotoAutoEnhanceView: View {
             compareMode = .result
             comparePosition = 0.5
         } catch {
-            alert = StudioAlert(title: "导入失败", message: error.localizedDescription)
+            alert = DemoStudioAlert(title: "导入失败", message: error.localizedDescription)
         }
     }
 
@@ -796,13 +815,13 @@ struct DemoPhotoAutoEnhanceView: View {
         scheduleRender()
     }
 
-    private var currentSnapshot: EditSnapshot {
-        EditSnapshot(settings: settings, preset: selectedPreset, autoEnhance: autoEnhanceEnabled)
+    private var currentSnapshot: DemoEditSnapshot {
+        DemoEditSnapshot(settings: settings, preset: selectedPreset, autoEnhance: autoEnhanceEnabled)
     }
 
     private func pushUndo() {
         undoStack.append(currentSnapshot)
-        if undoStack.count > StudioTheme.undoLimit { undoStack.removeFirst() }
+        if undoStack.count > DemoPhotoTheme.undoLimit { undoStack.removeFirst() }
         redoStack.removeAll()
     }
 
@@ -840,10 +859,10 @@ struct DemoPhotoAutoEnhanceView: View {
         let token = renderToken
         let currentSettings = settings
         let useAutoEnhance = autoEnhanceEnabled
-        let imageWrapper = SendableImage(image: originalImage)
+        let imageWrapper = DemoSendableImage(image: originalImage)
 
         renderTask = Task {
-            try? await Task.sleep(for: StudioTheme.renderDebounce)
+            try? await Task.sleep(for: DemoPhotoTheme.renderDebounce)
             if Task.isCancelled { return }
             isProcessing = true
             let result: UIImage? = await Task.detached(priority: .userInitiated) {
@@ -851,7 +870,7 @@ struct DemoPhotoAutoEnhanceView: View {
                 let rendered = DemoImageProcessor.render(img,
                                                         settings: currentSettings,
                                                         autoEnhance: useAutoEnhance)
-                return SendableImage(image: rendered).image
+                return DemoSendableImage(image: rendered).image
             }.value
             if renderToken != token { return }
             editedImage = result ?? originalImage
@@ -862,20 +881,20 @@ struct DemoPhotoAutoEnhanceView: View {
     private func saveToPhotos() {
         guard !isProcessing, !isLoading else { return }
         guard let image = editedImage ?? originalImage else {
-            alert = StudioAlert(title: "保存失败", message: "没有可保存的照片。")
+            alert = DemoStudioAlert(title: "保存失败", message: "没有可保存的照片。")
             return
         }
         guard let cgImage = image.cgImage else {
-            alert = StudioAlert(title: "保存失败", message: "无法处理该照片，请重试。")
+            alert = DemoStudioAlert(title: "保存失败", message: "无法处理该照片，请重试。")
             return
         }
         isSaving = true
         Task {
             do {
                 try await PhotoLibraryService.shared.save(cgImage)
-                alert = StudioAlert(title: "已保存", message: "照片已保存到系统相册。")
+                alert = DemoStudioAlert(title: "已保存", message: "照片已保存到系统相册。")
             } catch {
-                alert = StudioAlert(title: "保存失败", message: error.localizedDescription)
+                alert = DemoStudioAlert(title: "保存失败", message: error.localizedDescription)
             }
             isSaving = false
         }
@@ -884,9 +903,9 @@ struct DemoPhotoAutoEnhanceView: View {
 
 // MARK: - Supporting Types
 
-private enum PreviewMode { case result, compare, original }
+private enum DemoPreviewMode { case result, compare, original }
 
-private enum EditorTab: String, CaseIterable, Identifiable {
+private enum DemoEditorTab: String, CaseIterable, Identifiable {
     case enhance, adjust, compare, export
     var id: String { rawValue }
     var title: String {
