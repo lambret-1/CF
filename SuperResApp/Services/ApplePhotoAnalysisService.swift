@@ -101,15 +101,19 @@ enum ApplePhotoAnalysisService {
                 0,
                 kCGImageAuxiliaryDataTypePortraitEffectsMatte
            ) as? [AnyHashable: Any],
-           let matte = try? AVPortraitEffectsMatte(fromDictionaryRepresentation: auxiliary),
-           let matteImage = CIImage(portaitEffectsMatte: matte) {
-            let foreground = CIImage(cgImage: cgImage)
-            return makeCutout(foreground: foreground, mask: matteImage, scale: image.scale)
+           let matte = try? AVPortraitEffectsMatte(fromDictionaryRepresentation: auxiliary) {
+            let orientation = image.imageOrientation.cgImagePropertyOrientation
+            let orientedMatte = matte.applyingExifOrientation(orientation)
+            if let matteImage = CIImage(portaitEffectsMatte: orientedMatte) {
+                let foreground = CIImage(cgImage: cgImage).oriented(orientation)
+                return makeCutout(foreground: foreground, mask: matteImage, scale: image.scale)
+            }
         }
 
+        let orientation = image.imageOrientation.cgImagePropertyOrientation
         let handler = VNImageRequestHandler(
             cgImage: cgImage,
-            orientation: image.imageOrientation.cgImagePropertyOrientation,
+            orientation: orientation,
             options: [:]
         )
         let request = VNGenerateForegroundInstanceMaskRequest()
@@ -120,7 +124,7 @@ enum ApplePhotoAnalysisService {
             from: handler
         )
 
-        let foreground = CIImage(cgImage: cgImage)
+        let foreground = CIImage(cgImage: cgImage).oriented(orientation)
         let mask = CIImage(cvPixelBuffer: maskBuffer)
         return makeCutout(foreground: foreground, mask: mask, scale: image.scale)
     }
