@@ -237,16 +237,29 @@ final class VideoFrameInterpolationProcessor: @unchecked Sendable {
 
             // 导出完成后读取文件系统中的实际大小，并按成功 append 的帧数统计输出帧数。
             let outputFrameCount = processedFrames + 1 + aiIntermediateFrames + blendedIntermediateFrames
-            let outputFrameRate = nominalFrameRate.isFinite && nominalFrameRate > 0
+            let estimatedOutputFrameRate = nominalFrameRate.isFinite && nominalFrameRate > 0
                 ? nominalFrameRate * Double(multiplier)
                 : 0
-            let outputDisplaySize = CGSize(width: width, height: height).applying(preferredTransform)
-            let outputWidth = Int(abs(outputDisplaySize.width))
-            let outputHeight = Int(abs(outputDisplaySize.height))
+            let outputAsset = AVURLAsset(url: outputURL)
+            let outputTracks = (try? await outputAsset.loadTracks(withMediaType: .video)) ?? []
+            var outputWidth = width
+            var outputHeight = height
+            var outputFrameRate = estimatedOutputFrameRate
+            if let outputTrack = outputTracks.first {
+                let actualSize = (try? await outputTrack.load(.naturalSize)) ?? CGSize(width: width, height: height)
+                let actualTransform = (try? await outputTrack.load(.preferredTransform)) ?? preferredTransform
+                let displaySize = actualSize.applying(actualTransform)
+                outputWidth = Int(abs(displaySize.width))
+                outputHeight = Int(abs(displaySize.height))
+                let actualFrameRate = Double((try? await outputTrack.load(.nominalFrameRate)) ?? 0)
+                if actualFrameRate.isFinite && actualFrameRate > 0 {
+                    outputFrameRate = actualFrameRate
+                }
+            }
             let outputFileSize = (try? outputURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
             let outputFrameRateText = outputFrameRate > 0
                 ? String(format: "%.2f fps", outputFrameRate)
-                : "未知（源视频帧率不可用）"
+                : "未知（输出视频轨道未提供帧率）"
 
             await log(
                 """
