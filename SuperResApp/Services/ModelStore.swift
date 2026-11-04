@@ -68,11 +68,19 @@ actor ModelStore {
         } catch {
             // 补帧模型与超分模型的输入输出契约不同，禁止回退到 PiperSR。
             let manifest = await manifestLoader.manifestItem(for: modelID)
-            if manifest?.task != "frameInterpolation", modelID != "piper-sr-2x" {
+            if manifest?.task == "frameInterpolation",
+               let repairedURL = try? await repairFrameInterpolationModel(at: modelURL) {
+                do {
+                    model = try MLModel(contentsOf: repairedURL, configuration: config)
+                } catch {
+                    throw ModelStoreError.loadFailed("RIFE 模型重新编译后仍无法加载：\(error.localizedDescription)")
+                }
+            } else if manifest?.task != "frameInterpolation", modelID != "piper-sr-2x" {
                 NSLog("模型 \(modelID) 加载失败，尝试回退到内置 PiperSR：\(error.localizedDescription)")
                 return try await fallbackToPiperSR()
+            } else {
+                throw ModelStoreError.loadFailed(error.localizedDescription)
             }
-            throw ModelStoreError.loadFailed(error.localizedDescription)
         }
 
         // 缓存管理
@@ -81,6 +89,39 @@ actor ModelStore {
         evictIfNeeded()
 
         return model
+    }
+
+    /// 修复被错误标记为 .mlmodelc、实际却包含 .mlmodel 源文件的补帧包。
+    /// 只有重新编译成功后才替换原目录，避免编译失败破坏现有模型数据。
+    private func repairFrameInterpolationModel(at modelURL: URL) async throws -> URL? {
+        guard let enumerator = FileManager.default.enumerator(
+            at: modelURL,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else { return nil }
+
+        var sourceURL: URL?
+        for case let candidate as URL in enumerator
+        where candidate.pathExtension.lowercased() == "mlmodel" {
+            sourceURL = candidate
+            break
+        }
+        guard let sourceURL else { return nil }
+
+        let compiledURL = try await MLModel.compileModel(at: sourceURL)
+        let fileManager = FileManager.default
+        let backupURL = modelURL.deletingLastPathComponent()
+            .appendingPathComponent("\(modelURL.lastPathComponent).invalid-\(UUID().uuidString)")
+
+        try fileManager.moveItem(at: modelURL, to: backupURL)
+        do {
+            try fileManager.moveItem(at: compiledURL, to: modelURL)
+            try? fileManager.removeItem(at: backupURL)
+            return modelURL
+        } catch {
+            try? fileManager.moveItem(at: backupURL, to: modelURL)
+            throw error
+        }
     }
 
     /// 专门加载 RIFE 补帧模型；校验用途并禁止超分 fallback。
