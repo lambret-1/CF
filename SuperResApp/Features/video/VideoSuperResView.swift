@@ -38,7 +38,7 @@ struct VideoSuperResView: View {
             errorBanner
             Spacer(minLength: 0)
             processingOptions
-            modelMenu
+            if viewModel.processingMode == .superResolution { modelMenu }
             actionArea
         }
         .navigationTitle("视频处理")
