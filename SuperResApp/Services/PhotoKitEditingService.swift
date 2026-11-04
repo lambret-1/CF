@@ -1,5 +1,6 @@
 import Foundation
 import Photos
+import PencilKit
 import CoreImage
 import CoreImage.CIFilterBuiltins
 import ImageIO
@@ -220,12 +221,25 @@ actor PhotoKitEditingService {
         filterName: String?,
         autoEnhance: Bool,
         transform: DemoImageTransform,
-        adjustmentData: Data
+        adjustmentData: Data,
+        markupData: Data?,
+        markupSize: CGSize,
+        markupScale: CGFloat
     ) async throws {
         guard input.livePhoto != nil,
               let editingContext = PHLivePhotoEditingContext(livePhotoEditingInput: input) else {
             throw PhotoKitEditingError.livePhotoUnavailable
         }
+
+        let markupOverlay: CIImage? = {
+            guard let markupData,
+                  let drawing = try? PKDrawing(data: markupData) else { return nil }
+            let image = drawing.image(
+                from: CGRect(origin: .zero, size: markupSize),
+                scale: markupScale
+            )
+            return CIImage(image: image)
+        }()
 
         editingContext.frameProcessor = { frame, _ in
             var output = frame.image
@@ -294,6 +308,17 @@ actor PhotoKitEditingService {
                 filter?.setValue(settings.vignette, forKey: "inputIntensity")
                 filter?.setValue(max(output.extent.width, output.extent.height) * 0.75, forKey: "inputRadius")
                 if let next = filter?.outputImage { output = next }
+            }
+
+            if let markupOverlay {
+                let scaleX = output.extent.width / max(markupOverlay.extent.width, 1)
+                let scaleY = output.extent.height / max(markupOverlay.extent.height, 1)
+                let scaled = markupOverlay.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
+                let aligned = scaled.transformed(by: CGAffineTransform(
+                    translationX: output.extent.minX,
+                    y: output.extent.minY
+                ))
+                output = aligned.composited(over: output)
             }
 
             if transform.usesPerspectiveCorrection,
