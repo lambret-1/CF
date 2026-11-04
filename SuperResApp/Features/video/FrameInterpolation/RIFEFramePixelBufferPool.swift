@@ -4,7 +4,7 @@ import OSLog
 /// CVPixelBuffer 复用池：避免重复分配像素缓冲区，降低内存峰值和 GC 压力
 final class RIFEFramePixelBufferPool {
     private let logger = Logger(subsystem: "com.superres.app", category: "RIFEFramePixelBufferPool")
-    private var pool: CVRIFEFramePixelBufferPool?
+    private var pool: CVPixelBufferPool?
     private(set) var width: Int = 0
     private(set) var height: Int = 0
     private(set) var pixelFormat: OSType = 0
@@ -26,7 +26,7 @@ final class RIFEFramePixelBufferPool {
         self.pixelFormat = format
 
         let poolAttrs: [String: Any] = [
-            kCVRIFEFramePixelBufferPoolMinimumBufferCountKey as String: minBufferCount
+            kCVPixelBufferPoolMinimumBufferCountKey as String: minBufferCount
         ]
         let bufferAttrs: [String: Any] = [
             kCVPixelBufferWidthKey as String: width,
@@ -35,8 +35,8 @@ final class RIFEFramePixelBufferPool {
             kCVPixelBufferIOSurfacePropertiesKey as String: [:]
         ]
 
-        var newPool: CVRIFEFramePixelBufferPool?
-        let status = CVRIFEFramePixelBufferPoolCreate(
+        var newPool: CVPixelBufferPool?
+        let status = CVPixelBufferPoolCreate(
             nil,
             poolAttrs as CFDictionary,
             bufferAttrs as CFDictionary,
@@ -60,7 +60,7 @@ final class RIFEFramePixelBufferPool {
         }
 
         var buffer: CVPixelBuffer?
-        let status = CVRIFEFramePixelBufferPoolCreatePixelBuffer(nil, pool, &buffer)
+        let status = CVPixelBufferPoolCreatePixelBuffer(nil, pool, &buffer)
 
         if status != kCVReturnSuccess {
             logger.error("从池中获取缓冲区失败，状态码: \(status, privacy: .public)")
