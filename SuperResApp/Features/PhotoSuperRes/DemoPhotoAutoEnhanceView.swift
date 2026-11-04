@@ -21,27 +21,41 @@ struct DemoPhotoAutoEnhanceView: View {
     @State private var alertMessage: String?
     @State private var showShareSheet = false
     @State private var selectedAdjustment: AdjustmentControl = .exposure
+    @State private var previewResetTask: Task<Void, Never>?
     @Environment(\.dismiss) private var dismiss
+
+    init(initialPickerItem: PhotosPickerItem? = nil) {
+        _pickerItem = State(initialValue: initialPickerItem)
+    }
 
     private let accent = Color(red: 0.43, green: 0.78, blue: 0.68)
 
     var body: some View {
-        VStack(spacing: 0) {
-            navigationBar
-            if originalImage != nil { quickToolbar }
-            preview
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(.horizontal, 8)
-            if originalImage != nil {
-                parameterPanel
-                editorTabBar
-            } else {
-                welcome
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 20)
+        GeometryReader { geometry in
+            VStack(spacing: 0) {
+                navigationBar
+                if originalImage != nil { quickToolbar }
+                preview
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                if originalImage != nil {
+                    parameterPanel
+                    editorTabBar
+                } else {
+                    welcome
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 18)
+                }
             }
+            .padding(.top, max(geometry.safeAreaInsets.top, 48))
+            .padding(.bottom, max(geometry.safeAreaInsets.bottom, 14))
+            .frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
+            .background(Color(uiColor: .systemBackground))
         }
-        .background(Color(uiColor: .systemBackground))
+        .ignoresSafeArea(.container, edges: .all)
+        .statusBarHidden(true)
+        .persistentSystemOverlays(.hidden)
         .toolbar(.hidden, for: .navigationBar)
         .onChange(of: pickerItem) { _, item in
             guard let item else { return }
@@ -59,6 +73,9 @@ struct DemoPhotoAutoEnhanceView: View {
             if let image = editedImage ?? originalImage {
                 DemoShareSheet(items: [image])
             }
+        }
+        .onDisappear {
+            previewResetTask?.cancel()
         }
     }
 
@@ -109,14 +126,12 @@ struct DemoPhotoAutoEnhanceView: View {
                 .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(.secondary)
             Spacer(minLength: 8)
-            Button {
-                compareMode = compareMode == .original ? .result : .original
-            } label: {
+            Button { toggleOriginalPreview() } label: {
                 Image(systemName: compareMode == .original ? "eye" : "eye.slash")
                     .font(.system(size: 25))
                     .frame(width: 46, height: 42)
             }
-            .accessibilityLabel("查看原图")
+            .accessibilityLabel("原图与效果图切换")
             PhotosPicker(selection: $pickerItem, matching: .images) {
                 Image(systemName: "photo.badge.plus")
                     .font(.system(size: 24))
@@ -150,64 +165,71 @@ struct DemoPhotoAutoEnhanceView: View {
                         .resizable()
                         .scaledToFit()
                         .frame(width: geo.size.width, height: geo.size.height)
-                    if compareMode == .compare {
-                        Image(uiImage: originalImage)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: geo.size.width, height: geo.size.height)
-                            .mask(alignment: .leading) {
-                                Rectangle().frame(width: geo.size.width * comparePosition)
-                            }
-                        Rectangle()
-                            .fill(.white)
-                            .frame(width: 2)
-                            .overlay {
-                                Image(systemName: "arrow.left.and.right")
-                                    .font(.system(size: 10, weight: .bold))
-                                    .foregroundStyle(.black)
-                                    .padding(7)
-                                    .background(.white, in: Circle())
-                            }
-                            .position(x: geo.size.width * comparePosition, y: geo.size.height / 2)
-                    }
+                        .contentShape(Rectangle())
+                        .onTapGesture { toggleOriginalPreview() }
                     if isProcessing {
                         VStack {
                             Spacer()
-                            ProgressView("正在处理…")
-                                .padding(.horizontal, 14).padding(.vertical, 9)
-                                .background(.ultraThinMaterial, in: Capsule())
+                            ProgressView()
+                                .padding(12)
+                                .background(.ultraThinMaterial, in: Circle())
                             Spacer().frame(height: 12)
                         }
                     }
-                } else {
-                    VStack(spacing: 12) {
-                        Image(systemName: "photo")
-                            .font(.system(size: 42, weight: .light))
-                            .foregroundStyle(.secondary)
-                        Text("选择照片开始编辑")
-                            .font(.system(size: 16, weight: .medium))
-                            .foregroundStyle(.secondary)
-                        PhotosPicker(selection: $pickerItem, matching: .images) {
-                            Text("打开照片")
-                                .font(.system(size: 15, weight: .semibold))
-                                .padding(.horizontal, 22).padding(.vertical, 11)
-                                .background(Color(uiColor: .label), in: Capsule())
-                                .foregroundStyle(Color(uiColor: .systemBackground))
+                    if compareMode == .original {
+                        VStack {
+                            Spacer()
+                            Text("原图")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(.primary)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 7)
+                                .background(.ultraThinMaterial, in: Capsule())
+                                .padding(.bottom, 10)
                         }
+                        .allowsHitTesting(false)
+                    } else {
+                        VStack {
+                            Spacer()
+                            Text("效果")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(.primary)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 7)
+                                .background(.ultraThinMaterial, in: Capsule())
+                                .padding(.bottom, 10)
+                        }
+                        .allowsHitTesting(false)
                     }
+                } else {
+                    ProgressView("正在打开照片…")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.secondary)
                 }
             }
-            .contentShape(Rectangle())
-            .gesture(DragGesture(minimumDistance: 0).onChanged { value in
-                guard compareMode == .compare else { return }
-                comparePosition = min(max(value.location.x / max(geo.size.width, 1), 0.03), 0.97)
-            })
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .clipped()
     }
 
+    private func toggleOriginalPreview() {
+        previewResetTask?.cancel()
+        if compareMode == .original {
+            withAnimation(.easeInOut(duration: 0.18)) { compareMode = .result }
+            return
+        }
+        withAnimation(.easeInOut(duration: 0.18)) { compareMode = .original }
+        previewResetTask = Task {
+            try? await Task.sleep(for: .milliseconds(950))
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                withAnimation(.easeInOut(duration: 0.2)) { compareMode = .result }
+            }
+        }
+    }
+
     private var parameterPanel: some View {
-        VStack(spacing: 13) {
+        VStack(spacing: 8) {
             if activeTab == .adjust {
                 HStack(spacing: 0) {
                     ForEach(AdjustmentControl.allCases) { control in
@@ -215,84 +237,73 @@ struct DemoPhotoAutoEnhanceView: View {
                             if control == .auto { applyAutoEnhance() }
                             else { selectedAdjustment = control }
                         } label: {
-                            VStack(spacing: 5) {
+                            VStack(spacing: 7) {
                                 Image(systemName: control.icon)
-                                    .font(.system(size: 22, weight: .regular))
-                                    .frame(width: 62, height: 62)
+                                    .font(.system(size: 29, weight: .regular))
+                                    .frame(width: 78, height: 78)
                                     .background(selectedAdjustment == control ? Color(uiColor: .tertiarySystemFill) : .clear, in: Circle())
-                                    .overlay(Circle().stroke(Color(uiColor: .tertiaryLabel).opacity(selectedAdjustment == control ? 0 : 0.65), lineWidth: 1.5))
+                                    .overlay(Circle().stroke(Color(uiColor: .systemGray4), lineWidth: selectedAdjustment == control ? 0 : 1.8))
                                 Text(control.title)
-                                    .font(.system(size: 10, weight: selectedAdjustment == control ? .semibold : .regular))
+                                    .font(.system(size: 14, weight: selectedAdjustment == control ? .semibold : .regular))
+                                    .foregroundStyle(.primary)
                             }
-                            .foregroundStyle(.primary)
                             .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.plain)
                     }
                 }
-                .padding(.horizontal, 8)
-                Slider(value: selectedAdjustmentBinding, in: selectedAdjustment.range, onEditingChanged: { editing in
-                    if editing {
-                        editingSnapshot = settings
-                    } else if let snapshot = editingSnapshot {
-                        if snapshot != settings {
-                            undoStack.append(snapshot)
-                            if undoStack.count > 40 { undoStack.removeFirst() }
-                            redoStack.removeAll()
-                        }
-                        editingSnapshot = nil
-                    }
-                })
-                    .tint(.primary)
-                    .padding(.horizontal, 26)
-                    .accessibilityLabel(selectedAdjustment.title)
+                .padding(.horizontal, 9)
+                TickMarkSlider(value: selectedAdjustmentBinding, range: selectedAdjustment.range)
+                    .frame(height: 48)
+                    .padding(.horizontal, 24)
                 Text(selectedAdjustment.title)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(.secondary)
+                    .frame(height: 22)
             } else if activeTab == .filters {
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 12) {
+                    HStack(spacing: 15) {
                         ForEach(DemoPhotoPreset.allCases.filter { $0 != .custom }) { preset in
                             Button { applyPreset(preset) } label: {
                                 VStack(spacing: 7) {
-                                    RoundedRectangle(cornerRadius: 13)
-                                        .fill(preset.tint.opacity(0.22))
-                                        .frame(width: 58, height: 58)
-                                        .overlay(Image(systemName: preset.icon).font(.system(size: 21)).foregroundStyle(preset.tint))
-                                        .overlay(RoundedRectangle(cornerRadius: 13).stroke(selectedPreset == preset ? Color.primary : .clear, lineWidth: 2))
-                                    Text(preset.title).font(.system(size: 10, weight: .medium)).foregroundStyle(.primary)
+                                    Circle()
+                                        .fill(preset.tint.opacity(0.18))
+                                        .frame(width: 76, height: 76)
+                                        .overlay(Image(systemName: preset.icon).font(.system(size: 27)).foregroundStyle(.primary))
+                                        .overlay(Circle().stroke(selectedPreset == preset ? Color.primary : Color(uiColor: .systemGray4), lineWidth: selectedPreset == preset ? 2.5 : 1.5))
+                                    Text(preset.title).font(.system(size: 13, weight: .medium)).foregroundStyle(.primary)
                                 }
                             }
                             .buttonStyle(.plain)
                         }
                     }
-                    .padding(.horizontal, 18)
+                    .padding(.horizontal, 20)
                 }
-                .frame(height: 88)
+                .frame(height: 108)
             } else if activeTab == .crop {
-                HStack(spacing: 25) {
+                HStack(spacing: 30) {
                     cropTool("自由", icon: "crop")
                     cropTool("旋转", icon: "rotate.right")
                     cropTool("翻转", icon: "arrow.left.and.right.righttriangle.left.righttriangle.right")
                     cropTool("比例", icon: "aspectratio")
                 }
-                .frame(height: 76)
+                .frame(height: 104)
             } else {
                 HStack(spacing: 18) {
-                    Image(systemName: activeTab.icon).font(.system(size: 24))
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(activeTab.title).font(.system(size: 13, weight: .semibold))
+                    Image(systemName: activeTab.icon).font(.system(size: 26))
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(activeTab.title).font(.system(size: 14, weight: .semibold))
                         Text("功能入口已预留，后续可直接扩展")
-                            .font(.system(size: 10)).foregroundStyle(.secondary)
+                            .font(.system(size: 12)).foregroundStyle(.secondary)
                     }
                     Spacer()
                 }
                 .padding(.horizontal, 24)
-                .frame(height: 76)
+                .frame(height: 104)
             }
         }
         .padding(.top, 12)
-        .padding(.bottom, 8)
+        .padding(.bottom, 5)
     }
 
     private var selectedAdjustmentBinding: Binding<Double> {
@@ -349,7 +360,7 @@ struct DemoPhotoAutoEnhanceView: View {
             }
             .padding(.horizontal, 12)
         }
-        .padding(.bottom, 22)
+        .padding(.bottom, 8)
         .background(Color(uiColor: .systemBackground))
     }
 
@@ -615,7 +626,7 @@ private enum AdjustmentControl: String, CaseIterable, Identifiable {
         case .auto: "wand.and.stars"
         case .exposure: "plusminus.circle"
         case .contrast: "circle.lefthalf.filled"
-        case .saturation: "drop.halffull"
+        case .saturation: "drop.fill"
         case .brightness: "sun.max"
         }
     }
@@ -644,4 +655,63 @@ private struct DemoShareSheet: UIViewControllerRepresentable {
         UIActivityViewController(activityItems: items, applicationActivities: nil)
     }
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
+}
+
+
+private struct TickMarkSlider: View {
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    @State private var dragStartValue: Double?
+
+    private var progress: CGFloat {
+        guard range.upperBound > range.lowerBound else { return 0 }
+        return CGFloat((value - range.lowerBound) / (range.upperBound - range.lowerBound))
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            let width = geometry.size.width
+            let tickSpacing: CGFloat = 12
+            let rulerWidth = tickSpacing * 60
+            ZStack {
+                HStack(spacing: tickSpacing - 1) {
+                    ForEach(0..<61, id: \.self) { index in
+                        Rectangle()
+                            .fill(Color(uiColor: .tertiaryLabel).opacity(index.isMultiple(of: 5) ? 0.72 : 0.42))
+                            .frame(width: 1, height: index.isMultiple(of: 5) ? 22 : 12)
+                    }
+                }
+                .frame(width: rulerWidth, alignment: .leading)
+                .offset(x: width / 2 - progress * rulerWidth)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .clipped()
+                Rectangle()
+                    .fill(Color.primary)
+                    .frame(width: 2, height: 38)
+                    .position(x: width / 2, y: geometry.size.height / 2)
+            }
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { gesture in
+                        if dragStartValue == nil { dragStartValue = value }
+                        let start = dragStartValue ?? value
+                        let delta = Double(gesture.translation.width / max(width, 1)) * (range.upperBound - range.lowerBound)
+                        value = min(max(start + delta, range.lowerBound), range.upperBound)
+                    }
+                    .onEnded { _ in dragStartValue = nil }
+            )
+        }
+        .accessibilityElement()
+        .accessibilityLabel("参数强度")
+        .accessibilityValue(String(format: "%.2f", value))
+        .accessibilityAdjustableAction { direction in
+            let step = (range.upperBound - range.lowerBound) / 100
+            switch direction {
+            case .increment: value = min(value + step, range.upperBound)
+            case .decrement: value = max(value - step, range.lowerBound)
+            @unknown default: break
+            }
+        }
+    }
 }
