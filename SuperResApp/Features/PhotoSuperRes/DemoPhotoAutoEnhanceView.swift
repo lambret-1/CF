@@ -11,6 +11,7 @@ struct DemoPhotoAutoEnhanceView: View {
     @State private var editingInput: PHContentEditingInput?
     @State private var analysisResult: ApplePhotoAnalysisResult?
     @State private var isAnalyzing = false
+    @State private var isLoadingRAW = false
     @State private var showMarkupEditor = false
     @State private var markupData: Data?
     @State private var originalImage: UIImage?
@@ -318,13 +319,24 @@ struct DemoPhotoAutoEnhanceView: View {
                 .frame(height: 78)
             } else if activeTab == .analysis {
                 VStack(spacing: 8) {
-                    Button {
-                        analyzeCurrentPhoto()
-                    } label: {
-                        Label(isAnalyzing ? "正在分析…" : "使用 Apple Vision 分析", systemImage: "viewfinder")
-                            .font(.system(size: 13, weight: .semibold))
+                    HStack(spacing: 18) {
+                        Button {
+                            analyzeCurrentPhoto()
+                        } label: {
+                            Label(isAnalyzing ? "正在分析…" : "Apple Vision 分析", systemImage: "viewfinder")
+                                .font(.system(size: 12, weight: .semibold))
+                        }
+                        .disabled(isAnalyzing)
+                        if hasRAWResource {
+                            Button {
+                                loadRAWOriginal()
+                            } label: {
+                                Label(isLoadingRAW ? "载入中…" : "RAW 原片", systemImage: "camera.raw")
+                                    .font(.system(size: 12, weight: .semibold))
+                            }
+                            .disabled(isLoadingRAW)
+                        }
                     }
-                    .disabled(isAnalyzing)
                     if let result = analysisResult {
                         HStack(spacing: 14) {
                             analysisMetric("人脸", value: "\(result.faceCount)")
@@ -866,6 +878,38 @@ struct DemoPhotoAutoEnhanceView: View {
         imageTransform.usesSquareCrop = root["squareCrop"] as? Bool ?? false
         if let encodedMarkup = root["markupData"] as? String, !encodedMarkup.isEmpty {
             markupData = Data(base64Encoded: encodedMarkup)
+        }
+    }
+
+    private var hasRAWResource: Bool {
+        guard let selectedAsset else { return false }
+        return PHAssetResource.assetResources(for: selectedAsset)
+            .contains(where: ApplePhotoAnalysisService.isRawResource)
+    }
+
+    private func loadRAWOriginal() {
+        guard let asset = selectedAsset else { return }
+        isLoadingRAW = true
+        Task {
+            do {
+                let url = try await PhotoKitEditingService.shared.rawResourceURL(for: asset)
+                let rawImage = try await Task.detached(priority: .userInitiated) {
+                    try ApplePhotoAnalysisService.renderRawImage(at: url)
+                }.value
+                pushUndo()
+                originalImage = rawImage
+                editedImage = rawImage
+                settings = DemoAdjustmentSettings()
+                selectedPreset = .original
+                autoEnhanceEnabled = false
+                imageTransform = .identity
+                markupData = nil
+                analysisResult = nil
+                compareMode = .result
+            } catch {
+                alertMessage = error.localizedDescription
+            }
+            isLoadingRAW = false
         }
     }
 
