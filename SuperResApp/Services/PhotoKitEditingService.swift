@@ -84,8 +84,7 @@ actor PhotoKitEditingService {
         _ image: CGImage,
         asset: PHAsset,
         input: PHContentEditingInput,
-        adjustmentData: Data,
-        isHDR: Bool
+        adjustmentData: Data
     ) async throws {
         let output = PHContentEditingOutput(contentEditingInput: input)
         output.adjustmentData = PHAdjustmentData(
