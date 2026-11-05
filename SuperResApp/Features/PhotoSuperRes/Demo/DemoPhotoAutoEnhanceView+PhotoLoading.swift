@@ -9,7 +9,8 @@ import PencilKit
 
 extension DemoPhotoAutoEnhanceView {
 @MainActor
-func loadPhoto(_ item: PhotosPickerItem) async {
+func loadPhoto(_ item: PhotosPickerItem, generation: UUID) async {
+        guard generation == photoGeneration else { return }
         do {
             var loadedImage: UIImage?
             var loadedAsset: PHAsset?
@@ -56,7 +57,13 @@ func loadPhoto(_ item: PhotosPickerItem) async {
                let data = try await item.loadTransferable(type: Data.self) {
                 loadedImage = UIImage(data: data)
             }
-            guard !Task.isCancelled else {
+            guard !Task.isCancelled, generation == photoGeneration else {
+                if let loadedSourceURL, loadedSourceURL.lastPathComponent.hasPrefix("CF-RAW-") {
+                    try? FileManager.default.removeItem(at: loadedSourceURL)
+                }
+                return
+            }
+            guard generation == photoGeneration else {
                 if let loadedSourceURL, loadedSourceURL.lastPathComponent.hasPrefix("CF-RAW-") {
                     try? FileManager.default.removeItem(at: loadedSourceURL)
                 }
@@ -95,6 +102,7 @@ func loadPhoto(_ item: PhotosPickerItem) async {
             scheduleRender()
             await startLiveActivity()
         } catch {
+            guard generation == photoGeneration else { return }
             self.pickerItem = .none
             alertMessage = "读取照片失败：\(error.localizedDescription)"
         }
@@ -113,11 +121,18 @@ func adjustmentDataUsesRAW(_ adjustmentData: PHAdjustmentData?) -> Bool {
 
     func refreshSelectedAsset() {
         guard let identifier = selectedAsset?.localIdentifier else { return }
+        let generation = photoGeneration
+
         Task {
             guard let refreshed = try? await PhotoKitEditingService.shared.fetchAsset(localIdentifier: identifier),
-                  let refreshedInput = try? await PhotoKitEditingService.shared.requestEditingInput(for: refreshed) else {
+                  generation == photoGeneration,
+                  selectedAsset?.localIdentifier == identifier,
+                  let refreshedInput = try? await PhotoKitEditingService.shared.requestEditingInput(for: refreshed),
+                  generation == photoGeneration,
+                  selectedAsset?.localIdentifier == identifier else {
                 return
             }
+
             selectedAsset = refreshed
             editingInput = refreshedInput
             if !usesRAWResource {
@@ -215,13 +230,33 @@ func adjustmentDataUsesRAW(_ adjustmentData: PHAdjustmentData?) -> Bool {
 
     func loadRAWOriginal() {
         guard let asset = selectedAsset else { return }
+        let identifier = asset.localIdentifier
+        let generation = photoGeneration
         isLoadingRAW = true
+
         Task {
             do {
                 let url = try await PhotoKitEditingService.shared.rawResourceURL(for: asset)
+                guard generation == photoGeneration,
+                      selectedAsset?.localIdentifier == identifier else {
+                    if url.lastPathComponent.hasPrefix("CF-RAW-") {
+                        try? FileManager.default.removeItem(at: url)
+                    }
+                    return
+                }
+
                 let rawImage = try await Task.detached(priority: .userInitiated) {
                     try ApplePhotoAnalysisService.renderRawImage(at: url)
                 }.value
+
+                guard generation == photoGeneration,
+                      selectedAsset?.localIdentifier == identifier else {
+                    if url.lastPathComponent.hasPrefix("CF-RAW-") {
+                        try? FileManager.default.removeItem(at: url)
+                    }
+                    return
+                }
+
                 let previousSourceURL = renderSourceURL
                 if previousSourceURL != url,
                    let previousSourceURL,
@@ -241,12 +276,21 @@ func adjustmentDataUsesRAW(_ adjustmentData: PHAdjustmentData?) -> Bool {
                 imageTransform = .identity
                 markupData = nil
                 analysisResult = nil
+                foregroundCutout = nil
                 compareMode = .result
                 scheduleRender()
             } catch {
+                guard generation == photoGeneration,
+                      selectedAsset?.localIdentifier == identifier else {
+                    return
+                }
                 alertMessage = error.localizedDescription
             }
-            isLoadingRAW = false
+
+            if generation == photoGeneration,
+               selectedAsset?.localIdentifier == identifier {
+                isLoadingRAW = false
+            }
         }
     }
 }
