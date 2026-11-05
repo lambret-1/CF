@@ -37,6 +37,7 @@ struct DemoPhotoAutoEnhanceView: View {
     @State private var editingSnapshot: DemoEditorSnapshot?
     @State private var renderToken = UUID()
     @State private var loadTask: Task<Void, Never>?
+    @State private var renderTask: Task<Void, Never>?
     @State private var isProcessing = false
     @State private var isSaving = false
     @State private var alertMessage: String?
@@ -128,6 +129,8 @@ struct DemoPhotoAutoEnhanceView: View {
         }
         .onDisappear {
             libraryObserver.stop()
+            loadTask?.cancel()
+            renderTask?.cancel()
             cleanupTemporaryRAWResource()
             Task { await endLiveActivity() }
         }
