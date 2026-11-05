@@ -116,7 +116,7 @@ jobs:
           mkdir -p ipa-verify
           unzip -q "$IPA_FILENAME" -d ipa-verify
           bash ../scripts/verify-embedded-extensions.sh "ipa-verify/Payload/${{ env.APP_NAME }}.app"
-          ls -lh "$IPA_PATH"
+          ls -lh "$IPA_FILENAME"
           echo "=== IPA 内模型检查 ==="
           find "ipa-verify/Payload/${{ env.APP_NAME }}.app" -name "*.mlmodelc" -type d || echo "（未找到 .mlmodelc）"
 
