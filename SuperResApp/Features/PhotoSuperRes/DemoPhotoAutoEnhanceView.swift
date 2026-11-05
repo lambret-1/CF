@@ -47,7 +47,7 @@ struct DemoPhotoAutoEnhanceView: View {
     @State private var liveActivity: Activity<PhotoEditorActivityAttributes>?
     @State private var liveActivitySessionID: String?
     @Environment(\.dismiss) private var dismiss
-    @StateObject private var libraryObserver = PhotoLibraryChangeObserver.shared
+    @ObservedObject private var libraryObserver = PhotoLibraryChangeObserver.shared
     @Environment(\.scenePhase) private var scenePhase
 
     init(initialPickerItem: PhotosPickerItem? = nil) {
