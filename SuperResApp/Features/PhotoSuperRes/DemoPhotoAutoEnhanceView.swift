@@ -747,7 +747,12 @@ struct DemoPhotoAutoEnhanceView: View {
                let data = try await item.loadTransferable(type: Data.self) {
                 loadedImage = UIImage(data: data)
             }
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled else {
+                if let loadedSourceURL, loadedSourceURL.lastPathComponent.hasPrefix("CF-RAW-") {
+                    try? FileManager.default.removeItem(at: loadedSourceURL)
+                }
+                return
+            }
             guard let image = loadedImage else {
                 self.pickerItem = .none
                 alertMessage = "无法读取所选照片，请重新选择。"
