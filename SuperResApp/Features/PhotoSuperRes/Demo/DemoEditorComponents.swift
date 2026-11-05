@@ -7,7 +7,8 @@ import ActivityKit
 import Photos
 import PencilKit
 
-let settings: DemoAdjustmentSettings
+struct DemoEditorSnapshot: Equatable {
+    let settings: DemoAdjustmentSettings
     let selectedPreset: DemoPhotoPreset
     let autoEnhanceEnabled: Bool
     let autoEnhanceBaseSettings: DemoAdjustmentSettings?
