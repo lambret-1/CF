@@ -107,7 +107,12 @@ struct DemoPhotoAutoEnhanceView: View {
             guard url.scheme == "cfphotoeditor" else { return }
             switch url.host {
             case "cancel": dismiss()
-            case "complete": saveToPhotos()
+            case "complete":
+                if isCompleteEnabled {
+                    saveToPhotos()
+                } else {
+                    alertMessage = isProcessing ? "正在处理，请稍候。" : "没有可保存的修改。"
+                }
             default: break
             }
         }
