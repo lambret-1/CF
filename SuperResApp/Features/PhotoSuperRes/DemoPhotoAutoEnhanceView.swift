@@ -38,6 +38,7 @@ struct DemoPhotoAutoEnhanceView: View {
     @State private var renderToken = UUID()
     @State private var loadTask: Task<Void, Never>?
     @State private var renderTask: Task<Void, Never>?
+    @State private var lastLiveActivityCanComplete: Bool?
     @State private var isProcessing = false
     @State private var isSaving = false
     @State private var alertMessage: String?
@@ -814,7 +815,7 @@ struct DemoPhotoAutoEnhanceView: View {
 
     @MainActor
     private func updateLiveActivity(canComplete: Bool) async {
-        guard let liveActivity else { return }
+        guard let liveActivity, lastLiveActivityCanComplete != canComplete else { return }
         let state = PhotoEditorActivityAttributes.ContentState(
             status: canComplete ? "已修改" : "未修改",
             selectedAction: "edit",
@@ -823,6 +824,7 @@ struct DemoPhotoAutoEnhanceView: View {
         await liveActivity.update(
             ActivityContent(state: state, staleDate: Date().addingTimeInterval(3600))
         )
+        lastLiveActivityCanComplete = canComplete
     }
 
     @MainActor
