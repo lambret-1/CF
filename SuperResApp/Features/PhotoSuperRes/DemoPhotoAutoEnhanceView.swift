@@ -720,10 +720,10 @@ struct DemoPhotoAutoEnhanceView: View {
                     if shouldUseRAW && !isNativeRAW {
                         do {
                             let rawURL = try await PhotoKitEditingService.shared.rawResourceURL(for: asset)
+                            loadedSourceURL = rawURL
                             loadedImage = try await Task.detached(priority: .userInitiated) {
                                 try ApplePhotoAnalysisService.renderRawImage(at: rawURL)
                             }.value
-                            loadedSourceURL = rawURL
                             loadedUsesRAW = true
                         } catch {
                             loadedImage = try await PhotoKitEditingService.shared.originalImage(from: input)
