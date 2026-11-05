@@ -731,6 +731,7 @@ struct DemoPhotoAutoEnhanceView: View {
                 loadedImage = UIImage(data: data)
             }
             guard let image = loadedImage else {
+                self.pickerItem = .none
                 alertMessage = "无法读取所选照片，请重新选择。"
                 return
             }
