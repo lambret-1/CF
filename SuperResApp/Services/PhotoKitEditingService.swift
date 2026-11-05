@@ -247,14 +247,17 @@ actor PhotoKitEditingService {
 
         editingContext.frameProcessor = { frame, _ in
             var output = frame.image
+            if let filterName, let filter = CIFilter(name: filterName) {
+                filter.setValue(output, forKey: kCIInputImageKey)
+                if let next = filter.outputImage { output = next }
+            }
+            // Match the still-image pipeline: preset, automatic correction, then
+            // explicit manual adjustments. These remain composable in Live Photos.
             if autoEnhance {
-                for filter in output.autoAdjustmentFilters(options: [:]) {
+                for filter in output.autoAdjustmentFilters(options: [.crop: false]) {
                     filter.setValue(output, forKey: kCIInputImageKey)
                     if let next = filter.outputImage { output = next }
                 }
-            } else if let filterName, let filter = CIFilter(name: filterName) {
-                filter.setValue(output, forKey: kCIInputImageKey)
-                if let next = filter.outputImage { output = next }
             }
 
             if abs(settings.exposure) > 0.0001 {
