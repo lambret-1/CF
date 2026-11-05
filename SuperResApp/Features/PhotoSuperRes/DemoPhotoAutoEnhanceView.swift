@@ -58,29 +58,29 @@ struct DemoPhotoAutoEnhanceView: View {
     private let accent = Color(red: 0.43, green: 0.78, blue: 0.68)
 
     var body: some View {
-        GeometryReader { geometry in
-            VStack(spacing: 0) {
-                navigationBar
-                if originalImage != nil { quickToolbar }
-                preview
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                if originalImage != nil {
-                    parameterPanel
-                    editorTabBar
-                } else {
-                    welcome
-                        .padding(.horizontal, 20)
-                        .padding(.bottom, 18)
-                }
+        VStack(spacing: 0) {
+            navigationBar
+            if originalImage != nil { quickToolbar }
+            preview
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+            if originalImage != nil {
+                parameterPanel
+                editorTabBar
+            } else {
+                welcome
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 18)
             }
-            .padding(.top, max(geometry.safeAreaInsets.top, 52) + 6)
-            .padding(.bottom, max(geometry.safeAreaInsets.bottom, 8))
-            .frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
-            .background(Color(uiColor: .systemBackground))
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(
+            Color(uiColor: .systemBackground)
+                .ignoresSafeArea()
+        )
         .toolbar(.hidden, for: .navigationBar)
+        .statusBarHidden(true)
         .task {
             guard let initialItem = pickerItem, originalImage == nil else { return }
             loadTask?.cancel()
