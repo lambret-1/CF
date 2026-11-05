@@ -1282,6 +1282,19 @@ struct DemoPhotoAutoEnhanceView: View {
                     try await PhotoLibraryService.shared.save(cgImage)
                     alertMessage = "照片已另存到系统相册。"
                 }
+                if let asset = selectedAsset {
+                    do {
+                        let refreshed = try await PhotoKitEditingService.shared.fetchAsset(localIdentifier: asset.localIdentifier)
+                        let refreshedInput = try await PhotoKitEditingService.shared.requestEditingInput(for: refreshed)
+                        selectedAsset = refreshed
+                        editingInput = refreshedInput
+                        if !usesRAWResource {
+                            renderSourceURL = refreshedInput.fullSizeImageURL
+                        }
+                    } catch {
+                        // Keep the successful save result if a fresh editing input cannot be acquired.
+                    }
+                }
                 await endLiveActivity()
             } catch {
                 alertMessage = error.localizedDescription
