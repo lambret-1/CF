@@ -94,15 +94,31 @@ jobs:
             MARKETING_VERSION="${{ env.NEW_VERSION }}" \
             2>&1 | tee build.log
 
-      - name: 导出未签名 IPA
+      - name: 验证构建产物中的嵌入扩展
         run: |
           APP_PATH="build/DerivedData/Build/Products/Release-iphoneos/${{ env.APP_NAME }}.app"
+          bash scripts/verify-embedded-extensions.sh "$APP_PATH"
+          echo "=== Xcode 生成的扩展嵌入配置 ==="
+          grep -n -A 8 -B 5 "PhotoEditingExtension.appex" "${{ env.APP_NAME }}.xcodeproj/project.pbxproj"
+
+      - name: 导出并验证未签名 IPA
+        run: |
+          set -euo pipefail
+          APP_PATH="build/DerivedData/Build/Products/Release-iphoneos/${{ env.APP_NAME }}.app"
           mkdir -p build/Payload
-          cp -R "$APP_PATH" build/Payload/
-          cd build && zip -qr "${{ env.APP_NAME }}-unsigned-v${{ env.NEW_VERSION }}.ipa" Payload
-          ls -lh "${{ env.APP_NAME }}-unsigned-v${{ env.NEW_VERSION }}.ipa"
-          echo "=== App 内模型检查 ==="
-          find "Payload/${{ env.APP_NAME }}.app" -name "*.mlmodelc" -type d || echo "（未找到 .mlmodelc）"
+          ditto "$APP_PATH" "build/Payload/${{ env.APP_NAME }}.app"
+          bash scripts/verify-embedded-extensions.sh "build/Payload/${{ env.APP_NAME }}.app"
+
+          IPA_PATH="build/${{ env.APP_NAME }}-unsigned-v${{ env.NEW_VERSION }}.ipa"
+          cd build
+          zip -qry "${{ env.APP_NAME }}-unsigned-v${{ env.NEW_VERSION }}.ipa" Payload
+          test -s "$IPA_PATH"
+          mkdir -p ipa-verify
+          unzip -q "$IPA_PATH" -d ipa-verify
+          bash ../scripts/verify-embedded-extensions.sh "ipa-verify/Payload/${{ env.APP_NAME }}.app"
+          ls -lh "$IPA_PATH"
+          echo "=== IPA 内模型检查 ==="
+          find "ipa-verify/Payload/${{ env.APP_NAME }}.app" -name "*.mlmodelc" -type d || echo "（未找到 .mlmodelc）"
 
       - name: 上传 IPA 产物
         uses: actions/upload-artifact@v4
