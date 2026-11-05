@@ -726,6 +726,9 @@ struct DemoPhotoAutoEnhanceView: View {
                             }.value
                             loadedUsesRAW = true
                         } catch {
+                            if let loadedSourceURL, loadedSourceURL.lastPathComponent.hasPrefix("CF-RAW-") {
+                                try? FileManager.default.removeItem(at: loadedSourceURL)
+                            }
                             loadedImage = try await PhotoKitEditingService.shared.originalImage(from: input)
                             loadedSourceURL = input.fullSizeImageURL
                             loadedUsesRAW = false
