@@ -215,8 +215,10 @@ enum DemoImageProcessor {
         if abs(settings.highlights) > 0.0001 || abs(settings.shadows) > 0.0001 {
             let filter = CIFilter(name: "CIHighlightShadowAdjust")
             filter?.setValue(output, forKey: kCIInputImageKey)
-            filter?.setValue(settings.highlights, forKey: "inputHighlightAmount")
-            filter?.setValue(settings.shadows, forKey: "inputShadowAmount")
+            // CIHighlightShadowAdjust accepts non-negative amounts in the 0...1 range.
+            // Clamp persisted values as older editor snapshots may contain negative values.
+            filter?.setValue(min(max(settings.highlights, 0), 1), forKey: "inputHighlightAmount")
+            filter?.setValue(min(max(settings.shadows, 0), 1), forKey: "inputShadowAmount")
             if let next = filter?.outputImage { output = next }
         }
 
