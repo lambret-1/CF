@@ -537,6 +537,4 @@ func navigationBar(safeTop: CGFloat) -> some View {
 
     func signed(_ value: Double) -> String { String(format: "%+.2f", value) }
     func decimal(_ value: Double) -> String { String(format: "%.2f", value) }
-
-    @MainActor
 }
