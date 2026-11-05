@@ -872,7 +872,11 @@ struct DemoPhotoAutoEnhanceView: View {
         case "cancel":
             dismiss()
         case "complete":
-            saveToPhotos()
+            if isCompleteEnabled {
+                saveToPhotos()
+            } else {
+                alertMessage = isProcessing ? "正在处理，请稍候。" : "没有可保存的修改。"
+            }
         default:
             break
         }
