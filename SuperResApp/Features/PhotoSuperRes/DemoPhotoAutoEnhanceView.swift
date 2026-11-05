@@ -789,6 +789,7 @@ struct DemoPhotoAutoEnhanceView: View {
             scheduleRender()
             await startLiveActivity()
         } catch {
+            self.pickerItem = .none
             alertMessage = "读取照片失败：\(error.localizedDescription)"
         }
     }
