@@ -67,6 +67,14 @@ enum DemoImageProcessor {
             output = depthImage
         }
 
+        // Apply the selected built-in photo-effect preset first, if any.
+        if let filterName, let filter = CIFilter(name: filterName) {
+            filter.setValue(output, forKey: kCIInputImageKey)
+            if let next = filter.outputImage { output = next }
+        }
+
+        // Core Image exposes generic automatic adjustments, not the private
+        // Photos app enhancement engine. Keep this as a distinct optional stage.
         if autoEnhance {
             let options: [CIImageAutoAdjustmentOption: Any] = [
                 .crop: false,
@@ -78,13 +86,11 @@ enum DemoImageProcessor {
                 guard let next = filter.outputImage else { continue }
                 output = next
             }
-        } else {
-            if let filterName, let filter = CIFilter(name: filterName) {
-                filter.setValue(output, forKey: kCIInputImageKey)
-                if let next = filter.outputImage { output = next }
-            }
-            output = applyManualAdjustments(settings, to: output)
         }
+
+        // Always apply explicit user adjustments after automatic correction so
+        // users can fine-tune the automatic result without losing it.
+        output = applyManualAdjustments(settings, to: output)
 
         if !hasDecodedSourceURL {
             output = output.oriented(orientation)
