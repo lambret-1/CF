@@ -66,7 +66,6 @@ targets:
           - "Models/Builtin/**"
           - "Info.plist"
           - "LiveActivityWidget/**"
-          - "PhotoEditingExtension/**"
     resources:
       - path: SuperResApp/Resources/model_manifest.json
     postBuildScripts:
@@ -115,31 +114,6 @@ targets:
     dependencies:
       - package: ZIPFoundation
       - target: PhotoEditorLiveActivity
-      - target: PhotoEditingExtension
-        embed: true
-  PhotoEditingExtension:
-    type: app-extension
-    platform: iOS
-    sources:
-      - path: SuperResApp/PhotoEditingExtension/PhotoEditingViewController.swift
-      - path: SuperResApp/Features/PhotoSuperRes/Demo/Models/DemoAdjustmentSettings.swift
-      - path: SuperResApp/Features/PhotoSuperRes/Demo/Services/DemoImageProcessor.swift
-      - path: SuperResApp/Services/ApplePhotoAnalysisService.swift
-    info:
-      path: SuperResApp/PhotoEditingExtension/Info.plist
-      properties:
-        NSExtension:
-          NSExtensionAttributes:
-            PHSupportedMediaTypes:
-              - Image
-          NSExtensionPointIdentifier: com.apple.photo-editing
-          NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).PhotoEditingViewController"
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.superres.app.PhotoEditingExtension
-        PRODUCT_NAME: PhotoEditingExtension
-        SKIP_INSTALL: YES
-        APPLICATION_EXTENSION_API_ONLY: YES
   PhotoEditorLiveActivity:
     type: app-extension
     platform: iOS
