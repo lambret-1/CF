@@ -808,7 +808,7 @@ struct DemoPhotoAutoEnhanceView: View {
     private func restoreLiveActivity() {
         guard let activity = Activity<PhotoEditorActivityAttributes>.activities.first(where: {
             $0.attributes.sessionID == liveActivitySessionID
-        }) ?? Activity<PhotoEditorActivityAttributes>.activities.first else { return }
+        }) else { return }
         liveActivity = activity
         liveActivitySessionID = activity.attributes.sessionID
         Task { await updateLiveActivity(canComplete: isCompleteEnabled) }
