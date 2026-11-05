@@ -840,6 +840,7 @@ struct DemoPhotoAutoEnhanceView: View {
         await liveActivity.end(nil, dismissalPolicy: .immediate)
         self.liveActivity = nil
         liveActivitySessionID = nil
+        lastLiveActivityCanComplete = nil
     }
 
     private func consumeIslandCommand() {
