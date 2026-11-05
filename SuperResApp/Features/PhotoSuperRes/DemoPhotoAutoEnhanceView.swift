@@ -36,6 +36,7 @@ struct DemoPhotoAutoEnhanceView: View {
     @State private var redoStack: [DemoEditorSnapshot] = []
     @State private var editingSnapshot: DemoEditorSnapshot?
     @State private var renderToken = UUID()
+    @State private var loadTask: Task<Void, Never>?
     @State private var isProcessing = false
     @State private var isSaving = false
     @State private var alertMessage: String?
