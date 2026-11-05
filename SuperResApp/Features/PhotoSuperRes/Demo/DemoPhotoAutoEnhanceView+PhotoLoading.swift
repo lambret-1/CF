@@ -8,6 +8,7 @@ import Photos
 import PencilKit
 
 extension DemoPhotoAutoEnhanceView {
+@MainActor
 func loadPhoto(_ item: PhotosPickerItem) async {
         do {
             var loadedImage: UIImage?
