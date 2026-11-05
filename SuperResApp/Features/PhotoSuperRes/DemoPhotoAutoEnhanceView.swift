@@ -58,27 +58,33 @@ struct DemoPhotoAutoEnhanceView: View {
     private let accent = Color(red: 0.43, green: 0.78, blue: 0.68)
 
     var body: some View {
-        VStack(spacing: 0) {
-            navigationBar
-            if originalImage != nil { quickToolbar }
-            preview
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-            if originalImage != nil {
-                parameterPanel
-                editorTabBar
-            } else {
-                welcome
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 18)
+        GeometryReader { geometry in
+            let safeTop = geometry.safeAreaInsets.top
+
+            VStack(spacing: 0) {
+                navigationBar(safeTop: safeTop)
+                if originalImage != nil { quickToolbar }
+                preview
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                if originalImage != nil {
+                    parameterPanel
+                    editorTabBar
+                } else {
+                    welcome
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 18)
+                }
             }
+            .frame(
+                width: geometry.size.width,
+                height: geometry.size.height + safeTop,
+                alignment: .top
+            )
+            .offset(y: -safeTop)
+            .background(Color(uiColor: .systemBackground).ignoresSafeArea())
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(
-            Color(uiColor: .systemBackground)
-                .ignoresSafeArea()
-        )
         .toolbar(.hidden, for: .navigationBar)
         .statusBarHidden(true)
         .task {
@@ -151,7 +157,7 @@ struct DemoPhotoAutoEnhanceView: View {
         }
     }
 
-    private var navigationBar: some View {
+    private func navigationBar(safeTop: CGFloat) -> some View {
         HStack {
             Button("取消") {
                 dismiss()
@@ -163,7 +169,9 @@ struct DemoPhotoAutoEnhanceView: View {
             .background(Color(uiColor: .tertiarySystemFill), in: Capsule())
             .frame(minHeight: 44)
             .contentShape(Rectangle())
-            Spacer()
+
+            Spacer(minLength: 0)
+
             Button("完成") {
                 saveToPhotos()
             }
@@ -171,14 +179,18 @@ struct DemoPhotoAutoEnhanceView: View {
             .foregroundStyle(isCompleteEnabled ? Color.black.opacity(0.85) : Color.secondary)
             .padding(.horizontal, 16)
             .padding(.vertical, 7)
-            .background(isCompleteEnabled ? Color(red: 1.0, green: 0.88, blue: 0.48) : Color(uiColor: .tertiarySystemFill), in: Capsule())
+            .background(
+                isCompleteEnabled
+                    ? Color(red: 1.0, green: 0.88, blue: 0.48)
+                    : Color(uiColor: .tertiarySystemFill),
+                in: Capsule()
+            )
             .frame(minHeight: 44)
             .contentShape(Rectangle())
             .disabled(!isCompleteEnabled)
         }
         .padding(.horizontal, 20)
-        .padding(.top, 8)
-        .padding(.bottom, 10)
+        .frame(height: max(safeTop, 44))
     }
 
     private var quickToolbar: some View {
