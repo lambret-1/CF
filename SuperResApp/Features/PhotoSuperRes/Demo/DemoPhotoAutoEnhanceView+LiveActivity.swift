@@ -8,6 +8,7 @@ import Photos
 import PencilKit
 
 extension DemoPhotoAutoEnhanceView {
+@MainActor
 func startLiveActivity() async {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
         for activity in Activity<PhotoEditorActivityAttributes>.activities {
@@ -38,7 +39,8 @@ func startLiveActivity() async {
     }
 
     @MainActor
-    func restoreLiveActivity() {
+    @MainActor
+func restoreLiveActivity() {
         if liveActivitySessionID == nil {
             liveActivitySessionID = UserDefaults(suiteName: PhotoEditorActivityAttributes.appGroupID)?.string(forKey: "photoEditorLiveActivitySessionID")
         }
@@ -51,7 +53,8 @@ func startLiveActivity() async {
     }
 
     @MainActor
-    func updateLiveActivity(canComplete: Bool) async {
+    @MainActor
+func updateLiveActivity(canComplete: Bool) async {
         guard let liveActivity, lastLiveActivityCanComplete != canComplete else { return }
         let state = PhotoEditorActivityAttributes.ContentState(
             status: canComplete ? "已修改" : "未修改",
@@ -65,7 +68,8 @@ func startLiveActivity() async {
     }
 
     @MainActor
-    func endLiveActivity() async {
+    @MainActor
+func endLiveActivity() async {
         guard let liveActivity else { return }
         await liveActivity.end(nil, dismissalPolicy: .immediate)
         self.liveActivity = nil
