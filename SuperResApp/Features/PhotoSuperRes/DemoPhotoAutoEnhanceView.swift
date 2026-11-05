@@ -790,6 +790,7 @@ struct DemoPhotoAutoEnhanceView: View {
         liveActivity = nil
         let sessionID = UUID().uuidString
         liveActivitySessionID = sessionID
+        UserDefaults(suiteName: PhotoEditorActivityAttributes.appGroupID)?.set(sessionID, forKey: "photoEditorLiveActivitySessionID")
         lastLiveActivityCanComplete = false
         let attributes = PhotoEditorActivityAttributes(sessionID: sessionID)
         let state = PhotoEditorActivityAttributes.ContentState(
@@ -812,6 +813,9 @@ struct DemoPhotoAutoEnhanceView: View {
 
     @MainActor
     private func restoreLiveActivity() {
+        if liveActivitySessionID == nil {
+            liveActivitySessionID = UserDefaults(suiteName: PhotoEditorActivityAttributes.appGroupID)?.string(forKey: "photoEditorLiveActivitySessionID")
+        }
         guard let activity = Activity<PhotoEditorActivityAttributes>.activities.first(where: {
             $0.attributes.sessionID == liveActivitySessionID
         }) else { return }
