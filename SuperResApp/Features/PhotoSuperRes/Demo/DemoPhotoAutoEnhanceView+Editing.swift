@@ -11,18 +11,11 @@ extension DemoPhotoAutoEnhanceView {
 func applyAutoEnhance() {
         guard originalImage != nil else { return }
         pushUndo()
-        if autoEnhanceEnabled {
-            settings = autoEnhanceBaseSettings ?? DemoAdjustmentSettings()
-            selectedPreset = autoEnhanceBasePreset ?? .original
-            autoEnhanceBaseSettings = nil
-            autoEnhanceBasePreset = nil
-            autoEnhanceEnabled = false
-        } else {
-            autoEnhanceBaseSettings = settings
-            autoEnhanceBasePreset = selectedPreset
-            autoEnhanceEnabled = true
-            selectedPreset = .custom
-        }
+        // Keep automatic correction as an independent rendering stage. Manual
+        // adjustments remain intact and can be layered on top of this stage.
+        autoEnhanceEnabled.toggle()
+        autoEnhanceBaseSettings = nil
+        autoEnhanceBasePreset = nil
         scheduleRender()
     }
 
