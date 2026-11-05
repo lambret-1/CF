@@ -8,19 +8,22 @@ final class PhotoLibraryChangeObserver: NSObject, ObservableObject, PHPhotoLibra
 
     @Published private(set) var changeCount = 0
     private var isRegistered = false
+    private var subscriberCount = 0
 
     private override init() {
         super.init()
     }
 
     func start() {
+        subscriberCount += 1
         guard !isRegistered else { return }
         PHPhotoLibrary.shared().register(self)
         isRegistered = true
     }
 
     func stop() {
-        guard isRegistered else { return }
+        subscriberCount = max(0, subscriberCount - 1)
+        guard subscriberCount == 0, isRegistered else { return }
         PHPhotoLibrary.shared().unregisterChangeObserver(self)
         isRegistered = false
     }
