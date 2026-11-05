@@ -11,6 +11,9 @@ extension DemoPhotoAutoEnhanceView {
 @MainActor
 func loadPhoto(_ item: PhotosPickerItem, generation: UUID) async {
         guard generation == photoGeneration else { return }
+        isLoadingRAW = false
+        isAnalyzing = false
+        isExtractingSubject = false
         do {
             var loadedImage: UIImage?
             var loadedAsset: PHAsset?
@@ -58,12 +61,6 @@ func loadPhoto(_ item: PhotosPickerItem, generation: UUID) async {
                 loadedImage = UIImage(data: data)
             }
             guard !Task.isCancelled, generation == photoGeneration else {
-                if let loadedSourceURL, loadedSourceURL.lastPathComponent.hasPrefix("CF-RAW-") {
-                    try? FileManager.default.removeItem(at: loadedSourceURL)
-                }
-                return
-            }
-            guard generation == photoGeneration else {
                 if let loadedSourceURL, loadedSourceURL.lastPathComponent.hasPrefix("CF-RAW-") {
                     try? FileManager.default.removeItem(at: loadedSourceURL)
                 }
