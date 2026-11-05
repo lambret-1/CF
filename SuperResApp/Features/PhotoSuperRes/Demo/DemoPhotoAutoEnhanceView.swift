@@ -90,6 +90,9 @@ struct DemoPhotoAutoEnhanceView: View {
             guard let initialItem = pickerItem, originalImage == nil else { return }
             let generation = UUID()
             photoGeneration = generation
+            isLoadingRAW = false
+            isAnalyzing = false
+            isExtractingSubject = false
             loadTask?.cancel()
             let task = Task { await loadPhoto(initialItem, generation: generation) }
             loadTask = task
