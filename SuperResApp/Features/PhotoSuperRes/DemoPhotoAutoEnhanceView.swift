@@ -784,6 +784,7 @@ struct DemoPhotoAutoEnhanceView: View {
         liveActivity = nil
         let sessionID = UUID().uuidString
         liveActivitySessionID = sessionID
+        lastLiveActivityCanComplete = false
         let attributes = PhotoEditorActivityAttributes(sessionID: sessionID)
         let state = PhotoEditorActivityAttributes.ContentState(
             status: "未修改",
