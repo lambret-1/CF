@@ -429,18 +429,27 @@ func navigationBar(safeTop: CGFloat) -> some View {
 
     func autoStraighten() {
         guard let image = originalImage else { return }
+        let generation = photoGeneration
+        let assetIdentifier = selectedAsset?.localIdentifier
         Task {
             do {
                 guard let angle = try await Task.detached(priority: .userInitiated, operation: {
                     try ApplePhotoAnalysisService.horizonAngle(for: image)
                 }).value else {
+                    guard photoGeneration == generation,
+                          selectedAsset?.localIdentifier == assetIdentifier else { return }
                     alertMessage = "Vision 未检测到可用的地平线。"
                     return
                 }
+                // Discard Vision results computed for a photo that is no longer being edited.
+                guard photoGeneration == generation,
+                      selectedAsset?.localIdentifier == assetIdentifier else { return }
                 pushUndo()
                 imageTransform.straightenAngle = -Double(angle)
                 scheduleRender()
             } catch {
+                guard photoGeneration == generation,
+                      selectedAsset?.localIdentifier == assetIdentifier else { return }
                 alertMessage = error.localizedDescription
             }
         }
