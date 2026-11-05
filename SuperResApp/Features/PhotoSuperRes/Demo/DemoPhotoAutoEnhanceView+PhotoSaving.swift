@@ -10,13 +10,27 @@ import PencilKit
 extension DemoPhotoAutoEnhanceView {
 func revertPhotoToOriginal() {
         guard let asset = selectedAsset else { return }
+        let generation = photoGeneration
+        let assetIdentifier = asset.localIdentifier
         isSaving = true
         Task {
             do {
                 try await PhotoKitEditingService.shared.revertToOriginal(asset: asset)
-                let refreshedAsset = try await PhotoKitEditingService.shared.fetchAsset(localIdentifier: asset.localIdentifier)
+                guard photoGeneration == generation,
+                      selectedAsset?.localIdentifier == assetIdentifier else { return }
+
+                let refreshedAsset = try await PhotoKitEditingService.shared.fetchAsset(localIdentifier: assetIdentifier)
+                guard photoGeneration == generation,
+                      selectedAsset?.localIdentifier == assetIdentifier else { return }
+
                 let refreshedInput = try await PhotoKitEditingService.shared.requestEditingInput(for: refreshedAsset)
+                guard photoGeneration == generation,
+                      selectedAsset?.localIdentifier == assetIdentifier else { return }
+
                 let image = try await PhotoKitEditingService.shared.originalImage(from: refreshedInput)
+                guard photoGeneration == generation,
+                      selectedAsset?.localIdentifier == assetIdentifier else { return }
+
                 selectedAsset = refreshedAsset
                 editingInput = refreshedInput
                 renderSourceURL = refreshedInput.fullSizeImageURL
@@ -36,10 +50,13 @@ func revertPhotoToOriginal() {
                 compareMode = .result
                 scheduleRender()
                 alertMessage = "已通过 PhotoKit 恢复照片原始版本。"
+                isSaving = false
             } catch {
+                guard photoGeneration == generation,
+                      selectedAsset?.localIdentifier == assetIdentifier else { return }
                 alertMessage = error.localizedDescription
+                isSaving = false
             }
-            isSaving = false
         }
     }
 
