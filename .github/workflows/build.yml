@@ -109,12 +109,12 @@ jobs:
           ditto "$APP_PATH" "build/Payload/${{ env.APP_NAME }}.app"
           bash scripts/verify-embedded-extensions.sh "build/Payload/${{ env.APP_NAME }}.app"
 
-          IPA_PATH="build/${{ env.APP_NAME }}-unsigned-v${{ env.NEW_VERSION }}.ipa"
+          IPA_FILENAME="${{ env.APP_NAME }}-unsigned-v${{ env.NEW_VERSION }}.ipa"
           cd build
-          zip -qry "${{ env.APP_NAME }}-unsigned-v${{ env.NEW_VERSION }}.ipa" Payload
-          test -s "$IPA_PATH"
+          zip -qry "$IPA_FILENAME" Payload
+          test -s "$IPA_FILENAME"
           mkdir -p ipa-verify
-          unzip -q "$IPA_PATH" -d ipa-verify
+          unzip -q "$IPA_FILENAME" -d ipa-verify
           bash ../scripts/verify-embedded-extensions.sh "ipa-verify/Payload/${{ env.APP_NAME }}.app"
           ls -lh "$IPA_PATH"
           echo "=== IPA 内模型检查 ==="
