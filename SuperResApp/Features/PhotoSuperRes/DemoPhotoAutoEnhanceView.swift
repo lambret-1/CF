@@ -161,6 +161,8 @@ struct DemoPhotoAutoEnhanceView: View {
             .padding(.horizontal, 15)
             .padding(.vertical, 7)
             .background(Color(uiColor: .tertiarySystemFill), in: Capsule())
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
             Spacer()
             Button("完成") {
                 saveToPhotos()
@@ -170,6 +172,8 @@ struct DemoPhotoAutoEnhanceView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 7)
             .background(isCompleteEnabled ? Color(red: 1.0, green: 0.88, blue: 0.48) : Color(uiColor: .tertiarySystemFill), in: Capsule())
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
             .disabled(!isCompleteEnabled)
         }
         .padding(.horizontal, 20)
