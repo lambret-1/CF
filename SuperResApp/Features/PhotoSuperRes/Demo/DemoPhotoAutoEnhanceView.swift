@@ -36,6 +36,7 @@ struct DemoPhotoAutoEnhanceView: View {
     @State var redoStack: [DemoEditorSnapshot] = []
     @State var editingSnapshot: DemoEditorSnapshot?
     @State var renderToken = UUID()
+    @State var photoGeneration = UUID()
     @State var loadTask: Task<Void, Never>?
     @State var renderTask: Task<Void, Never>?
     @State var lastLiveActivityCanComplete: Bool?
@@ -87,15 +88,19 @@ struct DemoPhotoAutoEnhanceView: View {
         .statusBarHidden(true)
         .task {
             guard let initialItem = pickerItem, originalImage == nil else { return }
+            let generation = UUID()
+            photoGeneration = generation
             loadTask?.cancel()
-            let task = Task { await loadPhoto(initialItem) }
+            let task = Task { await loadPhoto(initialItem, generation: generation) }
             loadTask = task
             await task.value
         }
         .onChange(of: pickerItem) { _, item in
             guard let item else { return }
+            let generation = UUID()
+            photoGeneration = generation
             loadTask?.cancel()
-            loadTask = Task { await loadPhoto(item) }
+            loadTask = Task { await loadPhoto(item, generation: generation) }
         }
         .alert("照片编辑", isPresented: Binding(
             get: { alertMessage != nil },
