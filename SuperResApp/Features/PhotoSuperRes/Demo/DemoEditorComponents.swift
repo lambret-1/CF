@@ -91,8 +91,8 @@ enum AdjustmentControl: String, CaseIterable, Identifiable {
         case .saturation: 0...2
         case .vibrance: -1...1
         case .brightness: -0.5...0.5
-        case .highlights: -1...1
-        case .shadows: -1...1
+        case .highlights: 0...1
+        case .shadows: 0...1
         case .temperature: 2500...10000
         case .tint: -150...150
         case .sharpness: 0...2
