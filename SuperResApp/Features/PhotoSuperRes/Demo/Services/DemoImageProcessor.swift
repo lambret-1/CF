@@ -59,7 +59,9 @@ enum DemoImageProcessor {
         let hasDecodedSourceURL = sourceImage != nil
         let orientation = hasDecodedSourceURL ? CGImagePropertyOrientation.up : image.imageOrientation.cgImagePropertyOrientation
         let input = sourceImage ?? CIImage(cgImage: cgImage)
-        var output = input
+        // Normalize UIImage orientation before analysis. Core Image's automatic
+        // adjustment engine and face detector must inspect the same upright pixels.
+        var output = hasDecodedSourceURL ? input : input.oriented(orientation)
 
         if transform.usesDepthBlur, let sourceURL,
            let depthFilter = context.depthBlurEffectFilter(forImageURL: sourceURL, options: nil),
@@ -73,28 +75,18 @@ enum DemoImageProcessor {
             if let next = filter.outputImage { output = next }
         }
 
-        // Core Image exposes generic automatic adjustments, not the private
-        // Photos app enhancement engine. Keep this as a distinct optional stage.
+        // Run Apple's automatic-adjustment analysis on the actual image entering
+        // this stage (including an optional built-in preset), not on a stale source.
+        // Photos' private enhancement engine is not public; this is the full public
+        // Core Image automatic-adjustment pipeline.
         if autoEnhance {
-            let options: [CIImageAutoAdjustmentOption: Any] = [
-                .crop: false,
-                CIImageAutoAdjustmentOption(rawValue: "CIDetectorImageOrientation"): NSNumber(value: orientation.rawValue)
-            ]
-
-            for filter in input.autoAdjustmentFilters(options: options) {
-                filter.setValue(output, forKey: kCIInputImageKey)
-                guard let next = filter.outputImage else { continue }
-                output = next
-            }
+            output = AppleAutomaticEnhancement.apply(to: output)
         }
 
         // Always apply explicit user adjustments after automatic correction so
         // users can fine-tune the automatic result without losing it.
         output = applyManualAdjustments(settings, to: output)
 
-        if !hasDecodedSourceURL {
-            output = output.oriented(orientation)
-        }
         if let markupData,
            let drawing = try? PKDrawing(data: markupData) {
             let drawingImage = drawing.image(
@@ -276,5 +268,61 @@ private extension UIImage.Orientation {
         case .rightMirrored: .rightMirrored
         @unknown default: .up
         }
+    }
+}
+
+
+/// Executes Apple's documented Core Image automatic-adjustment filters as one
+/// coherent stage. Face features are supplied to the system filters so that
+/// supported face-aware corrections, including red-eye correction, can run.
+private enum AppleAutomaticEnhancement {
+    private static let detectorContext = CIContext(options: [.useSoftwareRenderer: false])
+
+    static func apply(to image: CIImage) -> CIImage {
+        let uprightImage = image
+        let features = detectedFaceFeatures(in: uprightImage)
+
+        var options: [CIImageAutoAdjustmentOption: Any] = [
+            .enhance: true,
+            .redEye: true,
+            .crop: false,
+            .features: features,
+            CIImageAutoAdjustmentOption(rawValue: "CIDetectorImageOrientation"): NSNumber(value: 1)
+        ]
+
+        // Do not request automatic cropping: the editor must preserve the source
+        // framing unless the user explicitly changes geometry.
+        options[.crop] = false
+
+        let filters = uprightImage.autoAdjustmentFilters(options: options)
+        guard !filters.isEmpty else { return uprightImage }
+
+        var output = uprightImage
+        for filter in filters {
+            // Each returned Apple filter contributes to the previous stage's
+            // output. Replacing the input with the original image here would
+            // silently discard earlier corrections in a multi-filter result.
+            filter.setValue(output, forKey: kCIInputImageKey)
+            guard let next = filter.outputImage else { continue }
+            output = next
+        }
+        return output
+    }
+
+    private static func detectedFaceFeatures(in image: CIImage) -> [CIFeature] {
+        guard let detector = CIDetector(
+            ofType: CIDetectorTypeFace,
+            context: detectorContext,
+            options: [CIDetectorAccuracy: CIDetectorAccuracyHigh]
+        ) else {
+            return []
+        }
+
+        // The image is physically oriented upright before it reaches this method.
+        // A detector orientation of 1 avoids applying EXIF rotation twice.
+        return detector.features(
+            in: image,
+            options: [CIDetectorImageOrientation: 1]
+        )
     }
 }
