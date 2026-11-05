@@ -107,7 +107,7 @@ struct DemoPhotoAutoEnhanceView: View {
             guard url.scheme == "cfphotoeditor" else { return }
             switch url.host {
             case "cancel": dismiss()
-            case "complete": completeFromLiveActivity()
+            case "complete": saveToPhotos()
             default: break
             }
         }
