@@ -82,7 +82,7 @@ struct DemoPhotoAutoEnhanceView: View {
             await loadPhoto(initialItem)
         }
         .onChange(of: pickerItem) { _, item in
-            guard let item, originalImage != nil else { return }
+            guard let item else { return }
             Task { await loadPhoto(item) }
         }
         .alert("照片编辑", isPresented: Binding(
