@@ -156,6 +156,7 @@ struct DemoPhotoAutoEnhanceView: View {
                 libraryObserverStarted = false
                 libraryObserver.stop()
             }
+            photoGeneration = UUID()
             loadTask?.cancel()
             renderTask?.cancel()
             cleanupTemporaryRAWResource()
