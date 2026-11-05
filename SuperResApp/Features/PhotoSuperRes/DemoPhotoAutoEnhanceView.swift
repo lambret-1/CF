@@ -952,9 +952,10 @@ struct DemoPhotoAutoEnhanceView: View {
         let currentMarkupData = markupData
         let sourceURL = renderSourceURL ?? editingInput?.fullSizeImageURL
 
-        Task {
+        renderTask?.cancel()
+        renderTask = Task {
             if debounced { try? await Task.sleep(for: .milliseconds(100)) }
-            guard renderToken == token else { return }
+            guard !Task.isCancelled, renderToken == token else { return }
             let result = await Task.detached(priority: .userInitiated) {
                 DemoImageProcessor.renderCIImage(
                     originalImage,
@@ -966,7 +967,7 @@ struct DemoPhotoAutoEnhanceView: View {
                     markupData: currentMarkupData
                 )
             }.value
-            guard renderToken == token else { return }
+            guard !Task.isCancelled, renderToken == token else { return }
 
             if let result {
                 renderedCIImage = result
