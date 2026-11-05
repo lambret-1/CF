@@ -79,12 +79,14 @@ struct DemoPhotoAutoEnhanceView: View {
             }
             .frame(
                 width: geometry.size.width,
-                height: geometry.size.height + safeTop,
+                height: geometry.size.height,
                 alignment: .top
             )
-            .offset(y: -safeTop)
             .background(Color(uiColor: .systemBackground).ignoresSafeArea())
         }
+        // Expand the GeometryReader's actual hit-testing bounds into the top safe area.
+        // The editor controls are rendered there, so their parent must own that area too.
+        .ignoresSafeArea(edges: .top)
         .toolbar(.hidden, for: .navigationBar)
         .statusBarHidden(true)
         .task {
