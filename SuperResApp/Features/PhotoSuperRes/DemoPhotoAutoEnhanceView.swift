@@ -735,6 +735,7 @@ struct DemoPhotoAutoEnhanceView: View {
                let data = try await item.loadTransferable(type: Data.self) {
                 loadedImage = UIImage(data: data)
             }
+            guard !Task.isCancelled else { return }
             guard let image = loadedImage else {
                 self.pickerItem = .none
                 alertMessage = "无法读取所选照片，请重新选择。"
@@ -743,7 +744,9 @@ struct DemoPhotoAutoEnhanceView: View {
 
             pickerItem = nil
             cleanupTemporaryRAWResource()
+            renderTask?.cancel()
             renderToken = UUID()
+            renderedCIImage = nil
             selectedAsset = loadedAsset
             editingInput = loadedInput
             renderSourceURL = loadedSourceURL
