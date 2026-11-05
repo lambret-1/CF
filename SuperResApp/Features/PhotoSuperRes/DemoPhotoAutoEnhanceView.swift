@@ -1024,6 +1024,30 @@ struct DemoPhotoAutoEnhanceView: View {
             selectedPreset = preset
         }
         autoEnhanceEnabled = root["autoEnhance"] as? Bool ?? false
+        if let base = root["autoEnhanceBaseSettings"] as? [String: Double] {
+            autoEnhanceBaseSettings = DemoAdjustmentSettings(
+                exposure: base["exposure"] ?? 0,
+                brightness: base["brightness"] ?? 0,
+                contrast: base["contrast"] ?? 1,
+                saturation: base["saturation"] ?? 1,
+                vibrance: base["vibrance"] ?? 0,
+                highlights: base["highlights"] ?? 0,
+                shadows: base["shadows"] ?? 0,
+                temperature: base["temperature"] ?? 6500,
+                tint: base["tint"] ?? 0,
+                sharpness: base["sharpness"] ?? 0,
+                noiseReduction: base["noiseReduction"] ?? 0,
+                vignette: base["vignette"] ?? 0
+            )
+        } else if autoEnhanceEnabled {
+            autoEnhanceBaseSettings = settings
+        }
+        if let rawBasePreset = root["autoEnhanceBasePreset"] as? String,
+           let basePreset = DemoPhotoPreset(rawValue: rawBasePreset) {
+            autoEnhanceBasePreset = basePreset
+        } else if autoEnhanceEnabled {
+            autoEnhanceBasePreset = .original
+        }
         if let transform = root["rotation"] as? Int {
             imageTransform.quarterTurnsClockwise = transform
         }
@@ -1197,6 +1221,15 @@ struct DemoPhotoAutoEnhanceView: View {
                         "markupData": markupData?.base64EncodedString() ?? "",
                         "preset": selectedPreset.rawValue,
                         "autoEnhance": autoEnhanceEnabled,
+                        "autoEnhanceBaseSettings": autoEnhanceBaseSettings.map { [
+                            "exposure": $0.exposure, "brightness": $0.brightness,
+                            "contrast": $0.contrast, "saturation": $0.saturation,
+                            "vibrance": $0.vibrance, "highlights": $0.highlights,
+                            "shadows": $0.shadows, "temperature": $0.temperature,
+                            "tint": $0.tint, "sharpness": $0.sharpness,
+                            "noiseReduction": $0.noiseReduction, "vignette": $0.vignette
+                        ] } ?? [:],
+                        "autoEnhanceBasePreset": autoEnhanceBasePreset?.rawValue ?? "",
                         "rotation": imageTransform.quarterTurnsClockwise,
                         "horizontalFlip": imageTransform.isHorizontallyFlipped,
                         "squareCrop": imageTransform.usesSquareCrop,
