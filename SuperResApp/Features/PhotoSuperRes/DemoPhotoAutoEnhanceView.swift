@@ -1100,7 +1100,12 @@ struct DemoPhotoAutoEnhanceView: View {
                 let rawImage = try await Task.detached(priority: .userInitiated) {
                     try ApplePhotoAnalysisService.renderRawImage(at: url)
                 }.value
-                cleanupTemporaryRAWResource()
+                let previousSourceURL = renderSourceURL
+                if previousSourceURL != url,
+                   let previousSourceURL,
+                   previousSourceURL.lastPathComponent.hasPrefix("CF-RAW-") {
+                    try? FileManager.default.removeItem(at: previousSourceURL)
+                }
                 undoStack.removeAll()
                 redoStack.removeAll()
                 renderSourceURL = url
