@@ -94,12 +94,12 @@ jobs:
             MARKETING_VERSION="${{ env.NEW_VERSION }}" \
             2>&1 | tee build.log
 
-      - name: 验证构建产物中的嵌入扩展
+      - name: 验证构建产物中的 Live Activity 扩展
         run: |
           APP_PATH="build/DerivedData/Build/Products/Release-iphoneos/${{ env.APP_NAME }}.app"
           bash scripts/verify-embedded-extensions.sh "$APP_PATH"
           echo "=== Xcode 生成的扩展嵌入配置 ==="
-          grep -n -A 8 -B 5 "PhotoEditingExtension.appex" "${{ env.APP_NAME }}.xcodeproj/project.pbxproj"
+          grep -n -A 8 -B 5 "PhotoEditorLiveActivity.appex" "${{ env.APP_NAME }}.xcodeproj/project.pbxproj"
 
       - name: 导出并验证未签名 IPA
         run: |
