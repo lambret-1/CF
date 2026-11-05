@@ -364,9 +364,8 @@ func navigationBar(safeTop: CGFloat) -> some View {
             set: { value in
                 settings[keyPath: selectedAdjustment.keyPath] = value
                 selectedPreset = .custom
-                autoEnhanceEnabled = false
-                autoEnhanceBaseSettings = nil
-                autoEnhanceBasePreset = nil
+                // Manual controls refine the current automatic result; they do
+                // not disable or erase the automatic correction stage.
                 scheduleRender(debounced: true)
             }
         )
