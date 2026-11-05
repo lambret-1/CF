@@ -39,6 +39,7 @@ struct DemoPhotoAutoEnhanceView: View {
     @State private var loadTask: Task<Void, Never>?
     @State private var renderTask: Task<Void, Never>?
     @State private var lastLiveActivityCanComplete: Bool?
+    @State private var libraryObserverStarted = false
     @State private var isProcessing = false
     @State private var isSaving = false
     @State private var alertMessage: String?
@@ -123,13 +124,18 @@ struct DemoPhotoAutoEnhanceView: View {
             Task { await updateLiveActivity(canComplete: enabled) }
         }
         .onAppear {
+            guard !libraryObserverStarted else { return }
+            libraryObserverStarted = true
             libraryObserver.start()
         }
         .onChange(of: libraryObserver.changeCount) { _, _ in
             refreshSelectedAsset()
         }
         .onDisappear {
-            libraryObserver.stop()
+            if libraryObserverStarted {
+                libraryObserverStarted = false
+                libraryObserver.stop()
+            }
             loadTask?.cancel()
             renderTask?.cancel()
             cleanupTemporaryRAWResource()
