@@ -83,7 +83,10 @@ struct DemoPhotoAutoEnhanceView: View {
         .toolbar(.hidden, for: .navigationBar)
         .task {
             guard let initialItem = pickerItem, originalImage == nil else { return }
-            await loadPhoto(initialItem)
+            loadTask?.cancel()
+            let task = Task { await loadPhoto(initialItem) }
+            loadTask = task
+            await task.value
         }
         .onChange(of: pickerItem) { _, item in
             guard let item else { return }
