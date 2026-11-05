@@ -11,6 +11,7 @@ extension DemoPhotoAutoEnhanceView {
 @MainActor
 func loadPhoto(_ item: PhotosPickerItem, generation: UUID) async {
         guard generation == photoGeneration else { return }
+        isSaving = false
         isLoadingRAW = false
         isAnalyzing = false
         isExtractingSubject = false
