@@ -282,8 +282,8 @@ actor PhotoKitEditingService {
             if abs(settings.highlights) > 0.0001 || abs(settings.shadows) > 0.0001 {
                 let filter = CIFilter(name: "CIHighlightShadowAdjust")
                 filter?.setValue(output, forKey: kCIInputImageKey)
-                filter?.setValue(settings.highlights, forKey: "inputHighlightAmount")
-                filter?.setValue(settings.shadows, forKey: "inputShadowAmount")
+                filter?.setValue(min(max(settings.highlights, 0), 1), forKey: "inputHighlightAmount")
+                filter?.setValue(min(max(settings.shadows, 0), 1), forKey: "inputShadowAmount")
                 if let next = filter?.outputImage { output = next }
             }
             if abs(settings.temperature - 6500) > 0.5 || abs(settings.tint) > 0.0001 {
