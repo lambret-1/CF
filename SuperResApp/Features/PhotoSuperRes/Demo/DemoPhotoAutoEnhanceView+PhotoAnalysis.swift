@@ -8,39 +8,56 @@ import Photos
 import PencilKit
 
 extension DemoPhotoAutoEnhanceView {
-func extractForegroundSubject() {
+    func extractForegroundSubject() {
         guard let image = originalImage else { return }
+        let generation = photoGeneration
+        let sourceURL = renderSourceURL ?? editingInput?.fullSizeImageURL
         isExtractingSubject = true
+
         Task {
             do {
-                let sourceURL = renderSourceURL ?? editingInput?.fullSizeImageURL
-                foregroundCutout = try await Task.detached(priority: .userInitiated) {
+                let cutout = try await Task.detached(priority: .userInitiated) {
                     try ApplePhotoAnalysisService.foregroundCutout(from: image, sourceURL: sourceURL)
                 }.value
-                if foregroundCutout == nil {
+
+                guard generation == photoGeneration else { return }
+                foregroundCutout = cutout
+                if cutout == nil {
                     alertMessage = "Vision 未检测到可分离的前景主体。"
                 }
             } catch {
+                guard generation == photoGeneration else { return }
                 alertMessage = error.localizedDescription
             }
-            isExtractingSubject = false
+
+            if generation == photoGeneration {
+                isExtractingSubject = false
+            }
         }
     }
 
     func analyzeCurrentPhoto() {
         guard let image = originalImage else { return }
+        let generation = photoGeneration
+        let sourceURL = renderSourceURL ?? editingInput?.fullSizeImageURL
         isAnalyzing = true
+
         Task {
             do {
-                let sourceURL = renderSourceURL ?? editingInput?.fullSizeImageURL
                 let result = try await Task.detached(priority: .userInitiated) {
                     try ApplePhotoAnalysisService.analyze(image, sourceURL: sourceURL)
                 }.value
+
+                guard generation == photoGeneration else { return }
                 analysisResult = result
             } catch {
+                guard generation == photoGeneration else { return }
                 alertMessage = error.localizedDescription
             }
-            isAnalyzing = false
+
+            if generation == photoGeneration {
+                isAnalyzing = false
+            }
         }
     }
 
