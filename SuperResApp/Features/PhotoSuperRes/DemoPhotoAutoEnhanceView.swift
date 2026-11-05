@@ -71,10 +71,6 @@ struct DemoPhotoAutoEnhanceView: View {
                 if originalImage != nil {
                     parameterPanel
                     editorTabBar
-                } else {
-                    welcome
-                        .padding(.horizontal, 20)
-                        .padding(.bottom, 18)
                 }
             }
             .frame(
@@ -652,40 +648,6 @@ struct DemoPhotoAutoEnhanceView: View {
         }
         .padding(.bottom, 4)
         .background(Color(uiColor: .systemBackground))
-    }
-
-    private var welcome: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("开始编辑").font(.system(size: 18, weight: .bold))
-                    Text("选择一张照片，解锁完整编辑工具")
-                        .font(.system(size: 11)).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Image(systemName: "wand.and.stars").font(.system(size: 25)).foregroundStyle(accent)
-            }
-            PhotosPicker(selection: $pickerItem, matching: .images) {
-                Label("从相册导入照片", systemImage: "plus")
-                    .font(.system(size: 14, weight: .semibold))
-                    .frame(maxWidth: .infinity).padding(.vertical, 14)
-                    .background(accent, in: RoundedRectangle(cornerRadius: 14))
-                    .foregroundStyle(.black.opacity(0.85))
-            }
-            HStack(spacing: 7) {
-                featurePill("原生增强", icon: "sparkles")
-                featurePill("精细调节", icon: "slider.horizontal.3")
-                featurePill("高清导出", icon: "square.and.arrow.down")
-            }
-        }
-        .padding(18)
-        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20))
-    }
-
-    private func featurePill(_ title: String, icon: String) -> some View {
-        Label(title, systemImage: icon).font(.system(size: 9, weight: .medium))
-            .padding(.horizontal, 8).padding(.vertical, 7)
-            .background(Color(uiColor: .tertiarySystemFill), in: Capsule())
     }
 
     private func infoCard(_ title: String, detail: String, icon: String) -> some View {
