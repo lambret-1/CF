@@ -39,7 +39,6 @@ func startLiveActivity() async {
     }
 
     @MainActor
-    @MainActor
 func restoreLiveActivity() {
         if liveActivitySessionID == nil {
             liveActivitySessionID = UserDefaults(suiteName: PhotoEditorActivityAttributes.appGroupID)?.string(forKey: "photoEditorLiveActivitySessionID")
@@ -52,7 +51,6 @@ func restoreLiveActivity() {
         Task { await updateLiveActivity(canComplete: isCompleteEnabled) }
     }
 
-    @MainActor
     @MainActor
 func updateLiveActivity(canComplete: Bool) async {
         guard let liveActivity, lastLiveActivityCanComplete != canComplete else { return }
@@ -67,7 +65,6 @@ func updateLiveActivity(canComplete: Bool) async {
         lastLiveActivityCanComplete = canComplete
     }
 
-    @MainActor
     @MainActor
 func endLiveActivity() async {
         guard let liveActivity else { return }
