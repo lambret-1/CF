@@ -338,7 +338,8 @@ struct DemoPhotoAutoEnhanceView: View {
                         .buttonStyle(.plain)
                         .sheet(isPresented: $showFreeCropEditor) {
                             if let image = editedImage ?? originalImage {
-                                AppleFreeCropEditor(image: image, onCancel: {}, onApply: { rect in
+                                AppleFreeCropEditor(image: image, onCancel: { showFreeCropEditor = false }, onApply: { rect in
+                                    showFreeCropEditor = false
                                     pushUndo()
                                     imageTransform.cropRect = combinedCropRect(for: rect)
                                     imageTransform.cropAspectRatio = nil
@@ -458,7 +459,8 @@ struct DemoPhotoAutoEnhanceView: View {
                 .frame(height: 92)
                 .sheet(isPresented: $showMarkupEditor) {
                     if let image = editedImage ?? originalImage {
-                        AppleMarkupEditor(image: image, onCancel: {}, onSave: { drawing in
+                        AppleMarkupEditor(image: image, onCancel: { showMarkupEditor = false }, onSave: { drawing in
+                            showMarkupEditor = false
                             pushUndo()
                             markupData = drawing.dataRepresentation()
                             scheduleRender()
