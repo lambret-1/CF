@@ -8,40 +8,61 @@ import Photos
 import PencilKit
 
 extension DemoPhotoAutoEnhanceView {
-func navigationBar(safeTop: CGFloat) -> some View {
-        HStack {
-            Button("取消") {
+func navigationBar(topInset: CGFloat) -> some View {
+        HStack(spacing: 0) {
+            Button {
                 dismiss()
+            } label: {
+                Text("取消")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 15)
+                    .padding(.vertical, 7)
+                    .frame(minWidth: 88, minHeight: 44)
+                    .background(Color(uiColor: .tertiarySystemFill), in: Capsule())
+                    .contentShape(Rectangle())
             }
-            .font(.system(size: 15, weight: .medium))
-            .foregroundStyle(.primary)
-            .padding(.horizontal, 15)
-            .padding(.vertical, 7)
-            .background(Color(uiColor: .tertiarySystemFill), in: Capsule())
-            .frame(minHeight: 44)
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .accessibilityLabel("取消编辑")
 
-            Spacer(minLength: 0)
+            Spacer(minLength: 12)
 
-            Button("完成") {
+            Button {
                 saveToPhotos()
+            } label: {
+                HStack(spacing: 6) {
+                    if isSaving || isProcessing {
+                        ProgressView()
+                            .progressViewStyle(.circular)
+                            .scaleEffect(0.75)
+                    } else {
+                        Text("完成")
+                            .font(.system(size: 15, weight: .semibold))
+                    }
+                }
+                .foregroundStyle(isCompleteEnabled ? Color.black.opacity(0.85) : Color.secondary)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 7)
+                .frame(minWidth: 88, minHeight: 44)
+                .background(
+                    isCompleteEnabled
+                        ? Color(red: 1.0, green: 0.88, blue: 0.48)
+                        : Color(uiColor: .tertiarySystemFill),
+                    in: Capsule()
+                )
+                .contentShape(Rectangle())
             }
-            .font(.system(size: 15, weight: .semibold))
-            .foregroundStyle(isCompleteEnabled ? Color.black.opacity(0.85) : Color.secondary)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 7)
-            .background(
-                isCompleteEnabled
-                    ? Color(red: 1.0, green: 0.88, blue: 0.48)
-                    : Color(uiColor: .tertiarySystemFill),
-                in: Capsule()
-            )
-            .frame(minHeight: 44)
-            .contentShape(Rectangle())
-            .disabled(!isCompleteEnabled)
+            .buttonStyle(.plain)
+            .disabled(isSaving)
+            .accessibilityLabel("完成并保存")
+            .accessibilityHint(hasChanges ? "保存到照片" : "还没有修改")
         }
         .padding(.horizontal, 20)
-        .frame(height: max(safeTop, 44))
+        .frame(height: 44)
+        // 顶栏整体下移到灵动岛/传感器区域下方；44pt 热区完全落在可触区。
+        .padding(.top, max(topInset, 0))
+        .background(Color(uiColor: .systemBackground))
+        .zIndex(10)
     }
 
     var quickToolbar: some View {
@@ -534,8 +555,11 @@ func navigationBar(safeTop: CGFloat) -> some View {
         originalImage != nil && (settings != DemoAdjustmentSettings() || autoEnhanceEnabled || selectedPreset.filterName != nil || imageTransform != .identity || markupData != nil)
     }
 
+    /// 完成按钮只在真正保存时禁用（防重复提交）。
+    /// 没有改动时按钮依然可点，点击后给出明确提示——
+    /// 否则用户看到的是一个颜色正常但毫无反应的按钮。
     var isCompleteEnabled: Bool {
-        hasChanges && !isProcessing && !isSaving
+        originalImage != nil && !isProcessing && !isSaving
     }
 
     var outputSize: String {

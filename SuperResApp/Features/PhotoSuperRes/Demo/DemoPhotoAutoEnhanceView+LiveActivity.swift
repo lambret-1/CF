@@ -85,11 +85,7 @@ func endLiveActivity() async {
         case "cancel":
             dismiss()
         case "complete":
-            if isCompleteEnabled {
-                saveToPhotos()
-            } else {
-                alertMessage = isProcessing ? "正在处理，请稍候。" : "没有可保存的修改。"
-            }
+            saveToPhotos()
         default:
             break
         }

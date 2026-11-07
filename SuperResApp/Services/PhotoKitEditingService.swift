@@ -251,71 +251,9 @@ actor PhotoKitEditingService {
                 filter.setValue(output, forKey: kCIInputImageKey)
                 if let next = filter.outputImage { output = next }
             }
-            // Match the still-image pipeline: preset, automatic correction, then
-            // explicit manual adjustments. These remain composable in Live Photos.
-            if autoEnhance {
-                for filter in output.autoAdjustmentFilters(options: [.crop: false]) {
-                    filter.setValue(output, forKey: kCIInputImageKey)
-                    if let next = filter.outputImage { output = next }
-                }
-            }
-
-            if abs(settings.exposure) > 0.0001 {
-                let filter = CIFilter.exposureAdjust()
-                filter.inputImage = output
-                filter.ev = Float(settings.exposure)
-                if let next = filter.outputImage { output = next }
-            }
-            if abs(settings.brightness) > 0.0001 ||
-                abs(settings.contrast - 1) > 0.0001 ||
-                abs(settings.saturation - 1) > 0.0001 {
-                let filter = CIFilter.colorControls()
-                filter.inputImage = output
-                filter.brightness = Float(settings.brightness)
-                filter.contrast = Float(settings.contrast)
-                filter.saturation = Float(settings.saturation)
-                if let next = filter.outputImage { output = next }
-            }
-            if abs(settings.vibrance) > 0.0001 {
-                let filter = CIFilter(name: "CIVibrance")
-                filter?.setValue(output, forKey: kCIInputImageKey)
-                filter?.setValue(settings.vibrance, forKey: "inputAmount")
-                if let next = filter?.outputImage { output = next }
-            }
-            if abs(settings.highlights) > 0.0001 || abs(settings.shadows) > 0.0001 {
-                let filter = CIFilter(name: "CIHighlightShadowAdjust")
-                filter?.setValue(output, forKey: kCIInputImageKey)
-                filter?.setValue(min(max(settings.highlights, 0), 1), forKey: "inputHighlightAmount")
-                filter?.setValue(min(max(settings.shadows, 0), 1), forKey: "inputShadowAmount")
-                if let next = filter?.outputImage { output = next }
-            }
-            if abs(settings.temperature - 6500) > 0.5 || abs(settings.tint) > 0.0001 {
-                let filter = CIFilter(name: "CITemperatureAndTint")
-                filter?.setValue(output, forKey: kCIInputImageKey)
-                filter?.setValue(CIVector(x: 6500, y: 0), forKey: "inputNeutral")
-                filter?.setValue(CIVector(x: settings.temperature, y: settings.tint), forKey: "inputTargetNeutral")
-                if let next = filter?.outputImage { output = next }
-            }
-            if abs(settings.sharpness) > 0.0001 {
-                let filter = CIFilter(name: "CISharpenLuminance")
-                filter?.setValue(output, forKey: kCIInputImageKey)
-                filter?.setValue(settings.sharpness, forKey: "inputSharpness")
-                if let next = filter?.outputImage { output = next }
-            }
-            if abs(settings.noiseReduction) > 0.0001 {
-                let filter = CIFilter(name: "CINoiseReduction")
-                filter?.setValue(output, forKey: kCIInputImageKey)
-                filter?.setValue(settings.noiseReduction, forKey: "inputNoiseLevel")
-                filter?.setValue(0.4, forKey: "inputSharpness")
-                if let next = filter?.outputImage { output = next }
-            }
-            if abs(settings.vignette) > 0.0001 {
-                let filter = CIFilter(name: "CIVignette")
-                filter?.setValue(output, forKey: kCIInputImageKey)
-                filter?.setValue(settings.vignette, forKey: "inputIntensity")
-                filter?.setValue(max(output.extent.width, output.extent.height) * 0.75, forKey: "inputRadius")
-                if let next = filter?.outputImage { output = next }
-            }
+            // 与静态图共用同一套参数实现，避免 Live Photo 视频帧与照片帧
+            // 观感不一致（此前两份拷贝的高光映射方向就是相反的）。
+            output = DemoImageProcessor.applyAdjustments(settings, to: output)
 
             if let markupOverlay {
                 let scaleX = output.extent.width / max(markupOverlay.extent.width, 1)
@@ -328,50 +266,7 @@ actor PhotoKitEditingService {
                 output = aligned.composited(over: output)
             }
 
-            if transform.usesPerspectiveCorrection,
-               let corrected = try? ApplePhotoAnalysisService.perspectiveCorrect(output) {
-                output = corrected
-            }
-            if abs(transform.straightenAngle) > 0.0001 {
-                output = output.applyingFilter("CIStraightenFilter", parameters: ["inputAngle": transform.straightenAngle])
-            }
-            let turns = ((transform.quarterTurnsClockwise % 4) + 4) % 4
-            switch turns {
-            case 1: output = output.oriented(.right)
-            case 2: output = output.oriented(.down)
-            case 3: output = output.oriented(.left)
-            default: break
-            }
-            if transform.isHorizontallyFlipped {
-                output = output.oriented(.upMirrored)
-            }
-            let bounds = output.extent.integral
-            if let cropRect = transform.cropRect {
-                output = output.cropped(to: CGRect(
-                    x: bounds.minX + cropRect.minX * bounds.width,
-                    y: bounds.minY + (1 - cropRect.maxY) * bounds.height,
-                    width: cropRect.width * bounds.width,
-                    height: cropRect.height * bounds.height
-                ))
-            } else if let aspectRatio = transform.cropAspectRatio, aspectRatio > 0 {
-                let width = min(bounds.width, bounds.height * aspectRatio)
-                let height = min(bounds.height, bounds.width / aspectRatio)
-                output = output.cropped(to: CGRect(
-                    x: bounds.midX - width / 2,
-                    y: bounds.midY - height / 2,
-                    width: width,
-                    height: height
-                ))
-            } else if transform.usesSquareCrop {
-                let bounds = output.extent.integral
-                let side = min(bounds.width, bounds.height)
-                output = output.cropped(to: CGRect(
-                    x: bounds.midX - side / 2,
-                    y: bounds.midY - side / 2,
-                    width: side,
-                    height: side
-                ))
-            }
+            output = DemoImageProcessor.applyGeometry(transform, to: output)
             return output
         }
 

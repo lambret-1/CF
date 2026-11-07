@@ -9,6 +9,33 @@ import UniformTypeIdentifiers
 enum DemoImageProcessor {
     private static let context = CIContext(options: [.useSoftwareRenderer: false])
 
+    /// 预览渲染的最长边上限。预览不需要按原始像素尺寸出图，
+    /// 保存时仍走完整的全分辨率管线。
+    static let previewMaxDimension: CGFloat = 2048
+
+    /// 解码并归一化输入图像：优先使用内容编辑输入的原片（含 RAW / HDR），
+    /// 拿不到时退回 UIImage 的位图并按 EXIF 方向摆正。
+    static func sourceCIImage(_ image: UIImage, sourceURL: URL? = nil) -> CIImage? {
+        if let sourceURL {
+            let sourceType = UTType(filenameExtension: sourceURL.pathExtension)
+            if sourceType?.conforms(to: .rawImage) == true {
+                if let rawImage = CIRAWFilter(imageURL: sourceURL)?.outputImage {
+                    return rawImage
+                }
+            } else if let decoded = CIImage(
+                contentsOf: sourceURL,
+                options: [.applyOrientationProperty: true, .expandToHDR: true]
+            ) {
+                return decoded
+            }
+        }
+        guard let cgImage = image.cgImage else { return nil }
+        // Normalize UIImage orientation so that every later stage (analysis,
+        // face detection, filters) sees the same upright pixels.
+        return CIImage(cgImage: cgImage)
+            .oriented(image.imageOrientation.cgImagePropertyOrientation)
+    }
+
     /// Renders with Apple's Core Image filters while retaining the CIImage graph for HDR export.
     static func render(
         _ image: UIImage,
@@ -28,7 +55,7 @@ enum DemoImageProcessor {
             sourceURL: sourceURL,
             markupData: markupData
         ) else { return nil }
-        return makePreviewImage(from: output, scale: image.scale)
+        return makePreviewImage(from: output, scale: image.scale, maxDimension: previewMaxDimension)
     }
 
     static func renderCIImage(
@@ -40,28 +67,11 @@ enum DemoImageProcessor {
         sourceURL: URL? = nil,
         markupData: Data? = nil
     ) -> CIImage? {
-        guard let cgImage = image.cgImage else { return nil }
-
-        let sourceType = sourceURL.flatMap { UTType(filenameExtension: $0.pathExtension) }
-        let isRaw = sourceType?.conforms(to: .rawImage) == true
-        let sourceImage: CIImage?
-        if let sourceURL, isRaw {
-            sourceImage = CIRAWFilter(imageURL: sourceURL)?.outputImage
-        } else if let sourceURL {
-            sourceImage = CIImage(
-                contentsOf: sourceURL,
-                options: [.applyOrientationProperty: true, .expandToHDR: true]
-            )
-        } else {
-            sourceImage = nil
-        }
-
-        let hasDecodedSourceURL = sourceImage != nil
-        let orientation = hasDecodedSourceURL ? CGImagePropertyOrientation.up : image.imageOrientation.cgImagePropertyOrientation
-        let input = sourceImage ?? CIImage(cgImage: cgImage)
-        // Normalize UIImage orientation before analysis. Core Image's automatic
-        // adjustment engine and face detector must inspect the same upright pixels.
-        var output = hasDecodedSourceURL ? input : input.oriented(orientation)
+        // `autoEnhance` 仅为兼容既有调用方保留。自动增强已改为参数估算
+        // （DemoAutoEnhanceEstimator 把结果写进 settings），不再作为独立渲染阶段，
+        // 否则会和用户滑块值重复叠加，且无法回放。
+        guard let baseImage = sourceCIImage(image, sourceURL: sourceURL) else { return nil }
+        var output = baseImage
 
         if transform.usesDepthBlur, let sourceURL,
            let depthFilter = context.depthBlurEffectFilter(forImageURL: sourceURL, options: nil),
@@ -75,17 +85,8 @@ enum DemoImageProcessor {
             if let next = filter.outputImage { output = next }
         }
 
-        // Run Apple's automatic-adjustment analysis on the actual image entering
-        // this stage (including an optional built-in preset), not on a stale source.
-        // Photos' private enhancement engine is not public; this is the full public
-        // Core Image automatic-adjustment pipeline.
-        if autoEnhance {
-            output = AppleAutomaticEnhancement.apply(to: output)
-        }
-
-        // Always apply explicit user adjustments after automatic correction so
-        // users can fine-tune the automatic result without losing it.
-        output = applyManualAdjustments(settings, to: output)
+        // 自动增强的参数已经并入 settings，这里统一按滑块值渲染，保证预览与保存一致。
+        output = applyAdjustments(settings, to: output)
 
         if let markupData,
            let drawing = try? PKDrawing(data: markupData) {
@@ -108,7 +109,20 @@ enum DemoImageProcessor {
         return output
     }
 
-    static func makePreviewImage(from image: CIImage, scale: CGFloat = 1) -> UIImage? {
+    static func makePreviewImage(
+        from image: CIImage,
+        scale: CGFloat = 1,
+        maxDimension: CGFloat? = nil
+    ) -> UIImage? {
+        var image = image
+        if let maxDimension, maxDimension > 0 {
+            let sourceExtent = image.extent
+            let longestSide = max(sourceExtent.width, sourceExtent.height)
+            if longestSide > maxDimension {
+                let factor = maxDimension / longestSide
+                image = image.transformed(by: CGAffineTransform(scaleX: factor, y: factor))
+            }
+        }
         let extent = image.extent.integral
         guard !extent.isEmpty,
               let rendered = context.createCGImage(
@@ -122,7 +136,7 @@ enum DemoImageProcessor {
         return UIImage(cgImage: rendered, scale: scale, orientation: .up)
     }
 
-    private static func applyGeometry(_ transform: DemoImageTransform, to input: CIImage) -> CIImage {
+    static func applyGeometry(_ transform: DemoImageTransform, to input: CIImage) -> CIImage {
         var output = input
         if transform.usesPerspectiveCorrection,
            let corrected = try? ApplePhotoAnalysisService.perspectiveCorrect(output) {
@@ -179,7 +193,9 @@ enum DemoImageProcessor {
         return output
     }
 
-    private static func applyManualAdjustments(
+    /// 唯一的参数调整实现。静态图预览、全分辨率导出与 Live Photo 视频帧
+    /// 都必须调用这里，避免多份拷贝导致观感不一致。
+    static func applyAdjustments(
         _ settings: DemoAdjustmentSettings,
         to input: CIImage
     ) -> CIImage {
@@ -272,57 +288,7 @@ private extension UIImage.Orientation {
 }
 
 
-/// Executes Apple's documented Core Image automatic-adjustment filters as one
-/// coherent stage. Face features are supplied to the system filters so that
-/// supported face-aware corrections, including red-eye correction, can run.
-private enum AppleAutomaticEnhancement {
-    private static let detectorContext = CIContext(options: [.useSoftwareRenderer: false])
-
-    static func apply(to image: CIImage) -> CIImage {
-        let uprightImage = image
-        let features = detectedFaceFeatures(in: uprightImage)
-
-        var options: [CIImageAutoAdjustmentOption: Any] = [
-            .enhance: true,
-            .redEye: true,
-            .crop: false,
-            .features: features,
-            CIImageAutoAdjustmentOption(rawValue: "CIDetectorImageOrientation"): NSNumber(value: 1)
-        ]
-
-        // Do not request automatic cropping: the editor must preserve the source
-        // framing unless the user explicitly changes geometry.
-        options[.crop] = false
-
-        let filters = uprightImage.autoAdjustmentFilters(options: options)
-        guard !filters.isEmpty else { return uprightImage }
-
-        var output = uprightImage
-        for filter in filters {
-            // Each returned Apple filter contributes to the previous stage's
-            // output. Replacing the input with the original image here would
-            // silently discard earlier corrections in a multi-filter result.
-            filter.setValue(output, forKey: kCIInputImageKey)
-            guard let next = filter.outputImage else { continue }
-            output = next
-        }
-        return output
-    }
-
-    private static func detectedFaceFeatures(in image: CIImage) -> [CIFeature] {
-        guard let detector = CIDetector(
-            ofType: CIDetectorTypeFace,
-            context: detectorContext,
-            options: [CIDetectorAccuracy: CIDetectorAccuracyHigh]
-        ) else {
-            return []
-        }
-
-        // The image is physically oriented upright before it reaches this method.
-        // A detector orientation of 1 avoids applying EXIF rotation twice.
-        return detector.features(
-            in: image,
-            options: [CIDetectorImageOrientation: 1]
-        )
-    }
-}
+// 说明：原先的 AppleAutomaticEnhancement 阶段已移除。
+// 它把 CIImage.autoAdjustmentFilters 作为独立管线叠加在用户参数之上，
+// 导致滑块显示值与实际画面不符、无法存档回放，并且每次渲染都要重跑人脸检测。
+// 现在自动增强改为 DemoAutoEnhanceEstimator 估算参数并直接写入 settings。

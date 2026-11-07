@@ -9,13 +9,38 @@ import PencilKit
 
 extension DemoPhotoAutoEnhanceView {
 func applyAutoEnhance() {
-        guard originalImage != nil else { return }
+        guard let image = originalImage else { return }
+        let sourceURL = renderSourceURL ?? editingInput?.fullSizeImageURL
+
+        // 已在自动增强状态：再次点击恢复到应用前的基线。
+        if autoEnhanceEnabled, let base = autoEnhanceBaseSettings {
+            pushUndo()
+            settings = base
+            if let basePreset = autoEnhanceBasePreset {
+                selectedPreset = basePreset
+            }
+            autoEnhanceEnabled = false
+            autoEnhanceBaseSettings = nil
+            autoEnhanceBasePreset = nil
+            scheduleRender()
+            return
+        }
+
+        guard let source = DemoImageProcessor.sourceCIImage(image, sourceURL: sourceURL) else {
+            alertMessage = "无法读取这张照片的像素数据，自动增强未应用。"
+            return
+        }
+        guard let estimate = DemoAutoEnhanceEstimator.estimate(from: source) else {
+            alertMessage = "无法分析这张照片，自动增强未应用。"
+            return
+        }
+
         pushUndo()
-        // Keep automatic correction as an independent rendering stage. Manual
-        // adjustments remain intact and can be layered on top of this stage.
-        autoEnhanceEnabled.toggle()
-        autoEnhanceBaseSettings = nil
-        autoEnhanceBasePreset = nil
+        // 估算结果直接落到滑块上：用户可以继续微调，存档也能完整还原。
+        autoEnhanceBaseSettings = settings
+        autoEnhanceBasePreset = selectedPreset
+        settings = estimate
+        autoEnhanceEnabled = true
         scheduleRender()
     }
 
@@ -100,7 +125,6 @@ func applyAutoEnhance() {
         renderToken = token
         isProcessing = true
         let currentSettings = settings
-        let useAutoEnhance = autoEnhanceEnabled
         let currentFilterName = selectedPreset.filterName
         let currentTransform = imageTransform
         let currentMarkupData = markupData
@@ -114,7 +138,6 @@ func applyAutoEnhance() {
                 DemoImageProcessor.renderCIImage(
                     originalImage,
                     settings: currentSettings,
-                    autoEnhance: useAutoEnhance,
                     filterName: currentFilterName,
                     transform: currentTransform,
                     sourceURL: sourceURL,
@@ -125,7 +148,12 @@ func applyAutoEnhance() {
 
             if let result {
                 renderedCIImage = result
-                let preview = DemoImageProcessor.makePreviewImage(from: result, scale: originalImage.scale) ?? originalImage
+                // 预览只出 2048px 以内的位图；全分辨率像素只在保存时算一次。
+                let preview = DemoImageProcessor.makePreviewImage(
+                    from: result,
+                    scale: originalImage.scale,
+                    maxDimension: DemoImageProcessor.previewMaxDimension
+                ) ?? originalImage
                 editedImage = preview
             } else {
                 renderedCIImage = nil

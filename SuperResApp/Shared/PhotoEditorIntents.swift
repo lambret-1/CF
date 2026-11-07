@@ -48,15 +48,13 @@ struct CompletePhotoEditorIntent: LiveActivityIntent {
     }
 }
 
+/// 灵动岛按钮 → 主 App 的唯一通道：App Group 里的 UserDefaults。
+/// 扩展与主 App 不在同一进程，NotificationCenter 无法跨进程传递，
+/// 主 App 在 scenePhase 变为 active 时读取并消费这条指令。
 enum PhotoEditorIntentBridge {
     static func send(command: String, sessionID: String) {
         guard let defaults = UserDefaults(suiteName: PhotoEditorActivityAttributes.appGroupID) else { return }
         defaults.set(command, forKey: PhotoEditorActivityAttributes.commandKey)
         defaults.set(sessionID, forKey: PhotoEditorActivityAttributes.sessionKey)
-        NotificationCenter.default.post(name: .photoEditorIslandCommand, object: nil)
     }
-}
-
-extension Notification.Name {
-    static let photoEditorIslandCommand = Notification.Name("photoEditorIslandCommand")
 }
