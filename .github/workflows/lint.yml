@@ -1,9 +1,10 @@
 name: 代码规范检查
 
 on:
+  # 任意分支 push 都跑。之前写成 branches: [main, master]，导致推特性分支完全不触发，
+  # 只能靠开 PR 才能跑一次，属于配置缺陷。
   push:
-    branches: [main, master]
-  # 不限制 base 分支：本仓库常用"PR 套 PR"，叠在其他分支上的 PR 也必须能跑。
+  # 叠在其他分支上的 PR 也要跑（本仓库常用"PR 套 PR"）。
   pull_request:
   workflow_dispatch:
     inputs:
