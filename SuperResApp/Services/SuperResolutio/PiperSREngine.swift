@@ -13,15 +13,15 @@ struct PiperSREngine: SuperResolutionEngine {
         scaleFactor: Int,
         progressHandler: ((InferenceProgress) -> Void)?
     ) async throws -> EngineResult { // ⭐️ 修改返回值
-        
+
         let startTime = Date()
         progressHandler?(InferenceProgress(currentTile: 0, totalTiles: 1, fraction: 0.01, elapsedSeconds: 0, estimatedRemainingSeconds: nil))
 
         let tileSize = inputInfo.width
-        let overlap = tileSize / 16 
+        let overlap = tileSize / 16
         let tiles = calculateTiles(width: image.width, height: image.height, tileSize: tileSize, overlap: overlap)
         let totalTiles = tiles.count
-        
+
         let outputWidth = image.width * scaleFactor
         let outputHeight = image.height * scaleFactor
 
@@ -31,32 +31,32 @@ struct PiperSREngine: SuperResolutionEngine {
             space: CGColorSpaceCreateDeviceRGB(),
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ) else { throw InferenceError.outputCreationFailed }
-        
+
         for (index, tile) in tiles.enumerated() {
             try Task.checkCancellation() // ⭐️ 支持取消
             try autoreleasepool {
                 let cropRect = CGRect(x: tile.x, y: tile.y, width: tile.width, height: tile.height)
                 guard let croppedCG = image.cropping(to: cropRect) else { return }
-                
+
                 var outputTile = try self.processTile(image: croppedCG, model: model, inputInfo: inputInfo)
-                
+
                 if let flipped = flipImageVertically(outputTile) {
                     outputTile = flipped
                 }
-                
+
                 let drawWidth = CGFloat(tile.width * scaleFactor)
                 let drawHeight = CGFloat(tile.height * scaleFactor)
                 let destX = CGFloat(tile.x * scaleFactor)
                 let destY = CGFloat(tile.y * scaleFactor)
-                
+
                 let cgY = CGFloat(outputHeight) - destY - drawHeight
-                
+
                 let cropRect2 = CGRect(x: 0, y: 0, width: drawWidth, height: drawHeight)
                 guard let validTile = outputTile.cropping(to: cropRect2) else { return }
-                
+
                 outputContext.draw(validTile, in: CGRect(x: destX, y: cgY, width: drawWidth, height: drawHeight))
             }
-            
+
             let elapsed = Date().timeIntervalSince(startTime)
             progressHandler?(InferenceProgress(
                 currentTile: index + 1, totalTiles: totalTiles, fraction: Double(index + 1) / Double(totalTiles),
@@ -65,7 +65,7 @@ struct PiperSREngine: SuperResolutionEngine {
         }
 
         guard let finalOutput = outputContext.makeImage() else { throw InferenceError.outputCreationFailed }
-        
+
         // ⭐️ 返回 EngineResult
         return EngineResult(image: finalOutput, tileSize: tileSize, totalTiles: totalTiles)
     }
@@ -79,7 +79,7 @@ struct PiperSREngine: SuperResolutionEngine {
             space: image.colorSpace ?? CGColorSpaceCreateDeviceRGB(),
             bitmapInfo: image.bitmapInfo.rawValue
         ) else { return nil }
-        
+
         context.translateBy(x: 0, y: CGFloat(height))
         context.scaleBy(x: 1.0, y: -1.0)
         context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))

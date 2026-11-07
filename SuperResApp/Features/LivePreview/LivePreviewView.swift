@@ -68,7 +68,7 @@ struct LivePreviewView: View {
                 AppTheme.previewBackground
                 VStack(spacing: 12) {
                     ProgressView()
-                    
+
                     // ⭐️ 核心修复：如果有报错，把报错打印在屏幕上
                     if let error = viewModel.inferenceError {
                         Text("推理失败，原因如下：\n\(error)")

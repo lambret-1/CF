@@ -114,7 +114,7 @@ struct ZoomableImageView: UIViewRepresentable {
 
             // ⭐️ 关键修复：将 UIScrollView 的 1.0 缩放定义为 "恰好适应屏幕的大小"
             scrollView.minimumZoomScale = 1.0
-            
+
             // ⭐️ 关键修复：每次换图或重新布局时，强制重置缩放为适应屏幕状态
             scrollView.setZoomScale(1.0, animated: false)
 

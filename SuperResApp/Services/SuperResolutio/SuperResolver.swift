@@ -8,7 +8,7 @@ final class SuperResolver: @unchecked Sendable {
     static let shared = SuperResolver()
     private let modelStore = ModelStore.shared
     private let manifestLoader = ModelManifestLoader.shared
-    
+
     private init() {}
 
     // ⭐️ 2. 如果外部是视频流并发的，不需要在超分引擎里存全局的 cancel 状态。
@@ -22,22 +22,22 @@ final class SuperResolver: @unchecked Sendable {
         modelID: String,
         progressHandler: ((InferenceProgress) -> Void)? = nil
     ) async throws -> InferenceResult {
-        
+
         let startTime = Date()
-        
+
         guard let manifest = await manifestLoader.manifestItem(for: modelID) else {
             throw InferenceError.modelNotLoaded(modelID)
         }
         let descriptor = ModelDescriptor.descriptor(for: manifest)
-        
+
         let config = MLModelConfiguration()
         config.computeUnits = .all
-        
+
         let model = try await modelStore.load(modelID: modelID, computeUnits: config.computeUnits)
         let inputInfo = try ModelInputInfo.parse(from: model)
-        
+
         try Task.checkCancellation()
-        
+
         let engine: SuperResolutionEngine
         if modelID == "piper-sr-2x" {
             engine = PiperSREngine()
@@ -46,7 +46,7 @@ final class SuperResolver: @unchecked Sendable {
         } else {
             engine = TilingEngine()
         }
-        
+
         let engineResult = try await engine.upscale(
             image: image,
             modelID: modelID,
@@ -55,18 +55,18 @@ final class SuperResolver: @unchecked Sendable {
             scaleFactor: descriptor.scaleFactor,
             progressHandler: progressHandler
         )
-        
+
         try Task.checkCancellation()
-        
+
         let targetWidth = image.width * descriptor.scaleFactor
         let targetHeight = image.height * descriptor.scaleFactor
         let elapsed = Date().timeIntervalSince(startTime)
-        
+
         return InferenceResult(
             outputImage: engineResult.image,
             inputSize: CGSize(width: image.width, height: image.height),
             outputSize: CGSize(width: targetWidth, height: targetHeight),
-            elapsedSeconds: elapsed, 
+            elapsedSeconds: elapsed,
             modelID: modelID,
             tileSize: engineResult.tileSize,
             totalTiles: engineResult.totalTiles
@@ -84,9 +84,9 @@ final class SuperResolver: @unchecked Sendable {
 
         let model = try await modelStore.load(modelID: modelID, computeUnits: config.computeUnits)
         let inputInfo = try ModelInputInfo.parse(from: model)
-        
+
         let engine = DirectStretchEngine()
-        
+
         // ⭐️ 这里实际执行推理
         let result = try await engine.upscale(
             image: image,

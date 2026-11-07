@@ -43,7 +43,7 @@ struct RootTabView: View {
                     Label(Tab.models.rawValue, systemImage: Tab.models.icon)
                 }
                 .tag(Tab.models)
-                
+
             // 调试日志页面
             DebugConsoleView()
                 .tabItem {
