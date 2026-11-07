@@ -287,7 +287,6 @@ private extension UIImage.Orientation {
     }
 }
 
-
 // 说明：原先的 AppleAutomaticEnhancement 阶段已移除。
 // 它把 CIImage.autoAdjustmentFilters 作为独立管线叠加在用户参数之上，
 // 导致滑块显示值与实际画面不符、无法存档回放，并且每次渲染都要重跑人脸检测。
