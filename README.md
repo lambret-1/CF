@@ -65,3 +65,39 @@
 - 照片和视频由用户主动从系统相册选择。
 - 处理结果可在应用内预览，并由用户决定是否保存到系统相册。
 - 模型文件与用户选择的媒体文件用途不同：模型用于本地 AI 推理，媒体文件用于对应的影像处理任务。
+
+## 代码规范与 CI
+
+仓库使用 [SwiftLint](https://realm.github.io/SwiftLint/) 做静态规范检查，配置在 `.swiftlint.yml`。
+
+### 本地运行
+
+```bash
+bash scripts/lint.sh            # 只检查
+bash scripts/lint.sh --fix      # 自动修复可修复项
+bash scripts/lint.sh --strict   # warning 也视为失败（提交前自测用）
+```
+
+未安装 SwiftLint 时脚本会自动退回官方 Docker 镜像；macOS 上也可直接 `brew install swiftlint`。
+
+### CI 流水线
+
+`.github/workflows/lint.yml` 在 `push` / `pull_request` 到 `main`、`master` 时触发，包含两个作业：
+
+| 作业 | 运行环境 | 内容 |
+|---|---|---|
+| `SwiftLint` | `macos-14` | 按 `.swiftlint.yml` 检查，结果以行内注释贴到 PR 变更行，并写入运行摘要 |
+| `仓库守卫` | `ubuntu-latest` | 合并冲突标记、CRLF 换行、超过 5MB 的文件 |
+
+`SwiftLint` 作业只在出现 **error** 级问题时失败；warning 会展示但不阻断。需要临时收紧时，可在 Actions 页面手动触发并勾选 `strict`。
+
+### 存量问题的处理
+
+当前代码库已清理行尾空白，配置阈值也按现有规模标定。若后续规则收紧后出现大量历史告警，可生成基线文件把存量冻结，只对新增代码生效：
+
+```bash
+swiftlint lint --write-baseline .swiftlint-baseline.json
+```
+
+提交该文件后，CI 与本地脚本都会自动带上 `--baseline`。基线应逐步缩小，不要长期依赖。
+
