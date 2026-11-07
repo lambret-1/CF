@@ -22,24 +22,13 @@ concurrency:
 jobs:
   swiftlint:
     name: SwiftLint
-    runs-on: macos-14
-    timeout-minutes: 15
+    # 用 Linux + 官方镜像：SwiftLint 不需要 macOS 工具链，
+    # ubuntu 分钟数更便宜、排队更短，也不会因 macOS 配额耗尽而拿不到 runner。
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
-
-      - name: 缓存 Homebrew 下载
-        uses: actions/cache@v4
-        with:
-          path: ~/Library/Caches/Homebrew/downloads
-          key: ${{ runner.os }}-homebrew-swiftlint
-          restore-keys: |
-            ${{ runner.os }}-homebrew-
-
-      - name: 安装 SwiftLint
-        run: |
-          brew install swiftlint || brew upgrade swiftlint
-          swiftlint version
 
       - name: 运行 SwiftLint
         id: lint
@@ -47,17 +36,19 @@ jobs:
         continue-on-error: true
         run: |
           set -o pipefail
-          FLAGS="--quiet --force-exclude --reporter github-actions-logging"
+          ARGS="lint --quiet --force-exclude --reporter github-actions-logging"
           if [ -f .swiftlint-baseline.json ]; then
-            FLAGS="$FLAGS --baseline .swiftlint-baseline.json"
+            ARGS="$ARGS --baseline .swiftlint-baseline.json"
             echo "使用基线文件 .swiftlint-baseline.json，只报告新增问题"
           fi
           if [ "${{ inputs.strict }}" = "true" ]; then
-            FLAGS="$FLAGS --strict"
+            ARGS="$ARGS --strict"
             echo "已开启收紧模式：warning 也视为失败"
           fi
-          echo "执行：swiftlint lint $FLAGS"
-          swiftlint lint $FLAGS 2>&1 | tee swiftlint.log
+          echo "执行：swiftlint $ARGS"
+          docker run --rm --entrypoint swiftlint \
+            -v "$PWD:/work" -w /work \
+            ghcr.io/realm/swiftlint:latest $ARGS 2>&1 | tee swiftlint.log
 
       - name: 结果汇总
         if: always()
