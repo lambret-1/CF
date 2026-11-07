@@ -3,8 +3,8 @@ name: 代码规范检查
 on:
   push:
     branches: [main, master]
+  # 不限制 base 分支：本仓库常用"PR 套 PR"，叠在其他分支上的 PR 也必须能跑。
   pull_request:
-    branches: [main, master]
   workflow_dispatch:
     inputs:
       strict:
