@@ -58,12 +58,20 @@ struct DemoPhotoAutoEnhanceView: View {
 
     let accent = Color(red: 0.43, green: 0.78, blue: 0.68)
 
+    /// 真实窗口安全区。GeometryReader 里的 safeAreaInsets 在本视图
+    /// 应用 `.ignoresSafeArea(edges: .top)` 后会变成 0，不能用来布局顶栏。
+    var windowTopInset: CGFloat {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap { $0.windows }
+            .first { $0.isKeyWindow }?
+            .safeAreaInsets.top ?? 0
+    }
+
     var body: some View {
         GeometryReader { geometry in
-            let safeTop = geometry.safeAreaInsets.top
-
             VStack(spacing: 0) {
-                navigationBar(safeTop: safeTop)
+                navigationBar(topInset: windowTopInset)
                 if originalImage != nil { quickToolbar }
                 preview
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -81,8 +89,8 @@ struct DemoPhotoAutoEnhanceView: View {
             )
             .background(Color(uiColor: .systemBackground).ignoresSafeArea())
         }
-        // Expand the GeometryReader's actual hit-testing bounds into the top safe area.
-        // The editor controls are rendered there, so their parent must own that area too.
+        // 背景与预览铺满到屏幕边缘，但顶栏自己按真实安全区下移，
+        // 44pt 点击热区完全落在灵动岛/传感器区域下方。
         .ignoresSafeArea(edges: .top)
         .toolbar(.hidden, for: .navigationBar)
         .statusBarHidden(true)
@@ -123,16 +131,9 @@ struct DemoPhotoAutoEnhanceView: View {
             switch url.host {
             case "cancel": dismiss()
             case "complete":
-                if isCompleteEnabled {
-                    saveToPhotos()
-                } else {
-                    alertMessage = isProcessing ? "正在处理，请稍候。" : "没有可保存的修改。"
-                }
+                saveToPhotos()
             default: break
             }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .photoEditorIslandCommand)) { _ in
-            consumeIslandCommand()
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
@@ -159,7 +160,10 @@ struct DemoPhotoAutoEnhanceView: View {
             photoGeneration = UUID()
             loadTask?.cancel()
             renderTask?.cancel()
-            cleanupTemporaryRAWResource()
+            // 保存流程可能仍在使用 CF-RAW- 临时文件，此时不能删。
+            if !isSaving {
+                cleanupTemporaryRAWResource()
+            }
             Task { await endLiveActivity() }
         }
     }

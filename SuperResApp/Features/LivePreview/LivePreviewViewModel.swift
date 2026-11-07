@@ -17,7 +17,7 @@ final class LivePreviewViewModel: ObservableObject {
     @Published private(set) var previewImage: UIImage?
     @Published private(set) var errorMessage: String?
     @Published var showLowPerformanceWarning = false
-    
+
     // ⭐️ 新增：用于在 UI 上显示推理错误
     @Published var inferenceError: String?
 
@@ -26,21 +26,21 @@ final class LivePreviewViewModel: ObservableObject {
     private let cameraSession = CameraSession.shared
     private let superResolver = SuperResolver.shared
     private let modelStore = ModelStore.shared
-    
+
     // 用于高效、安全地将 CVPixelBuffer 转为图片
     private let ciContext = CIContext(options: [.useSoftwareRenderer: false])
 
     // MARK: - 调试开关
     // ⭐️ 第一步：保持 true 运行一次，确认相机画面是否正常显示。
     // ⭐️ 第二步：改成 false 再运行一次，如果转圈，请看屏幕上显示的红字报错。
-    private let isDebugBypassAI = true 
+    private let isDebugBypassAI = true
 
     // MARK: - FPS 计算
 
     private var frameTimestamps: [TimeInterval] = []
     private var lastFPSUpdate: TimeInterval = 0
     private var lowPerformanceStartTime: TimeInterval?
-    
+
     // 防止任务堆积：如果上一帧还在处理，直接丢弃当前帧
     private var isProcessingFrame = false
 
@@ -129,7 +129,7 @@ final class LivePreviewViewModel: ObservableObject {
         // 2. 丢帧机制
         guard !isProcessingFrame else { return }
         isProcessingFrame = true
-        
+
         defer { isProcessingFrame = false }
 
         // 3. 安全转换
@@ -156,7 +156,7 @@ final class LivePreviewViewModel: ObservableObject {
                 image: cgImage,
                 modelID: "piper-sr-2x"
             )
-            
+
             self.previewImage = UIImage(cgImage: outputCGImage)
             self.inferenceError = nil // 成功时清除错误
         } catch {

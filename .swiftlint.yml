@@ -1,0 +1,102 @@
+# SwiftLint 配置 —— 超分工坊（SuperResApp）
+#
+# 阈值按仓库现有代码实测标定：75 个 Swift 文件 / 11,741 行，
+# 最长行 330 字符、最长文件 587 行。目标是先"不制造历史噪音"，
+# 再随着代码收敛逐步收紧（见 README 的"代码规范与 CI"一节）。
+#
+# 本地运行：bash scripts/lint.sh          只检查
+#           bash scripts/lint.sh --fix    自动修复可修复项
+# 规则全集：https://realm.github.io/SwiftLint/rule-directory.html
+
+included:
+  - SuperResApp
+
+excluded:
+  - SuperResApp/Models/Builtin
+  - build
+  - DerivedData
+  - SuperResApp.xcodeproj
+
+# ---------- 规模与复杂度阈值 ----------
+line_length:
+  warning: 200
+  error: 400
+  ignores_comments: true
+  ignores_urls: true
+
+file_length:
+  warning: 700
+  error: 1200
+
+type_body_length:
+  warning: 500
+  error: 800
+
+function_body_length:
+  warning: 150
+  # 现有最大 342 行（VideoSuperResProcessor 的帧处理函数），先把闸门设在其上，
+  # 锁住不再变长；拆分后应回调到 200。
+  error: 350
+
+function_parameter_count:
+  warning: 5
+  # 现有最大 11 个参数（FrameInterpolator 的合成函数），同上为棘轮值。
+  error: 12
+
+large_tuple:
+  warning: 3
+  # 现有最大 4 元组，同上为棘轮值。
+  error: 5
+
+disabled_rules:
+  # Button { } label: { } 是 SwiftUI 官方写法，该规则在本项目里只会产生噪音。
+  - multiple_closures_with_trailing_closure
+
+cyclomatic_complexity:
+  warning: 30
+  error: 60
+
+nesting:
+  type_level: 3
+  function_level: 5
+
+# SwiftUI 闭包里常见单字母参数（r/g/b/x/y），命名长度下限放到 1 避免误报。
+identifier_name:
+  min_length: 1
+  max_length:
+    warning: 50
+    error: 60
+
+type_name:
+  min_length: 3
+  max_length:
+    warning: 50
+    error: 60
+
+# ---------- 把"当前为零"的硬缺陷固化为 error，防止回退 ----------
+# 实测仓库中 as! / try! 均为 0 处，这里把默认的 warning 提升为 error。
+force_cast: error
+force_try: error
+
+# ---------- 默认关闭、这里显式打开的低风险检查 ----------
+opt_in_rules:
+  - contains_over_first_not_nil
+  - empty_count
+  - explicit_init
+  - first_where
+  - last_where
+  - sorted_first_last
+  - toggle_bool
+  - unused_closure_parameter
+  - yoda_condition
+
+# ---------- 自定义规则 ----------
+custom_rules:
+  leftover_print:
+    name: "调试打印残留"
+    # AppLogger 里的 print 是日志实现本身，排除。
+    regex: '(?<![.\w])print\('
+    excluded:
+      - SuperResApp/Services/AppLogger.swift
+    message: "功能代码不要留 print，请改用 AppLogger。"
+    severity: warning

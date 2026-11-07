@@ -9,23 +9,23 @@ struct PhotoSuperResView: View {
     @State private var isShowingOriginal = false
     @State private var zoomScale: CGFloat = 1.0
     @State private var availableModels: [ModelRuntimeInfo] = []
-    
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
                 previewArea
                     .frame(maxWidth: .infinity)
-                
+
                 if viewModel.state == .completed {
                     compareControls
                         .padding(.horizontal, DesignTokens.pageMargin)
                         .padding(.vertical, DesignTokens.spacingXS)
                 }
-                
+
                 if viewModel.state != .empty {
                     modelInfoSection
                 }
-                
+
                 if viewModel.state != .empty {
                     bottomActions
                         .padding(.horizontal, DesignTokens.pageMargin)
@@ -81,14 +81,14 @@ struct PhotoSuperResView: View {
             }
         }
     }
-    
+
     // MARK: - 预览区
     @ViewBuilder
     private var previewArea: some View {
         GeometryReader { geometry in
             ZStack {
                 AppTheme.previewBackground.ignoresSafeArea()
-                
+
                 switch viewModel.state {
                 case .empty:
                     Button(action: { viewModel.showPhotoPicker = true }) {
@@ -101,7 +101,7 @@ struct PhotoSuperResView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    
+
                 case .imageSelected, .failed:
                     if let image = viewModel.selectedImage {
                         ZoomableImageView(image: image, zoomScale: $zoomScale)
@@ -120,7 +120,7 @@ struct PhotoSuperResView: View {
                             .padding(.bottom, DesignTokens.spacingMD)
                         }
                     }
-                    
+
                 case .inferring:
                     if let image = viewModel.selectedImage {
                         Image(uiImage: image)
@@ -130,7 +130,7 @@ struct PhotoSuperResView: View {
                             .blur(radius: 1)
                             .frame(width: geometry.size.width, height: geometry.size.height)
                     }
-                    
+
                     VStack {
                         Spacer()
                         VStack(spacing: 8) {
@@ -147,9 +147,9 @@ struct PhotoSuperResView: View {
                                     Text("加载模型...")
                                         .font(.system(size: 13, weight: .medium))
                                 }
-                                
+
                                 Spacer()
-                                
+
                                 if let progress = viewModel.inferenceProgress {
                                     Text("\(Int(progress.fraction * 100))%")
                                         .font(.system(size: 13, weight: .bold))
@@ -157,13 +157,13 @@ struct PhotoSuperResView: View {
                                 }
                             }
                             .foregroundColor(.white)
-                            
+
                             GeometryReader { barGeo in
                                 ZStack(alignment: .leading) {
                                     Capsule()
                                         .fill(Color.white.opacity(0.3))
                                         .frame(height: 6)
-                                    
+
                                     Capsule()
                                         .fill(Color.green)
                                         .frame(width: max(barGeo.size.width * (viewModel.inferenceProgress?.fraction ?? 0.02), 6), height: 6)
@@ -179,7 +179,7 @@ struct PhotoSuperResView: View {
                         .padding(.horizontal, 24)
                         .padding(.bottom, 20)
                     }
-                    
+
                 case .completed:
                     if let original = viewModel.selectedImage,
                        let result = viewModel.resultImage {
@@ -200,7 +200,7 @@ struct PhotoSuperResView: View {
         }
         .frame(maxHeight: .infinity)
     }
-    
+
     // MARK: - 对比控件
     private var compareControls: some View {
         HStack {
@@ -212,7 +212,7 @@ struct PhotoSuperResView: View {
         }
         .frame(maxWidth: .infinity)
     }
-    
+
     // MARK: - 模型信息与极速开关
     private var modelInfoSection: some View {
         VStack(spacing: 8) {
@@ -234,7 +234,7 @@ struct PhotoSuperResView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            
+
             if !viewModel.inputSizeText.isEmpty {
                 HStack {
                     Text("尺寸：\(viewModel.inputSizeText)")
@@ -246,15 +246,15 @@ struct PhotoSuperResView: View {
                 .font(.subheadline)
                 .foregroundColor(AppTheme.tertiaryText)
             }
-            
+
             // 判断是否显示极速模式
             let components = viewModel.inputSizeText.components(separatedBy: "×")
             let width = Int(components.first ?? "0") ?? 0
             let height = Int(components.last ?? "0") ?? 0
             let isLargeImage = (width * height) > 20000000
-            
+
             let fastModeSupportedModels = ["realesrgan-x4v3", "realesrgan-x4"]
-            
+
             if fastModeSupportedModels.contains(viewModel.selectedModelID) {
                 Toggle(isOn: $viewModel.isFastMode) {
                     VStack(alignment: .leading, spacing: 2) {
@@ -262,7 +262,7 @@ struct PhotoSuperResView: View {
                             .font(.subheadline)
                             .fontWeight(.medium)
                             .foregroundColor(isLargeImage ? AppTheme.tertiaryText : AppTheme.primaryText)
-                        
+
                         Text(isLargeImage ? "当前图片过大，已禁用极速模式" : "速度快但可能失真")
                             .font(.caption)
                             .foregroundColor(isLargeImage ? .red.opacity(0.8) : AppTheme.tertiaryText)
@@ -276,7 +276,7 @@ struct PhotoSuperResView: View {
         .padding(.horizontal, DesignTokens.pageMargin)
         .padding(.vertical, DesignTokens.spacingXS)
     }
-    
+
     // MARK: - 底部操作
     @ViewBuilder
     private var bottomActions: some View {
@@ -297,7 +297,7 @@ struct PhotoSuperResView: View {
             })
         }
     }
-    
+
     // MARK: - 模型选择 Sheet
     private var modelPickerSheet: some View {
         NavigationStack {
@@ -307,10 +307,10 @@ struct PhotoSuperResView: View {
                         modelRow(model)
                     }
                 }
-                
+
                 Section("已下载模型") {
                     let downloadedModels = availableModels.filter { !$0.isBuiltin && $0.status == .downloaded }
-                    
+
                     if downloadedModels.isEmpty {
                         Text("暂无已下载模型")
                             .font(.subheadline)
@@ -332,7 +332,7 @@ struct PhotoSuperResView: View {
         }
         .presentationDetents([.medium, .large])
     }
-    
+
     private func modelRow(_ model: ModelRuntimeInfo) -> some View {
         Button(action: { viewModel.selectModel(model.id) }) {
             HStack {

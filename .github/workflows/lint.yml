@@ -1,0 +1,119 @@
+name: 代码规范检查
+
+on:
+  # 任意分支 push 都跑。之前写成 branches: [main, master]，导致推特性分支完全不触发，
+  # 只能靠开 PR 才能跑一次，属于配置缺陷。
+  push:
+  # 叠在其他分支上的 PR 也要跑（本仓库常用"PR 套 PR"）。
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      strict:
+        description: "收紧模式：warning 也视为失败"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  swiftlint:
+    name: SwiftLint
+    # 用 Linux + 官方镜像：SwiftLint 不需要 macOS 工具链，
+    # ubuntu 分钟数更便宜、排队更短，也不会因 macOS 配额耗尽而拿不到 runner。
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 运行 SwiftLint
+        id: lint
+        # 先收集结果再统一判定，避免日志还没上传就中断。
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          ARGS="lint --quiet --force-exclude --reporter github-actions-logging"
+          if [ -f .swiftlint-baseline.json ]; then
+            ARGS="$ARGS --baseline .swiftlint-baseline.json"
+            echo "使用基线文件 .swiftlint-baseline.json，只报告新增问题"
+          fi
+          if [ "${{ inputs.strict }}" = "true" ]; then
+            ARGS="$ARGS --strict"
+            echo "已开启收紧模式：warning 也视为失败"
+          fi
+          echo "执行：swiftlint $ARGS"
+          docker run --rm --entrypoint swiftlint \
+            -v "$PWD:/work" -w /work \
+            ghcr.io/realm/swiftlint:latest $ARGS 2>&1 | tee swiftlint.log
+
+      - name: 结果汇总
+        if: always()
+        run: |
+          ERR=$(awk '/^::error/{n++} END{print n+0}' swiftlint.log 2>/dev/null || echo 0)
+          WARN=$(awk '/^::warning/{n++} END{print n+0}' swiftlint.log 2>/dev/null || echo 0)
+          {
+            echo "## SwiftLint"
+            echo ""
+            echo "| 级别 | 数量 |"
+            echo "| --- | --- |"
+            echo "| error | ${ERR} |"
+            echo "| warning | ${WARN} |"
+            echo ""
+            echo "完整日志见本次运行产物 \`swiftlint-log\`。"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 上传日志
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: swiftlint-log
+          path: swiftlint.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: 结果闸门
+        if: always() && steps.lint.outcome == 'failure'
+        run: |
+          echo "::error::SwiftLint 存在 error 级问题，检查未通过"
+          exit 1
+
+  guardrails:
+    name: 仓库守卫
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 未解决的合并冲突标记
+        run: |
+          if grep -rnE '^(<<<<<<<|>>>>>>>)' --include='*.swift' --include='*.yml' --include='*.yaml' --include='*.md' --include='*.sh' . ; then
+            echo "::error::发现未解决的合并冲突标记"
+            exit 1
+          fi
+          echo "通过：未发现冲突标记"
+
+      - name: 换行符必须为 LF
+        run: |
+          bad=$(grep -rlI $'\r' --include='*.swift' --include='*.yml' --include='*.yaml' --include='*.sh' . || true)
+          if [ -n "$bad" ]; then
+            echo "::error::以下文件含 CRLF，请改为 LF 换行："
+            echo "$bad"
+            exit 1
+          fi
+          echo "通过：全部为 LF 换行"
+
+      - name: 禁止引入超大文件
+        run: |
+          big=$(find . -path ./.git -prune -o -type f -size +5M -print | grep -v 'SuperResApp/Models/Builtin' || true)
+          if [ -n "$big" ]; then
+            echo "::error::以下文件超过 5MB，请勿提交进仓库："
+            echo "$big"
+            exit 1
+          fi
+          echo "通过：无超过 5MB 的文件"

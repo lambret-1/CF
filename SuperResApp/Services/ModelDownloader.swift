@@ -32,10 +32,10 @@ actor ModelDownloader: NSObject {
         let paths = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
         let supportDir = paths[0]
         queueFileURL = supportDir.appendingPathComponent("download_queue.json")
-        
+
         let modelsDir = supportDir.appendingPathComponent("Models", isDirectory: true)
         tempDirectory = modelsDir.appendingPathComponent("Temp", isDirectory: true)
-        
+
         try? FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
 
         super.init()
@@ -177,7 +177,7 @@ actor ModelDownloader: NSObject {
         }
 
         let cleanUrlString = manifest.url.trimmingCharacters(in: .whitespacesAndNewlines)
-        
+
         guard let url = URL(string: cleanUrlString) else {
             let errorMsg = "下载地址无效，解析失败: [\(cleanUrlString)]"
             await AppLogger.shared.log(errorMsg, isError: true)
@@ -228,22 +228,22 @@ extension ModelDownloader: URLSessionDownloadDelegate {
     nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
         let taskID = downloadTask.taskIdentifier
         let fileManager = FileManager.default
-        
+
         let paths = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)
         let tempDir = paths[0].appendingPathComponent("Models", isDirectory: true).appendingPathComponent("Temp", isDirectory: true)
-        
+
         do {
             try fileManager.createDirectory(at: tempDir, withIntermediateDirectories: true)
-            
+
             let tempFileName = UUID().uuidString + ".zip"
             let tempURL = tempDir.appendingPathComponent(tempFileName)
-            
+
             if fileManager.fileExists(atPath: tempURL.path) {
                 try fileManager.removeItem(at: tempURL)
             }
-            
+
             try fileManager.moveItem(at: location, to: tempURL)
-            
+
             Task { await self.handleDownloadFinished(taskID: taskID, tempURL: tempURL) }
         } catch {
             Task {
@@ -310,7 +310,7 @@ extension ModelDownloader: URLSessionDownloadDelegate {
         taskModelMap.removeValue(forKey: taskID)
         activeTask = nil
         activeModelID = nil
-        
+
         await manifestLoader.markFailed(id: modelID, reason: "保存失败：\(error.localizedDescription)")
         failureHandler?(modelID, error)
         await finishDownload(modelID: modelID)
@@ -350,7 +350,7 @@ extension ModelDownloader: URLSessionDownloadDelegate {
 
             await manifestLoader.markFailed(id: modelID, reason: "网络中断，请点击继续")
             failureHandler?(modelID, error)
-            
+
             // ⭐️ 不再自动 startNext()，等待用户主动点击重试
         }
     }

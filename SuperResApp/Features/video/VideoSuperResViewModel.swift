@@ -68,7 +68,6 @@ struct FrameInterpolationVideoMetadata: Equatable {
 @MainActor
 final class VideoSuperResViewModel: ObservableObject {
 
-
     enum State: Equatable {
         case empty
         case loading

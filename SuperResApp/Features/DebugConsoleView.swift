@@ -4,7 +4,7 @@ import SwiftUI
 
 struct DebugConsoleView: View {
     @ObservedObject var logger = AppLogger.shared
-    
+
     var body: some View {
         NavigationStack {
             ScrollViewReader { proxy in

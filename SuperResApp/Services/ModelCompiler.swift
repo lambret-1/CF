@@ -29,7 +29,7 @@ actor ModelCompiler {
 
         let fileManager = FileManager.default
         let paths = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)
-        
+
         // ⭐️ 编译临时目录放到 Application Support 下，彻底避开 tmp 权限和清理问题
         let modelsDir = paths[0].appendingPathComponent("Models", isDirectory: true)
         let compileTempRoot = modelsDir.appendingPathComponent("CompileTemp", isDirectory: true)
@@ -84,7 +84,7 @@ actor ModelCompiler {
         // 4. 移动到 Application Support/Models/
         let destination = await manifestLoader.compiledModelURL(for: modelID)
         let destDir = destination.deletingLastPathComponent()
-        
+
         // 确保目标父目录绝对存在
         try? fileManager.createDirectory(at: destDir, withIntermediateDirectories: true)
 
@@ -109,7 +109,7 @@ actor ModelCompiler {
     func compileSinSRBundle(zipURL: URL) async throws -> (encoder: URL, decoder: URL, denoiser: URL) {
         let fileManager = FileManager.default
         let paths = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)
-        
+
         // ⭐️ 同样迁移到 Application Support
         let modelsDir = paths[0].appendingPathComponent("Models", isDirectory: true)
         let compileTempRoot = modelsDir.appendingPathComponent("CompileTemp", isDirectory: true)

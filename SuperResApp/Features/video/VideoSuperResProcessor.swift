@@ -166,13 +166,13 @@ final class VideoSuperResProcessor: @unchecked Sendable {
             let elapsed = clock.now - startInstant
             let totalSecs = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
             let count = finalAppendedCountBox.get()
-            
+
             var avgMsg = ""
             if count > 0 {
                 let avg = totalSecs / Double(count)
                 avgMsg = " 平均每帧耗时=\(String(format: "%.2f", avg))秒"
             }
-            
+
             logInfo("==== 任务结束 总用时 \(Self.formatDuration(elapsed))\(avgMsg) ====")
         }
 
@@ -285,7 +285,7 @@ final class VideoSuperResProcessor: @unchecked Sendable {
             logError("writer.startWriting 失败: \(String(describing: writer.error))")
             throw writer.error ?? NSError(domain: "VideoSR", code: -2)
         }
-        
+
         logInfo("⚙️ reader/writer 启动成功 reader.status=\(reader.status.rawValue) writer.status=\(writer.status.rawValue)")
 
         writer.startSession(atSourceTime: .zero)
@@ -307,7 +307,7 @@ final class VideoSuperResProcessor: @unchecked Sendable {
 
         let state = PipelineState()
         let processor = self
-        
+
         // ⭐ 修改：并发数改成 3
         let inFlightLimit = 3
 
@@ -385,7 +385,7 @@ final class VideoSuperResProcessor: @unchecked Sendable {
                     }
 
                     let imageBox = LockedBox<CGImage>(cgImage)
-                    
+
                     Task.detached(priority: .userInitiated) { [weak state] in
                         guard let state = state else { return }
                         if processor.isCancelRequested { return }
@@ -443,10 +443,10 @@ final class VideoSuperResProcessor: @unchecked Sendable {
             let resume = ResumeBox()
 
             let writerQueue = DispatchQueue(label: "video.writer", qos: .userInitiated)
-            
+
             // ⭐ 新增：将节流状态提到闭包外部，使用 LockedBox 解决每次重入被重置导致刷屏的 Bug
             let logState = LockedBox<(percent: Int, wait: Date)>((-100, Date.distantPast))
-            
+
             io.videoInput.requestMediaDataWhenReady(on: writerQueue) {
                 while io.videoInput.isReadyForMoreMediaData {
                     state.condition.lock()
@@ -497,14 +497,14 @@ final class VideoSuperResProcessor: @unchecked Sendable {
 
                         let progress = min(1.0, Double(done) / Double(io.totalOutputFrames))
                         let pct = Int(progress * 100)
-                        
+
                         // ⭐ 修改：使用外部的 logState 安全控制节流
                         let currentLogState = logState.get()
                         if pct / 10 != currentLogState.percent / 10 {
                             logState.set((pct, currentLogState.wait))
                             processor.logInfo("📊 进度 \(pct)% (\(done)/\(io.totalOutputFrames)) 在途=\(inFlight) 缓存=\(cacheSize)")
                         }
-                        
+
                         let p = progress
                         Task { @MainActor in progressHandler(p) }
 
@@ -578,16 +578,16 @@ final class VideoSuperResProcessor: @unchecked Sendable {
         } else {
             CVPixelBufferCreate(kCFAllocatorDefault, width, height, kCVPixelFormatType_32BGRA, [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pb)
         }
-        
+
         guard let buffer = pb else { return nil }
 
         let ciImage = CIImage(cgImage: image)
         let scaleX = CGFloat(width) / ciImage.extent.width
         let scaleY = CGFloat(height) / ciImage.extent.height
         let scaledImage = ciImage.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
-        
+
         ciContext.render(scaledImage, to: buffer)
-        
+
         return buffer
     }
 }

@@ -15,15 +15,15 @@ struct TilingEngine: SuperResolutionEngine {
         scaleFactor: Int,
         progressHandler: ((InferenceProgress) -> Void)?
     ) async throws -> EngineResult { // ⭐️ 修改返回值
-        
+
         let startTime = Date()
         progressHandler?(InferenceProgress(currentTile: 0, totalTiles: 1, fraction: 0.01, elapsedSeconds: 0, estimatedRemainingSeconds: nil))
 
         let tileSize = inputInfo.width
-        let overlap = tileSize / 16 
+        let overlap = tileSize / 16
         let tiles = calculateTiles(width: image.width, height: image.height, tileSize: tileSize, overlap: overlap)
         let totalTiles = tiles.count
-        
+
         let outputWidth = image.width * scaleFactor
         let outputHeight = image.height * scaleFactor
 
@@ -33,37 +33,37 @@ struct TilingEngine: SuperResolutionEngine {
             space: CGColorSpaceCreateDeviceRGB(),
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ) else { throw InferenceError.outputCreationFailed }
-        
+
         for (index, tile) in tiles.enumerated() {
             try Task.checkCancellation() // ⭐️ 支持取消
             try autoreleasepool {
                 let cropRect = CGRect(x: tile.x, y: tile.y, width: tile.width, height: tile.height)
                 guard let croppedCG = image.cropping(to: cropRect) else { return }
-                
+
                 let paddedTile = padImageIfNeeded(croppedCG, targetSize: tileSize)
                 var outputTile = try self.processTile(image: paddedTile, model: model, inputInfo: inputInfo)
-                
+
                 let ci = CIImage(cgImage: outputTile)
                 let flipped = ci.transformed(by: CGAffineTransform(scaleX: 1, y: -1).translatedBy(x: 0, y: -ci.extent.height))
                 if let flippedCG = Self.ciContext.createCGImage(flipped, from: flipped.extent) {
                     outputTile = flippedCG
                 }
-                
+
                 let drawWidth = CGFloat(tile.width) * CGFloat(scaleFactor)
                 let drawHeight = CGFloat(tile.height) * CGFloat(scaleFactor)
                 let destX = CGFloat(tile.x) * CGFloat(scaleFactor)
                 let destY = CGFloat(tile.y) * CGFloat(scaleFactor)
-                
+
                 let cgY = CGFloat(outputHeight) - destY - drawHeight
-                
+
                 let safeWidth = min(Int(drawWidth), outputTile.width)
                 let safeHeight = min(Int(drawHeight), outputTile.height)
-                
+
                 if let validTile = outputTile.cropping(to: CGRect(x: 0, y: 0, width: safeWidth, height: safeHeight)) {
                     outputContext.draw(validTile, in: CGRect(x: destX, y: cgY, width: drawWidth, height: drawHeight))
                 }
             }
-            
+
             let elapsed = Date().timeIntervalSince(startTime)
             progressHandler?(InferenceProgress(
                 currentTile: index + 1, totalTiles: totalTiles, fraction: Double(index + 1) / Double(totalTiles),
@@ -72,7 +72,7 @@ struct TilingEngine: SuperResolutionEngine {
         }
 
         guard let finalOutput = outputContext.makeImage() else { throw InferenceError.outputCreationFailed }
-        
+
         // ⭐️ 返回 EngineResult
         return EngineResult(image: finalOutput, tileSize: tileSize, totalTiles: totalTiles)
     }

@@ -61,7 +61,19 @@ func revertPhotoToOriginal() {
     }
 
     func saveToPhotos() {
-        guard isCompleteEnabled, let image = editedImage ?? originalImage else { return }
+        guard !isSaving else { return }
+        guard !isProcessing else {
+            alertMessage = "正在处理，请稍候。"
+            return
+        }
+        guard let image = editedImage ?? originalImage else {
+            alertMessage = "无法读取当前图像，请重新导入照片。"
+            return
+        }
+        guard hasChanges else {
+            alertMessage = "还没有应用任何修改。"
+            return
+        }
         guard let cgImage = image.cgImage else { alertMessage = "无法读取当前图像，请重新导入照片。"; return }
         isSaving = true
         Task {
@@ -120,9 +132,19 @@ func revertPhotoToOriginal() {
                         )
                         alertMessage = "Live Photo 的照片帧与动态视频帧已作为非破坏性修改保存。"
                     } else {
-                        if let renderedCIImage {
+                        // renderedCIImage 始终是全分辨率的 CI 图；预览降采样只发生在出位图那一步。
+                        // 万一它缺失（例如上次渲染失败），这里再补算一次全分辨率结果。
+                        let fullResolution = renderedCIImage ?? DemoImageProcessor.renderCIImage(
+                            image,
+                            settings: settings,
+                            filterName: selectedPreset.filterName,
+                            transform: imageTransform,
+                            sourceURL: renderSourceURL ?? input.fullSizeImageURL,
+                            markupData: markupData
+                        )
+                        if let fullResolution {
                             try await PhotoKitEditingService.shared.saveRenderedCIImage(
-                                renderedCIImage,
+                                fullResolution,
                                 asset: asset,
                                 input: input,
                                 adjustmentData: data,

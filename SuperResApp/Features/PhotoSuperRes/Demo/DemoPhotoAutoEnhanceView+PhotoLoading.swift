@@ -106,7 +106,6 @@ func loadPhoto(_ item: PhotosPickerItem, generation: UUID) async {
         }
     }
 
-
     @MainActor
 
 func adjustmentDataUsesRAW(_ adjustmentData: PHAdjustmentData?) -> Bool {

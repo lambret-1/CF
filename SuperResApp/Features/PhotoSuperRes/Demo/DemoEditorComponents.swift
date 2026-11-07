@@ -126,7 +126,6 @@ struct DemoShareSheet: UIViewControllerRepresentable {
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }
 
-
 struct TickMarkSlider: View {
     @Binding var value: Double
     let range: ClosedRange<Double>
